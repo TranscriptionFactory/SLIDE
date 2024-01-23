@@ -3,7 +3,7 @@
 #' Calculate control model performances including the real model, the model with random interaction terms and full random model. 
 #'
 #' @param z_matrix the z_matrix, the output of CalcZMatrix function.
-#' @param y_path a string that points to the y vector.
+#' @param y the response matrix.
 #' @param SLIDE_res the output of GetTopFeatures function.
 #' @param niter a integer for number of iterations.
 #' @param condition a string on whether to run auc or corr.
@@ -12,9 +12,8 @@
 #' @export
 
 
-calcControlPerformance <- function(z_matrix, y_path, SLIDE_res, niter, condition, out_path){
- 
-  y <- as.matrix(utils::read.csv(y_path, row.names = 1))
+calcControlPerformance <- function(z_matrix, y, SLIDE_res, niter, condition, out_path){
+  
   colnames(y) <- "y"
   zz <- row.names(z_matrix)
   if (sum(row.names(y) != row.names(z_matrix)) != 0){
@@ -29,7 +28,7 @@ calcControlPerformance <- function(z_matrix, y_path, SLIDE_res, niter, condition
   sigK <- SLIDE_res$marginal_vals
   sigIn <- as.vector(SLIDE_res$SLIDE_res$interaction_vars)
   
-  IntData <- PairwiseInteractions(sigK,z_matrix)
+  IntData <- pairwiseInteractions(sigK,z_matrix)
   Dataint <- IntData$interaction[, sigIn]
   Data_real <- data.frame(y = y, z_matrix[, sigK], Dataint)
   
@@ -48,7 +47,7 @@ calcControlPerformance <- function(z_matrix, y_path, SLIDE_res, niter, condition
   
   for (i in 1:niter) {
     sigKRandom <- sample(ncol(z_matrix), size = length(sigK)) ## Random marginal
-    IntDataRandom <- PairwiseInteractions(sigKRandom, z_matrix)
+    IntDataRandom <- pairwiseInteractions(sigKRandom, z_matrix)
     
     sigInRandom <- sample(ncol(IntDataRandom$interaction), size = length(sigIn)) ## Random interaction
     IntDataRandom <- IntDataRandom$interaction[, sigInRandom]
@@ -69,7 +68,7 @@ calcControlPerformance <- function(z_matrix, y_path, SLIDE_res, niter, condition
   
   Partialreport <- NULL
   for (i in 1:niter) {
-    IntData  <- PairwiseInteractions(sigK, z_matrix)
+    IntData  <- pairwiseInteractions(sigK, z_matrix)
     sigInRandom <- sample(ncol(IntData$interaction), size = length(sigIn)) ## Ranodm interaction
     
     IntDataRandom <- IntData$interaction[, sigInRandom]
