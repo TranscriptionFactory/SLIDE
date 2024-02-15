@@ -1,14 +1,14 @@
 #' Main Pipeline of Running SLIDE (get LF and run SLIDE without CV)
 #'
-#' @param yaml_path the string to a yaml path
+#' @param input_params the R object that contains all the input parameter
 #' @param sink_file boolean flag of saving to a sink file or not
 #' @export
 
 ##################################### set up the parameters #####################################
 
-main <- function(yaml_path, sink_file){
+Optimize_SLIDE <- function(input_params, sink_file){
 
-  input_params <- yaml::yaml.load_file(yaml_path)
+  #input_params <- yaml::yaml.load_file(yaml_path)
   ##################################### check and print key parameters #####################################
   # check if output path exists
   if (dir.exists(input_params$out_path)){
@@ -17,32 +17,29 @@ main <- function(yaml_path, sink_file){
     cat ("Output folder not found, creating at ", input_params$out_path, ".\n")
     dir.create(file.path(input_params$out_path), showWarnings = F, recursive = T)
   }
-
+  
+  if (is.null(input_params$x_path)){stop("No path to data matrix X is provided. Please add x_path: path/to/x to the YAML file...")}
+  if (is.null(input_params$y_path)){stop("No path to outcome vector Y is provided. Please add Y_path: path/to/x to the YAML file...")}
+  if (is.null(input_params$out_path)){stop("No path to output folder is provided.Please add out_path: path/to/output/folder to the YAML file...")}
 
   if (is.null(input_params$delta) == TRUE){delta = c(0.01, 0.1)}else{delta = input_params$delta}
   if (is.null(input_params$lambda) == TRUE){lambda = c(0.5, 1.0)}else{lambda = input_params$lambda}
 
-  # cat("Input Delta:\n")
-  # for (item in delta) {
-  #   cat(item, "\n")
-  # }
-  # cat("Input Lambda:\n")
-  # for (item in lambda) {
-  #   cat(item, "\n")
-  # }
 
   # take care of all input params
   if (is.null(input_params$alpha)){alpha_level = 0.05} else {alpha_level = input_params$alpha}
   if (is.null(input_params$thresh_fdr)){thresh_fdr = 0.2} else {thresh_fdr = input_params$thresh_fdr}
   if (is.null(input_params$rep_cv)){rep_cv = 50} else {rep_cv = input_params$rep_cv}
   if (is.null(input_params$spec)){spec = 0.1} else(spec = input_params$spec)
+  if (spec < 0.1) {stop("spec is less then 0.1. Please increase spec as the minimum of spec should be 0.1.")}
   if (is.null(input_params$do_interacts)){do_interacts = TRUE} else(do_interacts = input_params$do_interacts)
   if (is.null(input_params$sigma)){
     sigma = NULL
     cat("Setting sigma as Null.\n")
   } else {sigma = input_params$rep_cv}
-
+  
   if (is.null(input_params$SLIDE_iter)){SLIDE_iter = 500} else{SLIDE_iter = input_params$SLIDE_iter}
+  if (input_params$SLIDE_iter <= 100) {warning("SLIDE_iter is less than 100. We recommand setting it to minimum 500 for stable performance.")}
   if (is.null(input_params$eval_type)){
     if (length(unique(y))<=2){eval_type = "auc"}
     else{eval_type = "corr"}
@@ -56,8 +53,8 @@ main <- function(yaml_path, sink_file){
   x_std <- scale(x, T, T)
 
   #initiate the summary table
-  summary_table <- as.data.frame(matrix(NA, nrow = length(delta) * length(lambda), ncol = 6))
-  colnames(summary_table) <- c('delta', 'lambda', '# of LFs', '# of Sig LFs', '# of Interactors', 'sampleCV Performance')
+  summary_table <- as.data.frame(matrix(NA, nrow = length(delta) * length(lambda), ncol = 7))
+  colnames(summary_table) <- c('delta', 'lambda', 'f_size', '# of LFs', '# of Sig LFs', '# of Interactors', 'sampleCV Performance')
 
   cnt = 1
   for (d in delta){
@@ -119,7 +116,7 @@ main <- function(yaml_path, sink_file){
 
         #the SLIDE_res has to be the output from getTopFeatures
         #calculate the control performance plot
-        calcControlPerformance(z_matrix = z_matrix, y, SLIDE_res, condition = eval_type, loop_outpath)
+        calcControlPerformance(z_matrix = z_matrix, y, do_interacts, SLIDE_res, condition = eval_type, loop_outpath)
 
         # calculate the sampleCV performance
         performance = sampleCV(y, z_matrix, SLIDE_res, fraction = 2/3, condition = eval_type, sampleCV_iter = 20, logistic = FALSE, out_path = loop_outpath)
@@ -128,15 +125,17 @@ main <- function(yaml_path, sink_file){
         if (do_interacts == TRUE){
           interactors = c(SLIDE_res$interaction$p1, SLIDE_res$interaction$p2)[which(!(c(SLIDE_res$interaction$p1, SLIDE_res$interaction$p2) %in% SLIDE_res$marginal_vals))]
           if (sum(interactors %in% SLIDE_res$marginal_vals) != 0) {stop("getting interactor code is wrong.")}
-          loop_summary = c(d, l, all_latent_factors$K, length(SLIDE_res$marginal_vals), length(interactors), performance)
+          loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, length(SLIDE_res$marginal_vals), length(interactors), performance)
         } else{
           if (nrow(SLIDE_res$interaction) != 0) {stop("do_interacts set to FALSE but interaction terms found...")}
-          loop_summary = c(d, l, all_latent_factors$K, length(SLIDE_res$marginal_vals), 'NA', performance)
+          loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, length(SLIDE_res$marginal_vals), 'NA', performance)
         }
       } else {
-        loop_summary = c(d, l, all_latent_factors$K, "NA", "NA", "NA")
+        loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, "NA", "NA", "NA")
       }
       summary_table[cnt, ] = loop_summary
+      if (summary_table[cnt, ]$`# of Sig LFs` >= 10) {warning("The number of standalone LFs are more than 10, consider increase the spec parameter.")}
+      if ((summary_table[cnt, ]$`# of Sig LFs` <= 2 ) & (spec > 0.1)) {warning("The number of standalone LFs are less than 2, consider decrease the spec parameter.")}
       cnt = cnt+1
     }
   }
