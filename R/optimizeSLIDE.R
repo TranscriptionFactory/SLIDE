@@ -139,34 +139,45 @@ optimizeSLIDE <- function(input_params, sink_file = F){
 
       #final output
 
-      all_latent_factors <- getLatentFactors(x = x,
-                                             x_std = x_std,
-                                             y = y,
-                                             sigma = sigma,
-                                             delta = d,
-                                             lambda = l,
-                                             rep_cv = rep_cv,
-                                             alpha_level = alpha_level,
-                                             thresh_fdr = thresh_fdr,
-                                             out_path = loop_outpath)
+      no_error = TRUE
+      # placeholder in case we get an error
+      summary_table[cnt, ] = c(d, l, "NA", "NA", "NA", "NA", "NA")
 
-      saveRDS(all_latent_factors, paste0(loop_outpath, 'AllLatentFactors.rds'))
-
-
-      # saving run specific yaml so can run CV later without needing to change another yaml
-      run_yaml = input_params
-      run_yaml$delta = d
-      run_yaml$lambda = l
-      run_yaml$out_path = loop_outpath
-
-      yaml::write_yaml(run_yaml, paste0(loop_outpath, "yaml_params.yaml"))
-
-      # get Z matrix
-      z_matrix <- calcZMatrix(x_std, all_latent_factors, x_path = NULL, lf_path = NULL, loop_outpath)
-
-      # run SLIDE
-      SLIDE_res <- runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts)
-      saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
+      tryCatch({
+        all_latent_factors <<- getLatentFactors(x = x,
+                                               x_std = x_std,
+                                               y = y,
+                                               sigma = sigma,
+                                               delta = d,
+                                               lambda = l,
+                                               rep_cv = rep_cv,
+                                               alpha_level = alpha_level,
+                                               thresh_fdr = thresh_fdr,
+                                               out_path = loop_outpath)
+        saveRDS(all_latent_factors, paste0(loop_outpath, 'AllLatentFactors.rds'))
+  
+  
+        # saving run specific yaml so can run CV later without needing to change another yaml
+        run_yaml = input_params
+        run_yaml$delta = d
+        run_yaml$lambda = l
+        run_yaml$out_path = loop_outpath
+  
+        yaml::write_yaml(run_yaml, paste0(loop_outpath, "yaml_params.yaml"))
+  
+        # get Z matrix
+        z_matrix <<- calcZMatrix(x_std, all_latent_factors, x_path = NULL, lf_path = NULL, loop_outpath)
+  
+        # run SLIDE
+        SLIDE_res <<- runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts)
+        saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
+        },
+        error = function(cond) {
+          no_error <<- FALSE
+        })
+        # skip this delta/lambda
+        cat("Error getting latent factors for delta, ", d, ", and lambda, ", l, ". Skipping \n")
+        if (!no_error) next       
 
       if(length(SLIDE_res$SLIDE_res$marginal_vars) != 0) {
         # get top features txt files and latent factor plots
@@ -204,6 +215,11 @@ optimizeSLIDE <- function(input_params, sink_file = F){
       if (summary_table[cnt, ]$Num_of_Sig_LFs >= 10) {warning("The number of standalone LFs are more than 10, consider increase the spec parameter.")}
       if ((summary_table[cnt, ]$Num_of_Interactors <= 2 ) & (spec > 0.1)) {warning("The number of standalone LFs are less than 2, consider decrease the spec parameter.")}
       if (is.na(summary_table[cnt, ]$sampleCV_Performance) & (spec <= 0.1)) {warning("The number of SLIDE chosen LFs is too big to perform cross-validation performance approximation for this delta, lambda and spec choise. Considering increase spec.")}
+      
+      
+      
+      
+    
       cnt = cnt+1
     }
   }
