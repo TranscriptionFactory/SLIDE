@@ -102,6 +102,7 @@ optimizeSLIDE <- function(input_params, sink_file = F){
     }
   }
 
+  cat("Setting fdr at",fdr,".\n")
   cat("Setting alpha_level at ", alpha_level, ".\n")
   cat("Setting thresh_fdr at ", thresh_fdr, ".\n")
   #cat("Setting rep_cv at ", rep_cv, ".\n")
