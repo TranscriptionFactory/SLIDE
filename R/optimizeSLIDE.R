@@ -32,6 +32,7 @@ optimizeSLIDE <- function(input_params, sink_file = F){
 
 
   # take care of all input params
+  if (is.null(input_params$fdr)){fdr = 0.1} else {fdr = input_params$fdr}
   if (is.null(input_params$alpha)){alpha_level = 0.05} else {alpha_level = input_params$alpha}
 
   if (is.null(input_params$thresh_fdr)){thresh_fdr = 0.2} else {thresh_fdr = input_params$thresh_fdr}
@@ -165,7 +166,7 @@ optimizeSLIDE <- function(input_params, sink_file = F){
       z_matrix <- calcZMatrix(x_std, all_latent_factors, x_path = NULL, lf_path = NULL, loop_outpath)
 
       # run SLIDE
-      SLIDE_res <- runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts)
+      SLIDE_res <- runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts,fdr=fdr)
       saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
 
       if(length(SLIDE_res$SLIDE_res$marginal_vars) != 0) {
