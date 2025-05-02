@@ -13,3 +13,4 @@ SLIDE_top_feats: 10
 sampleCV_iter: 100.0
 sampleCV_K: 4
 do_interacts: yes
+fdr: 0.1

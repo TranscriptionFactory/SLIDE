@@ -67,7 +67,7 @@ SLIDEcv <- function(yaml_path=NULL, nrep=20, k=10){
     slide_input$std_y <- T
     slide_input$permute <- T
     slide_input$parallel <- T
-    #slide_input$fdr <- 0.1
+    slide_input$fdr <- ifelse(is.null(slide_input$fdr), 0.1, slide_input$fdr)
     slide_input$do_interacts = ifelse(is.null(slide_input$do_interacts), TRUE, slide_input$do_interacts)
 
 
