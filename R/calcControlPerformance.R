@@ -60,7 +60,7 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
     if (condition == 'auc'){
       lmod    <- lm(y~.,data=Data_real)
       yhat    <- predict(lmod,Data_real[,-1,drop=F],type = 'response')
-      perreal <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat), levels = sort(unique(y[, 1])), quite=T)
+      perreal <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat), levels = sort(unique(y[, 1])), quiet=T)
     }else if (condition == 'corr'){
       SumReal <- summary(lm(y ~ ., data = Data_real))
       perreal <- sqrt(SumReal$r.squared)
@@ -91,7 +91,7 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
        if (condition == 'auc'){
         lmod  <- lm(y~.,data=Data_fullRandom)
         yhat <- predict(lmod,Data_fullRandom[,-1,drop=F],type = 'response')
-        prerandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat), levels = sort(unique(y[, 1])), quite=T)
+        prerandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat), levels = sort(unique(y[, 1])), quiet=T)
         Fullreport <- rbind(Fullreport, prerandom)
 
         }else if (condition == "corr"){
@@ -115,7 +115,7 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
       if (condition == 'auc'){
         lmod  <- lm(y~.,data=Data_partialRandom)
         yhat <- predict(lmod,Data_partialRandom[,-1,drop=F],type = 'response')
-        perPrandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quite=T)
+        perPrandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quiet=T)
         Partialreport <- rbind(Partialreport, perPrandom)
       }else if(condition == 'corr'){
 
@@ -167,7 +167,7 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
         if (condition == 'auc'){
           lmod  <- lm(y~.,data=Data_real)
           yhat <- predict(lmod,Data_real[,-1,drop=F],type = 'response')
-          perreal <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quite=T)
+          perreal <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quiet=T)
         }else if (condition == 'corr'){
           SumReal <- summary(lm(y ~ ., data = Data_real))
           perreal <- sqrt(SumReal$r.squared)
@@ -191,7 +191,7 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
 
             lmod  <- lm(y~.,data=Data_fullRandom)
             yhat <- predict(lmod,Data_fullRandom[,-1,drop=F],type = 'response')
-            prerandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quite=T)
+            prerandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quiet=T)
             Fullreport <- rbind(Fullreport, prerandom)
 
           }else if (condition == "corr"){
@@ -247,7 +247,7 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
       if (condition == 'auc'){
         lmod  <- lm(y~.,data=Data_real)
         yhat <- predict(lmod,Data_real[,-1,drop=F],type = 'response')
-        perreal <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quite=T)
+        perreal <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quiet=T)
       }else if (condition == 'corr'){
         SumReal <- summary(lm(y ~ ., data = Data_real))
         perreal <- sqrt(SumReal$r.squared)
@@ -270,8 +270,8 @@ calcControlPerformance <- function(z_matrix, y, do_interacts, SLIDE_res, conditi
         if (condition == 'auc'){
 
           lmod  <- lm(y~.,data=Data_fullRandom)
-          yhat <- predict(lmod,Data_fullRandom[,-1],type = 'response')
-          prerandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quite=T)
+          yhat <- predict(lmod,Data_fullRandom[,-1,drop=F],type = 'response')
+          prerandom <- pROC::auc(response=as.matrix(y), predictor=as.matrix(yhat),quiet=T)
           Fullreport <- rbind(Fullreport, prerandom)
 
         }else if (condition == "corr"){
