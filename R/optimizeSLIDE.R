@@ -175,7 +175,7 @@ optimizeSLIDE <- function(input_params, sink_file = F){
         SLIDE_res <- getTopFeatures(x, y, all_latent_factors, loop_outpath, SLIDE_res, num_top_feats = SLIDE_top_feats, condition = eval_type)
         saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
 
-        plotSigGenes(SLIDE_res, plot_interaction = do_interacts, out_path = loop_outpath)
+        plotSigGenes(SLIDE_res, plot_interactions = do_interacts, out_path = loop_outpath)
 
         #the SLIDE_res has to be the output from getTopFeatures
         #calculate the control performance plot
