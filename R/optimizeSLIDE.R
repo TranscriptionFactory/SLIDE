@@ -201,13 +201,6 @@ optimizeSLIDE <- function(input_params, sink_file = FALSE, continue_on_error = T
       } else {
         loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, "NA", "NA", "NA")
       }
-      cat("The number of total LFs is ", summary_table[cnt, ]$Num_of_LFs, ".\n")
-      cat("The number of standalone LFs is ", summary_table[cnt, ]$Num_of_Sig_LFs, ".\n")
-      cat("The number of interacting LFs is ", summary_table[cnt, ]$Num_of_Interactors, ".\n")
-      cat("The approximation of cross-validation performance is ", summary_table[cnt, ]$sampleCV_Performance, ".\n")
-      if (summary_table[cnt, ]$Num_of_Sig_LFs >= 10) {warning("The number of standalone LFs are more than 10, consider increase the spec parameter.")}
-      if ((summary_table[cnt, ]$Num_of_Interactors <= 2 ) & (spec > 0.1)) {warning("The number of standalone LFs are less than 2, consider decrease the spec parameter.")}
-      if (is.na(summary_table[cnt, ]$sampleCV_Performance) & (spec <= 0.1)) {warning("The number of SLIDE chosen LFs is too big to perform cross-validation performance approximation for this delta, lambda and spec choise. Considering increase spec.")}
 
       loop_summary  # Return loop_summary from tryCatch
       }, error = function(e) {
@@ -221,6 +214,20 @@ optimizeSLIDE <- function(input_params, sink_file = FALSE, continue_on_error = T
       })
 
       summary_table[cnt, ] = loop_summary
+
+      # Print summary info (after assignment so values are available)
+      cat("The number of total LFs is ", summary_table[cnt, ]$Num_of_LFs, ".\n")
+      cat("The number of standalone LFs is ", summary_table[cnt, ]$Num_of_Sig_LFs, ".\n")
+      cat("The number of interacting LFs is ", summary_table[cnt, ]$Num_of_Interactors, ".\n")
+      cat("The approximation of cross-validation performance is ", summary_table[cnt, ]$sampleCV_Performance, ".\n")
+
+      # Warnings for parameter tuning (NA-safe checks)
+      num_sig <- summary_table[cnt, ]$Num_of_Sig_LFs
+      num_int <- summary_table[cnt, ]$Num_of_Interactors
+      cv_perf <- summary_table[cnt, ]$sampleCV_Performance
+      if (!is.na(num_sig) && num_sig >= 10) {warning("The number of standalone LFs are more than 10, consider increase the spec parameter.")}
+      if (!is.na(num_int) && num_int <= 2 && spec > 0.1) {warning("The number of standalone LFs are less than 2, consider decrease the spec parameter.")}
+      if (is.na(cv_perf) && spec <= 0.1) {warning("The number of SLIDE chosen LFs is too big to perform cross-validation performance approximation for this delta, lambda and spec choise. Considering increase spec.")}
       cnt = cnt+1
     }
   }
