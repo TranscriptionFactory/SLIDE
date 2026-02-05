@@ -59,7 +59,7 @@ if(!is.null(slide_results$SLIDE_res$marginal_vars)){
     ggplot2::scale_color_manual(values = text_color_vals_marginal, guide = "none") + ggplot2::theme_void() +
     ggplot2::theme(axis.text.x = ggplot2::element_text(), axis.title.x = ggplot2::element_text(),
                    axis.title.y = ggplot2::element_text(angle = 90)) +ggplot2::xlab("Significant Latent Factor") +
-    ggplot2::ylab("Genes Associated with Significant Latent Factors") +
+    ggplot2::ylab("Features Associated with Significant Latent Factors") +
     ggplot2::ylim(0, max_num_genes_in_any_lf) +
     ggplot2::ggtitle("SLIDE Marginal Variables")
 
@@ -78,7 +78,7 @@ if(!is.null(slide_results$SLIDE_res$marginal_vars)){
       ggplot2::theme(axis.text.x = ggplot2::element_text(), axis.title.x = ggplot2::element_text(),
                      axis.title.y = ggplot2::element_text(angle = 90)) +
       ggplot2::xlab("Significant Latent Factor") +
-      ggplot2::ylab("Genes Associated with Significant Latent Factors") +
+      ggplot2::ylab("Features Associated with Significant Latent Factors") +
       ggplot2::ylim(0, max_num_genes_in_any_lf) +
       ggplot2::ggtitle("Significant Latent Factors - Marginals (bold/italic) and Interactions")
 
