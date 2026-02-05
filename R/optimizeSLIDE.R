@@ -6,7 +6,7 @@
 
 ##################################### set up the parameters #####################################
 
-optimizeSLIDE <- function(input_params, sink_file = F){
+optimizeSLIDE <- function(input_params, sink_file = FALSE, continue_on_error = TRUE){
 
   ##################################### check and print key parameters #####################################
   # check if output path exists
@@ -119,8 +119,11 @@ optimizeSLIDE <- function(input_params, sink_file = F){
   colnames(summary_table) <- c('delta', 'lambda', 'f_size', 'Num_of_LFs', 'Num_of_Sig_LFs', 'Num_of_Interactors', 'sampleCV_Performance')
 
   cnt = 1
+  n_failed = 0
   for (d in delta){
     for (l in  lambda){
+
+      loop_summary <- tryCatch({
       ##################################### Get LF.#####################################
       loop_outpath = paste0(input_params$out_path, '/', d, '_', l, '_', 'out/' )
       dir.create(file.path(loop_outpath), showWarnings = F, recursive = T)
@@ -198,7 +201,6 @@ optimizeSLIDE <- function(input_params, sink_file = F){
       } else {
         loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, "NA", "NA", "NA")
       }
-      summary_table[cnt, ] = loop_summary
       cat("The number of total LFs is ", summary_table[cnt, ]$Num_of_LFs, ".\n")
       cat("The number of standalone LFs is ", summary_table[cnt, ]$Num_of_Sig_LFs, ".\n")
       cat("The number of interacting LFs is ", summary_table[cnt, ]$Num_of_Interactors, ".\n")
@@ -206,9 +208,28 @@ optimizeSLIDE <- function(input_params, sink_file = F){
       if (summary_table[cnt, ]$Num_of_Sig_LFs >= 10) {warning("The number of standalone LFs are more than 10, consider increase the spec parameter.")}
       if ((summary_table[cnt, ]$Num_of_Interactors <= 2 ) & (spec > 0.1)) {warning("The number of standalone LFs are less than 2, consider decrease the spec parameter.")}
       if (is.na(summary_table[cnt, ]$sampleCV_Performance) & (spec <= 0.1)) {warning("The number of SLIDE chosen LFs is too big to perform cross-validation performance approximation for this delta, lambda and spec choise. Considering increase spec.")}
+
+      loop_summary  # Return loop_summary from tryCatch
+      }, error = function(e) {
+        if (continue_on_error) {
+          warning(sprintf("SLIDE failed for delta=%.3f, lambda=%.3f: %s", d, l, e$message))
+          n_failed <<- n_failed + 1
+          c(d, l, NA, NA, NA, NA, NA)  # Return NA row
+        } else {
+          stop(e)  # Re-throw if continue_on_error = FALSE
+        }
+      })
+
+      summary_table[cnt, ] = loop_summary
       cnt = cnt+1
     }
   }
+
+  # Print summary
+  n_total <- length(delta) * length(lambda)
+  cat(sprintf("\nCompleted %d/%d delta-lambda combinations (%d failed).\n",
+              n_total - n_failed, n_total, n_failed))
+
   write.csv(summary_table, paste0(input_params$out_path, "/summary_table.csv"))
   return(summary_table)
 }
