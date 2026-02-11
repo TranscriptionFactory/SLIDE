@@ -186,7 +186,7 @@ optimizeSLIDE <- function(input_params, sink_file = FALSE, continue_on_error = T
         calcControlPerformance(z_matrix = z_matrix, y, do_interacts, SLIDE_res, condition = eval_type, loop_outpath)}
 
         # calculate the sampleCV performance
-        performance = sampleCV(y, z_matrix, SLIDE_res, sampleCV_K = sampleCV_K, condition = eval_type, sampleCV_iter = sampleCV_iter, logistic = FALSE, out_path = loop_outpath)
+        performance = round(sampleCV(y, z_matrix, SLIDE_res, sampleCV_K = sampleCV_K, condition = eval_type, sampleCV_iter = sampleCV_iter, logistic = FALSE, out_path = loop_outpath), digits = 4)
 
       # fill in the summary table
         if (do_interacts == TRUE){
