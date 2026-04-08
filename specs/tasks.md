@@ -1,9 +1,10 @@
 ## 1. Project Setup
-- [ ] 1.1 Initialize Rust workspace with Cargo.toml (slide-rs)
-- [ ] 1.2 Set up sub-crates: slide-love, slide-knockoff, slide-core, slide-glmnet, slide-sdp
+- [x] 1.1 Initialize Rust workspace with Cargo.toml (slide-rs) — done: added a root Cargo workspace manifest with shared metadata and validated it with `cargo metadata`/`cargo test --workspace`
+- [x] 1.2 Set up sub-crates: slide-love, slide-knockoff, slide-core, slide-glmnet, slide-sdp — done: scaffolded the core library crates with strict lint placeholders and smoke tests
 - [ ] 1.3 Add dependencies: nalgebra, ndarray, rand, rayon, thiserror, anyhow, serde, csv
 - [ ] 1.4 Set up CI with cargo test, clippy, fmt
 - [ ] 1.5 Create test fixtures from R reference outputs (SSc dataset)
+- [x] 1.2a Align workspace scaffolding with design.md extras: slide-types, cv, score, data-io, slide-cli — done: added design-aligned support crates plus the placeholder binary crate
 
 ## 2. Linear Algebra Foundation
 - [ ] 2.1 Matrix types and conversion (nalgebra ↔ ndarray)

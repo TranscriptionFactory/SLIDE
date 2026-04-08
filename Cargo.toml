@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/slide-types",
+    "crates/slide-love",
+    "crates/slide-knockoff",
+    "crates/slide-core",
+    "crates/slide-glmnet",
+    "crates/slide-sdp",
+    "crates/slide-cv",
+    "crates/slide-score",
+    "crates/slide-data-io",
+    "crates/slide-cli",
+]
+default-members = ["crates/slide-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.79"
+license = "MIT"
+authors = ["SLIDE contributors"]
+repository = "https://github.com/alw399/SLIDE_py"
+
+[workspace.metadata.slide-rs]
+description = "Pure Rust port workspace for the SLIDE pipeline"
