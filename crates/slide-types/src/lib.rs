@@ -2,7 +2,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use nalgebra::{DMatrix, DVector};
-use nalgebra_lapack::SymmetricEigen;
+use nalgebra_lapack::{Cholesky as LapackCholesky, SymmetricEigen};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -11,6 +11,7 @@ use thiserror::Error;
 pub type Scalar = f64;
 
 const SYMMETRY_TOLERANCE: Scalar = 1.0e-12;
+const POSITIVE_DEFINITE_TOLERANCE: Scalar = 0.0;
 
 /// Owned dense matrix representation used at crate boundaries.
 ///
@@ -31,6 +32,12 @@ pub struct EigenDecomposition {
     eigenvectors: Matrix,
 }
 
+/// Cholesky factorization of a symmetric positive-definite matrix.
+#[derive(Clone, Debug)]
+pub struct CholeskyDecomposition {
+    factor: LapackCholesky<Scalar, nalgebra::Dyn>,
+}
+
 /// Errors raised while constructing matrix or vector boundary types.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ShapeError {
@@ -41,12 +48,38 @@ pub enum ShapeError {
 /// Errors raised by linear algebra wrappers.
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum LinearAlgebraError {
-    #[error("matrix must be square for eigendecomposition, got {rows}x{cols}")]
-    NonSquareMatrix { rows: usize, cols: usize },
+    #[error("matrix must be square for {operation}, got {rows}x{cols}")]
+    NonSquareMatrix {
+        operation: &'static str,
+        rows: usize,
+        cols: usize,
+    },
     #[error(
-        "matrix must be symmetric for eigendecomposition; maximum |a_ij - a_ji| was {max_abs_diff:e}"
+        "matrix must be symmetric for {operation}; maximum |a_ij - a_ji| was {max_abs_diff:e}"
     )]
-    NonSymmetricMatrix { max_abs_diff: Scalar },
+    NonSymmetricMatrix {
+        operation: &'static str,
+        max_abs_diff: Scalar,
+    },
+    #[error(
+        "matrix '{matrix_name}' is not positive definite for cholesky; minimum eigenvalue was {min_eigenvalue:e}"
+    )]
+    NotPositiveDefinite {
+        matrix_name: String,
+        min_eigenvalue: Scalar,
+    },
+    #[error("LAPACK cholesky factorization failed for matrix '{matrix_name}'")]
+    CholeskyFactorizationFailed { matrix_name: String },
+    #[error(
+        "cannot solve cholesky system for matrix '{matrix_name}': rhs has {rhs_rows} rows but factor expects {expected_rows}"
+    )]
+    CholeskySolveDimensionMismatch {
+        matrix_name: String,
+        expected_rows: usize,
+        rhs_rows: usize,
+    },
+    #[error("LAPACK cholesky solve failed for matrix '{matrix_name}'")]
+    CholeskySolveFailed { matrix_name: String },
 }
 
 impl Matrix {
@@ -113,8 +146,8 @@ impl Matrix {
     /// by eigenvalue, and normalizes eigenvector signs so the largest-magnitude
     /// entry in each eigenvector is non-negative.
     pub fn symmetric_eigendecomposition(&self) -> Result<EigenDecomposition, LinearAlgebraError> {
-        self.validate_square()?;
-        self.validate_symmetric()?;
+        self.validate_square("eigendecomposition")?;
+        self.validate_symmetric("eigendecomposition")?;
 
         let decomposition = SymmetricEigen::new(self.to_nalgebra());
         let dimension = decomposition.eigenvalues.len();
@@ -139,6 +172,28 @@ impl Matrix {
         })
     }
 
+    /// Compute a Cholesky factorization after an explicit positive-definite check.
+    pub fn cholesky(&self, matrix_name: &str) -> Result<CholeskyDecomposition, LinearAlgebraError> {
+        self.validate_square("cholesky")?;
+        self.validate_symmetric("cholesky")?;
+
+        let min_eigenvalue = self.minimum_eigenvalue()?;
+        if min_eigenvalue <= POSITIVE_DEFINITE_TOLERANCE {
+            return Err(LinearAlgebraError::NotPositiveDefinite {
+                matrix_name: matrix_name.to_owned(),
+                min_eigenvalue,
+            });
+        }
+
+        let factor = LapackCholesky::new(self.to_nalgebra()).ok_or_else(|| {
+            LinearAlgebraError::CholeskyFactorizationFailed {
+                matrix_name: matrix_name.to_owned(),
+            }
+        })?;
+
+        Ok(CholeskyDecomposition { factor })
+    }
+
     /// Number of rows.
     #[must_use]
     pub fn nrows(&self) -> usize {
@@ -157,15 +212,34 @@ impl Matrix {
         self.0.dim()
     }
 
-    fn validate_square(&self) -> Result<(), LinearAlgebraError> {
+    fn minimum_eigenvalue(&self) -> Result<Scalar, LinearAlgebraError> {
+        let decomposition = self.symmetric_eigendecomposition()?;
+        decomposition
+            .eigenvalues()
+            .as_ndarray()
+            .iter()
+            .copied()
+            .min_by(Scalar::total_cmp)
+            .ok_or_else(|| LinearAlgebraError::NonSquareMatrix {
+                operation: "eigendecomposition",
+                rows: self.nrows(),
+                cols: self.ncols(),
+            })
+    }
+
+    fn validate_square(&self, operation: &'static str) -> Result<(), LinearAlgebraError> {
         let (rows, cols) = self.shape();
         if rows != cols {
-            return Err(LinearAlgebraError::NonSquareMatrix { rows, cols });
+            return Err(LinearAlgebraError::NonSquareMatrix {
+                operation,
+                rows,
+                cols,
+            });
         }
         Ok(())
     }
 
-    fn validate_symmetric(&self) -> Result<(), LinearAlgebraError> {
+    fn validate_symmetric(&self, operation: &'static str) -> Result<(), LinearAlgebraError> {
         let n = self.nrows();
         let mut max_abs_diff = 0.0;
         for row in 0..n {
@@ -178,7 +252,10 @@ impl Matrix {
         }
 
         if max_abs_diff > SYMMETRY_TOLERANCE {
-            return Err(LinearAlgebraError::NonSymmetricMatrix { max_abs_diff });
+            return Err(LinearAlgebraError::NonSymmetricMatrix {
+                operation,
+                max_abs_diff,
+            });
         }
         Ok(())
     }
@@ -195,6 +272,60 @@ impl EigenDecomposition {
     #[must_use]
     pub fn eigenvectors(&self) -> &Matrix {
         &self.eigenvectors
+    }
+}
+
+impl CholeskyDecomposition {
+    /// Retrieve the lower-triangular Cholesky factor.
+    #[must_use]
+    pub fn lower_factor(&self) -> Matrix {
+        Matrix::from_nalgebra(self.factor.l())
+    }
+
+    /// Solve `A x = b` using the factored form.
+    pub fn solve_vector(
+        &self,
+        rhs: &Vector,
+        matrix_name: &str,
+    ) -> Result<Vector, LinearAlgebraError> {
+        let dimension = self.factor.l_dirty().nrows();
+        if rhs.len() != dimension {
+            return Err(LinearAlgebraError::CholeskySolveDimensionMismatch {
+                matrix_name: matrix_name.to_owned(),
+                expected_rows: dimension,
+                rhs_rows: rhs.len(),
+            });
+        }
+
+        let solved = self.factor.solve(&rhs.to_nalgebra()).ok_or_else(|| {
+            LinearAlgebraError::CholeskySolveFailed {
+                matrix_name: matrix_name.to_owned(),
+            }
+        })?;
+        Ok(Vector::from_nalgebra(solved))
+    }
+
+    /// Solve `A X = B` using the factored form.
+    pub fn solve_matrix(
+        &self,
+        rhs: &Matrix,
+        matrix_name: &str,
+    ) -> Result<Matrix, LinearAlgebraError> {
+        let dimension = self.factor.l_dirty().nrows();
+        if rhs.nrows() != dimension {
+            return Err(LinearAlgebraError::CholeskySolveDimensionMismatch {
+                matrix_name: matrix_name.to_owned(),
+                expected_rows: dimension,
+                rhs_rows: rhs.nrows(),
+            });
+        }
+
+        let solved = self.factor.solve(&rhs.to_nalgebra()).ok_or_else(|| {
+            LinearAlgebraError::CholeskySolveFailed {
+                matrix_name: matrix_name.to_owned(),
+            }
+        })?;
+        Ok(Matrix::from_nalgebra(solved))
     }
 }
 
@@ -286,7 +417,7 @@ fn normalize_eigenvector_sign(vector: &mut DVector<Scalar>) {
 #[cfg(test)]
 mod tests {
     use super::{LinearAlgebraError, Matrix, ShapeError, Vector};
-    use nalgebra::{dmatrix, dvector, DMatrix};
+    use nalgebra::{dmatrix, dvector, DMatrix, DVector};
     use ndarray::{arr1, arr2};
 
     const TEST_TOLERANCE: f64 = 1.0e-10;
@@ -383,7 +514,11 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(LinearAlgebraError::NonSquareMatrix { rows: 2, cols: 3 })
+            Err(LinearAlgebraError::NonSquareMatrix {
+                operation: "eigendecomposition",
+                rows: 2,
+                cols: 3,
+            })
         );
     }
 
@@ -394,11 +529,108 @@ mod tests {
         let result = matrix.symmetric_eigendecomposition();
 
         match result {
-            Err(LinearAlgebraError::NonSymmetricMatrix { max_abs_diff }) => {
+            Err(LinearAlgebraError::NonSymmetricMatrix {
+                operation,
+                max_abs_diff,
+            }) => {
+                assert_eq!(operation, "eigendecomposition");
                 assert!((max_abs_diff - 1.0e-6).abs() <= 1.0e-12);
             }
             other => panic!("expected symmetry error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn cholesky_returns_lower_factor_and_solves_systems() {
+        let matrix = Matrix::from_ndarray(arr2(&[[4.0, 2.0], [2.0, 3.0]]));
+        let rhs_vector = Vector::from_ndarray(arr1(&[1.0, 1.0]));
+        let rhs_matrix = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.0, 1.0]]));
+
+        let decomposition = match matrix.cholesky("Sigma") {
+            Ok(value) => value,
+            Err(error) => panic!("cholesky should succeed: {error}"),
+        };
+
+        let lower = decomposition.lower_factor().to_nalgebra();
+        assert_matrix_close(&lower, &dmatrix![2.0, 0.0; 1.0, 1.4142135623730951], 1.0e-9);
+
+        let solved_vector = match decomposition.solve_vector(&rhs_vector, "Sigma") {
+            Ok(value) => value,
+            Err(error) => panic!("vector solve should succeed: {error}"),
+        };
+        let solved_matrix = match decomposition.solve_matrix(&rhs_matrix, "Sigma") {
+            Ok(value) => value,
+            Err(error) => panic!("matrix solve should succeed: {error}"),
+        };
+
+        assert_vector_close(
+            &solved_vector.to_nalgebra(),
+            &dvector![0.125, 0.25],
+            TEST_TOLERANCE,
+        );
+        assert_matrix_close(
+            &solved_matrix.to_nalgebra(),
+            &dmatrix![0.375, -0.25; -0.25, 0.5],
+            TEST_TOLERANCE,
+        );
+    }
+
+    #[test]
+    fn cholesky_rejects_non_positive_definite_matrices_with_min_eigenvalue() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [2.0, 1.0]]));
+
+        let result = matrix.cholesky("covariance");
+
+        match result {
+            Err(LinearAlgebraError::NotPositiveDefinite {
+                matrix_name,
+                min_eigenvalue,
+            }) => {
+                assert_eq!(matrix_name, "covariance");
+                assert!((min_eigenvalue + 1.0).abs() <= TEST_TOLERANCE);
+            }
+            other => panic!("expected positive-definite error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cholesky_rejects_non_symmetric_matrices() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [2.1, 3.0]]));
+
+        let result = matrix.cholesky("Sigma");
+
+        match result {
+            Err(LinearAlgebraError::NonSymmetricMatrix {
+                operation,
+                max_abs_diff,
+            }) => {
+                assert_eq!(operation, "cholesky");
+                assert!((max_abs_diff - 0.1).abs() <= TEST_TOLERANCE);
+            }
+            other => panic!("expected symmetry error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cholesky_rejects_rhs_dimension_mismatch() {
+        let matrix = Matrix::from_ndarray(arr2(&[[2.0, 0.0], [0.0, 3.0]]));
+        let rhs_vector = Vector::from_ndarray(arr1(&[1.0, 2.0, 3.0]));
+
+        let decomposition = match matrix.cholesky("Sigma") {
+            Ok(value) => value,
+            Err(error) => panic!("cholesky should succeed: {error}"),
+        };
+
+        let result = decomposition.solve_vector(&rhs_vector, "Sigma");
+
+        assert_eq!(
+            result,
+            Err(LinearAlgebraError::CholeskySolveDimensionMismatch {
+                matrix_name: "Sigma".to_owned(),
+                expected_rows: 2,
+                rhs_rows: 3,
+            })
+        );
     }
 
     fn assert_matrix_close(left: &DMatrix<f64>, right: &DMatrix<f64>, tolerance: f64) {
@@ -413,6 +645,19 @@ mod tests {
                     right[(row, col)]
                 );
             }
+        }
+    }
+
+    fn assert_vector_close(left: &DVector<f64>, right: &DVector<f64>, tolerance: f64) {
+        assert_eq!(left.len(), right.len());
+        for index in 0..left.len() {
+            let diff = (left[index] - right[index]).abs();
+            assert!(
+                diff <= tolerance,
+                "vector mismatch at {index}: left={}, right={}, diff={diff}",
+                left[index],
+                right[index]
+            );
         }
     }
 }
