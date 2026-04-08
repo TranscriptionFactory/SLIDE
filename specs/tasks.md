@@ -9,7 +9,7 @@
 - [ ] 1.5a Add committed `tests/fixtures/` generation assets or a portable SSc fixture snapshot so correctness tests do not depend on external `/ix/...` paths
 
 ## 2. Linear Algebra Foundation
-- [ ] 2.1 Matrix types and conversion (nalgebra ↔ ndarray)
+- [x] 2.1 Matrix types and conversion (nalgebra ↔ ndarray) — done: added `slide-types` Matrix/Vector newtypes with ndarray↔nalgebra conversions, shape validation, and unit tests
 - [ ] 2.2 Eigendecomposition wrapper (matching LAPACK dsyev)
 - [ ] 2.3 Cholesky decomposition with PD checks
 - [ ] 2.4 Pseudoinverse (pinv) implementation
