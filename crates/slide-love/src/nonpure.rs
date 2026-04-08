@@ -420,6 +420,22 @@ mod tests {
     }
 
     #[test]
+    fn est_aj_dant_propagates_infeasible_row_failure_as_none() {
+        let c_hat = Matrix::from_ndarray(arr2(&[[0.0]]));
+        let y = Matrix::from_ndarray(arr2(&[[1.0, 0.0]]));
+        let se_est_j = Vector::from_ndarray(arr1(&[1.0, 1.0]));
+
+        let aj = est_aj_dant(&c_hat, &y, 0.0, &se_est_j).unwrap_or_else(|error| {
+            panic!("est_aj_dant should pass dimension validation: {error}")
+        });
+
+        assert!(
+            aj.is_none(),
+            "expected infeasible Dantzig row to propagate failure as None"
+        );
+    }
+
+    #[test]
     fn est_y_rejects_out_of_bounds_pure_index() {
         let sigma = Matrix::from_ndarray(arr2(&[[1.0, 0.2], [0.2, 1.0]]));
         let ai = Matrix::from_ndarray(arr2(&[[1.0], [0.0]]));
