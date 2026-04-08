@@ -10,7 +10,7 @@
 
 ## 2. Linear Algebra Foundation
 - [x] 2.1 Matrix types and conversion (nalgebra ↔ ndarray) — done: added `slide-types` Matrix/Vector newtypes with ndarray↔nalgebra conversions, shape validation, and unit tests
-- [ ] 2.2 Eigendecomposition wrapper (matching LAPACK dsyev)
+- [x] 2.2 Eigendecomposition wrapper (matching LAPACK dsyev) — done: added a LAPACK-backed symmetric eigensolver wrapper with square/symmetry validation, descending eigenpair ordering, sign normalization, and unit tests
 - [ ] 2.3 Cholesky decomposition with PD checks
 - [ ] 2.4 Pseudoinverse (pinv) implementation
 - [ ] 2.5 Graphical lasso (glasso) implementation for precision matrix

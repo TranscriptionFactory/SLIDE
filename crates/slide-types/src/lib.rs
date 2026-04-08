@@ -2,12 +2,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use nalgebra::{DMatrix, DVector};
+use nalgebra_lapack::SymmetricEigen;
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Scalar type used across the Rust SLIDE port.
 pub type Scalar = f64;
+
+const SYMMETRY_TOLERANCE: Scalar = 1.0e-12;
 
 /// Owned dense matrix representation used at crate boundaries.
 ///
@@ -21,11 +24,29 @@ pub struct Matrix(Array2<Scalar>);
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vector(Array1<Scalar>);
 
+/// Deterministic eigendecomposition of a real symmetric matrix.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EigenDecomposition {
+    eigenvalues: Vector,
+    eigenvectors: Matrix,
+}
+
 /// Errors raised while constructing matrix or vector boundary types.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ShapeError {
     #[error("matrix rows must all have the same length")]
     RaggedRows,
+}
+
+/// Errors raised by linear algebra wrappers.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum LinearAlgebraError {
+    #[error("matrix must be square for eigendecomposition, got {rows}x{cols}")]
+    NonSquareMatrix { rows: usize, cols: usize },
+    #[error(
+        "matrix must be symmetric for eigendecomposition; maximum |a_ij - a_ji| was {max_abs_diff:e}"
+    )]
+    NonSymmetricMatrix { max_abs_diff: Scalar },
 }
 
 impl Matrix {
@@ -85,6 +106,39 @@ impl Matrix {
         DMatrix::from_row_slice(self.nrows(), self.ncols(), &data)
     }
 
+    /// Compute a deterministic symmetric eigendecomposition.
+    ///
+    /// The wrapper validates that the matrix is square and symmetric, delegates
+    /// to a symmetric LAPACK-backed solver, sorts eigenpairs in descending order
+    /// by eigenvalue, and normalizes eigenvector signs so the largest-magnitude
+    /// entry in each eigenvector is non-negative.
+    pub fn symmetric_eigendecomposition(&self) -> Result<EigenDecomposition, LinearAlgebraError> {
+        self.validate_square()?;
+        self.validate_symmetric()?;
+
+        let decomposition = SymmetricEigen::new(self.to_nalgebra());
+        let dimension = decomposition.eigenvalues.len();
+        let mut order: Vec<_> = (0..dimension).collect();
+        order.sort_by(|&left, &right| {
+            decomposition.eigenvalues[right].total_cmp(&decomposition.eigenvalues[left])
+        });
+
+        let mut eigenvalues = Vec::with_capacity(dimension);
+        let mut eigenvectors = DMatrix::zeros(dimension, dimension);
+
+        for (target_col, source_col) in order.into_iter().enumerate() {
+            eigenvalues.push(decomposition.eigenvalues[source_col]);
+            let mut column = decomposition.eigenvectors.column(source_col).clone_owned();
+            normalize_eigenvector_sign(&mut column);
+            eigenvectors.set_column(target_col, &column);
+        }
+
+        Ok(EigenDecomposition {
+            eigenvalues: Vector::from_nalgebra(DVector::from_vec(eigenvalues)),
+            eigenvectors: Matrix::from_nalgebra(eigenvectors),
+        })
+    }
+
     /// Number of rows.
     #[must_use]
     pub fn nrows(&self) -> usize {
@@ -101,6 +155,46 @@ impl Matrix {
     #[must_use]
     pub fn shape(&self) -> (usize, usize) {
         self.0.dim()
+    }
+
+    fn validate_square(&self) -> Result<(), LinearAlgebraError> {
+        let (rows, cols) = self.shape();
+        if rows != cols {
+            return Err(LinearAlgebraError::NonSquareMatrix { rows, cols });
+        }
+        Ok(())
+    }
+
+    fn validate_symmetric(&self) -> Result<(), LinearAlgebraError> {
+        let n = self.nrows();
+        let mut max_abs_diff = 0.0;
+        for row in 0..n {
+            for col in (row + 1)..n {
+                let diff = (self.0[(row, col)] - self.0[(col, row)]).abs();
+                if diff > max_abs_diff {
+                    max_abs_diff = diff;
+                }
+            }
+        }
+
+        if max_abs_diff > SYMMETRY_TOLERANCE {
+            return Err(LinearAlgebraError::NonSymmetricMatrix { max_abs_diff });
+        }
+        Ok(())
+    }
+}
+
+impl EigenDecomposition {
+    /// Eigenvalues sorted in descending order.
+    #[must_use]
+    pub fn eigenvalues(&self) -> &Vector {
+        &self.eigenvalues
+    }
+
+    /// Orthonormal eigenvectors stored column-wise.
+    #[must_use]
+    pub fn eigenvectors(&self) -> &Matrix {
+        &self.eigenvectors
     }
 }
 
@@ -172,11 +266,30 @@ impl From<DVector<Scalar>> for Vector {
     }
 }
 
+fn normalize_eigenvector_sign(vector: &mut DVector<Scalar>) {
+    let mut pivot_index = 0;
+    let mut pivot_abs_value = 0.0;
+
+    for (index, value) in vector.iter().enumerate() {
+        let abs_value = value.abs();
+        if abs_value > pivot_abs_value {
+            pivot_index = index;
+            pivot_abs_value = abs_value;
+        }
+    }
+
+    if pivot_abs_value > 0.0 && vector[pivot_index].is_sign_negative() {
+        *vector *= -1.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Matrix, ShapeError, Vector};
-    use nalgebra::{dmatrix, dvector};
+    use super::{LinearAlgebraError, Matrix, ShapeError, Vector};
+    use nalgebra::{dmatrix, dvector, DMatrix};
     use ndarray::{arr1, arr2};
+
+    const TEST_TOLERANCE: f64 = 1.0e-10;
 
     #[test]
     fn converts_ndarray_matrix_to_nalgebra_with_same_values() {
@@ -229,5 +342,77 @@ mod tests {
         let vector = Vector::from_nalgebra(dvector![5.0, -2.0, 9.5]);
 
         assert_eq!(vector.as_ndarray(), &arr1(&[5.0, -2.0, 9.5]));
+    }
+
+    #[test]
+    fn eigendecomposition_returns_descending_eigenpairs_and_reconstructs_matrix() {
+        let matrix = Matrix::from_ndarray(arr2(&[[2.0, 1.0], [1.0, 2.0]]));
+
+        let decomposition = match matrix.symmetric_eigendecomposition() {
+            Ok(value) => value,
+            Err(error) => panic!("eigendecomposition should succeed: {error}"),
+        };
+
+        assert_eq!(decomposition.eigenvalues().as_ndarray(), &arr1(&[3.0, 1.0]));
+
+        let vectors = decomposition.eigenvectors().to_nalgebra();
+        for column in 0..vectors.ncols() {
+            let eigenvector = vectors.column(column);
+            let mut pivot_index = 0;
+            let mut pivot_abs_value = 0.0;
+            for (index, value) in eigenvector.iter().enumerate() {
+                let abs_value = value.abs();
+                if abs_value > pivot_abs_value {
+                    pivot_index = index;
+                    pivot_abs_value = abs_value;
+                }
+            }
+            assert!(eigenvector[pivot_index] >= 0.0);
+        }
+
+        let diagonal = DMatrix::from_diagonal(&decomposition.eigenvalues().to_nalgebra());
+        let reconstructed = &vectors * diagonal * vectors.transpose();
+        assert_matrix_close(&reconstructed, &matrix.to_nalgebra(), TEST_TOLERANCE);
+    }
+
+    #[test]
+    fn eigendecomposition_rejects_non_square_matrices() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]]));
+
+        let result = matrix.symmetric_eigendecomposition();
+
+        assert_eq!(
+            result,
+            Err(LinearAlgebraError::NonSquareMatrix { rows: 2, cols: 3 })
+        );
+    }
+
+    #[test]
+    fn eigendecomposition_rejects_non_symmetric_matrices() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [2.0 + 1.0e-6, 3.0]]));
+
+        let result = matrix.symmetric_eigendecomposition();
+
+        match result {
+            Err(LinearAlgebraError::NonSymmetricMatrix { max_abs_diff }) => {
+                assert!((max_abs_diff - 1.0e-6).abs() <= 1.0e-12);
+            }
+            other => panic!("expected symmetry error, got {other:?}"),
+        }
+    }
+
+    fn assert_matrix_close(left: &DMatrix<f64>, right: &DMatrix<f64>, tolerance: f64) {
+        assert_eq!(left.shape(), right.shape());
+        for row in 0..left.nrows() {
+            for col in 0..left.ncols() {
+                let diff = (left[(row, col)] - right[(row, col)]).abs();
+                assert!(
+                    diff <= tolerance,
+                    "matrix mismatch at ({row}, {col}): left={}, right={}, diff={diff}",
+                    left[(row, col)],
+                    right[(row, col)]
+                );
+            }
+        }
     }
 }

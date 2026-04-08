@@ -26,6 +26,7 @@ repository = "https://github.com/alw399/SLIDE_py"
 anyhow = "1.0"
 csv = "1.3"
 nalgebra = { version = "0.33", features = ["serde-serialize"] }
+nalgebra-lapack = { version = "0.25", default-features = false, features = ["openblas"] }
 ndarray = { version = "0.16", features = ["rayon", "serde"] }
 rand = "0.8"
 rayon = "1.10"
