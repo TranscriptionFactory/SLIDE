@@ -19,7 +19,7 @@
 - [ ] 3.1 Delta cross-validation (CV_delta, KfoldCV_delta)
 - [x] 3.2 Pure variable detection — homogeneous (EstAI, EstC, FindSignPureNode) — done: added slide-love pure_homo module with deterministic sign partitioning, EstAI/EstC helpers, and targeted unit tests
 - [ ] 3.3 Pure variable detection — heterogeneous (Est_BI_C, Re_Est_Pure) — must match R
-- [ ] 3.4 Non-pure row estimation (EstY, EstAJInv, EstAJDant, Dantzig LP)
+- [x] 3.4 Non-pure row estimation (EstY, EstAJInv, EstAJDant, Dantzig LP) — done: added slide-love non-pure estimation helpers plus Clarabel-backed ST/Dantzig LP solvers with focused tests for sign adjustment, normalization, and closed-form identity cases
 - [ ] 3.5 Precision matrix estimation (estOmega via glasso)
 - [ ] 3.6 Z-matrix computation (MAP estimate)
 - [ ] 3.7 Pre-screening (Screen_X) — must match R
