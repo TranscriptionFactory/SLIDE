@@ -21,7 +21,7 @@
 - [ ] 3.3 Pure variable detection — heterogeneous (Est_BI_C, Re_Est_Pure) — must match R
 - [x] 3.4 Non-pure row estimation (EstY, EstAJInv, EstAJDant, Dantzig LP) — done: added slide-love non-pure estimation helpers plus Clarabel-backed ST/Dantzig LP solvers with focused tests for sign adjustment, normalization, and closed-form identity cases
 - [ ] 3.5 Precision matrix estimation (estOmega via glasso)
-- [ ] 3.6 Z-matrix computation (MAP estimate)
+- [x] 3.6 Z-matrix computation (MAP estimate) — done: added slide-love MAP Z-score helper with Gamma-weighted loadings, pseudoinverse-based C/G solves, and focused tests for diagonal closed forms plus singular-C behavior
 - [ ] 3.7 Pre-screening (Screen_X) — must match R
 - [ ] 3.8 LOVE integration tests against R reference
 
