@@ -17,7 +17,7 @@
 
 ## 3. LOVE Implementation
 - [ ] 3.1 Delta cross-validation (CV_delta, KfoldCV_delta)
-- [ ] 3.2 Pure variable detection — homogeneous (EstAI, EstC, FindSignPureNode)
+- [x] 3.2 Pure variable detection — homogeneous (EstAI, EstC, FindSignPureNode) — done: added slide-love pure_homo module with deterministic sign partitioning, EstAI/EstC helpers, and targeted unit tests
 - [ ] 3.3 Pure variable detection — heterogeneous (Est_BI_C, Re_Est_Pure) — must match R
 - [ ] 3.4 Non-pure row estimation (EstY, EstAJInv, EstAJDant, Dantzig LP)
 - [ ] 3.5 Precision matrix estimation (estOmega via glasso)
