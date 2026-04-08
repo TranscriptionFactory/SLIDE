@@ -14,6 +14,8 @@ unsafe_code = "forbid"
 path = "src/lib.rs"
 
 [dependencies]
+clarabel = "0.11.1"
+log = "0.4"
 nalgebra.workspace = true
 ndarray.workspace = true
 rayon.workspace = true
