@@ -12,7 +12,7 @@
 - [x] 2.1 Matrix types and conversion (nalgebra ↔ ndarray) — done: added `slide-types` Matrix/Vector newtypes with ndarray↔nalgebra conversions, shape validation, and unit tests
 - [x] 2.2 Eigendecomposition wrapper (matching LAPACK dsyev) — done: added a LAPACK-backed symmetric eigensolver wrapper with square/symmetry validation, descending eigenpair ordering, sign normalization, and unit tests
 - [x] 2.3 Cholesky decomposition with PD checks — done: added a LAPACK-backed Cholesky wrapper with explicit minimum-eigenvalue PD checks, descriptive errors, triangular factor access, factored solves, and unit tests
-- [ ] 2.4 Pseudoinverse (pinv) implementation
+- [x] 2.4 Pseudoinverse (pinv) implementation — done: added a LAPACK-SVD-based pseudoinverse with configurable singular-value cutoff and unit tests for full-rank, singular, and rectangular matrices
 - [ ] 2.5 Graphical lasso (glasso) implementation for precision matrix
 
 ## 3. LOVE Implementation

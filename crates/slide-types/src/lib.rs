@@ -2,7 +2,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use nalgebra::{DMatrix, DVector};
-use nalgebra_lapack::{Cholesky as LapackCholesky, SymmetricEigen};
+use nalgebra_lapack::{Cholesky as LapackCholesky, SymmetricEigen, SVD as LapackSvd};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,6 +12,7 @@ pub type Scalar = f64;
 
 const SYMMETRY_TOLERANCE: Scalar = 1.0e-12;
 const POSITIVE_DEFINITE_TOLERANCE: Scalar = 0.0;
+const DEFAULT_PSEUDOINVERSE_EPSILON: Scalar = 1.0e-12;
 
 /// Owned dense matrix representation used at crate boundaries.
 ///
@@ -80,6 +81,8 @@ pub enum LinearAlgebraError {
     },
     #[error("LAPACK cholesky solve failed for matrix '{matrix_name}'")]
     CholeskySolveFailed { matrix_name: String },
+    #[error("LAPACK SVD failed while computing pseudoinverse")]
+    SvdFailed,
 }
 
 impl Matrix {
@@ -192,6 +195,20 @@ impl Matrix {
         })?;
 
         Ok(CholeskyDecomposition { factor })
+    }
+
+    /// Compute the Moore-Penrose pseudoinverse via LAPACK-backed SVD.
+    pub fn pseudoinverse(&self) -> Result<Matrix, LinearAlgebraError> {
+        self.pseudoinverse_with_epsilon(DEFAULT_PSEUDOINVERSE_EPSILON)
+    }
+
+    /// Compute the Moore-Penrose pseudoinverse via LAPACK-backed SVD.
+    pub fn pseudoinverse_with_epsilon(
+        &self,
+        epsilon: Scalar,
+    ) -> Result<Matrix, LinearAlgebraError> {
+        let svd = LapackSvd::new(self.to_nalgebra()).ok_or(LinearAlgebraError::SvdFailed)?;
+        Ok(Matrix::from_nalgebra(svd.pseudo_inverse(epsilon)))
     }
 
     /// Number of rows.
@@ -630,6 +647,72 @@ mod tests {
                 expected_rows: 2,
                 rhs_rows: 3,
             })
+        );
+    }
+
+    #[test]
+    fn pseudoinverse_matches_inverse_for_full_rank_square_matrix() {
+        let matrix = Matrix::from_ndarray(arr2(&[[4.0, 2.0], [1.0, 3.0]]));
+
+        let pseudoinverse = match matrix.pseudoinverse() {
+            Ok(value) => value,
+            Err(error) => panic!("pseudoinverse should succeed: {error}"),
+        };
+
+        assert_matrix_close(
+            &pseudoinverse.to_nalgebra(),
+            &dmatrix![0.3, -0.2; -0.1, 0.4],
+            1.0e-10,
+        );
+    }
+
+    #[test]
+    fn pseudoinverse_handles_rank_deficient_square_matrix() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [2.0, 4.0]]));
+
+        let pseudoinverse = match matrix.pseudoinverse() {
+            Ok(value) => value,
+            Err(error) => panic!("pseudoinverse should succeed: {error}"),
+        };
+
+        assert_matrix_close(
+            &pseudoinverse.to_nalgebra(),
+            &dmatrix![0.04, 0.08; 0.08, 0.16],
+            1.0e-10,
+        );
+    }
+
+    #[test]
+    fn pseudoinverse_satisfies_moore_penrose_reconstruction_for_rectangular_matrix() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]));
+
+        let pseudoinverse = match matrix.pseudoinverse() {
+            Ok(value) => value,
+            Err(error) => panic!("pseudoinverse should succeed: {error}"),
+        };
+
+        let original = matrix.to_nalgebra();
+        let pinv = pseudoinverse.to_nalgebra();
+        let reconstructed = &original * &pinv * &original;
+        let reverse_reconstructed = &pinv * &original * &pinv;
+
+        assert_matrix_close(&reconstructed, &original, 1.0e-9);
+        assert_matrix_close(&reverse_reconstructed, &pinv, 1.0e-9);
+    }
+
+    #[test]
+    fn pseudoinverse_respects_singular_value_cutoff() {
+        let matrix = Matrix::from_ndarray(arr2(&[[1.0e-14, 0.0], [0.0, 2.0]]));
+
+        let pseudoinverse = match matrix.pseudoinverse_with_epsilon(1.0e-12) {
+            Ok(value) => value,
+            Err(error) => panic!("pseudoinverse should succeed: {error}"),
+        };
+
+        assert_matrix_close(
+            &pseudoinverse.to_nalgebra(),
+            &dmatrix![0.0, 0.0; 0.0, 0.5],
+            1.0e-12,
         );
     }
 
