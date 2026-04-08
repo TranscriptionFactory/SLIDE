@@ -12,3 +12,10 @@ unsafe_code = "forbid"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+csv.workspace = true
+ndarray.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+slide-types = { path = "../slide-types" }

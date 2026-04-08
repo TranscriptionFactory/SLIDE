@@ -13,3 +13,7 @@ unsafe_code = "forbid"
 [[bin]]
 name = "slide-cli"
 path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+slide-core = { path = "../slide-core" }
