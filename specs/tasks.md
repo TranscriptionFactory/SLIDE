@@ -4,8 +4,9 @@
 - [x] 1.3 Add dependencies: nalgebra, ndarray, rand, rayon, thiserror, anyhow, serde, csv — done: added shared workspace versions and wired crate-level dependencies for the scaffolded crates
 - [ ] 1.3a Add design-specific supporting deps when implementation begins: clarabel, proptest, criterion, MT19937-compatible RNG
 - [x] 1.4 Set up CI with cargo test, clippy, fmt — done: added a dedicated GitHub Actions Rust workflow running fmt, clippy (-D warnings), and workspace tests
-- [ ] 1.5 Create test fixtures from R reference outputs (SSc dataset)
+- [~] 1.5 Create test fixtures from R reference outputs (SSc dataset) — blocked: repo lacks committed SSc fixture inputs/outputs and this environment has no `Rscript`; existing SSc references point to external `/ix/...` paths
 - [x] 1.2a Align workspace scaffolding with design.md extras: slide-types, cv, score, data-io, slide-cli — done: added design-aligned support crates plus the placeholder binary crate
+- [ ] 1.5a Add committed `tests/fixtures/` generation assets or a portable SSc fixture snapshot so correctness tests do not depend on external `/ix/...` paths
 
 ## 2. Linear Algebra Foundation
 - [ ] 2.1 Matrix types and conversion (nalgebra ↔ ndarray)
