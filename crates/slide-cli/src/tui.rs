@@ -10,7 +10,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ndarray::Array1;
+use ndarray::{Array1, Array2};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Alignment, Color, Line, Modifier, Style, Stylize};
@@ -64,6 +64,11 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                     KeyCode::PageDown => app.next_factor(),
                     KeyCode::PageUp => app.prev_factor(),
                     KeyCode::Char('r') => app.reload()?,
+                    KeyCode::Char('v') => {
+                        if app.tab == Tab::Love {
+                            app.love_sub_view = app.love_sub_view.next();
+                        }
+                    }
                     _ => {}
                 },
                 Event::Resize(_, _) => {}
@@ -90,6 +95,34 @@ impl Tab {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoveSubView {
+    Diagnostics,
+    FactorCovariance,
+    LoadingMatrix,
+    GroupCorrelation,
+}
+
+impl LoveSubView {
+    fn next(self) -> Self {
+        match self {
+            Self::Diagnostics => Self::FactorCovariance,
+            Self::FactorCovariance => Self::LoadingMatrix,
+            Self::LoadingMatrix => Self::GroupCorrelation,
+            Self::GroupCorrelation => Self::Diagnostics,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Diagnostics => "Diagnostics",
+            Self::FactorCovariance => "Factor Covariance (C)",
+            Self::LoadingMatrix => "Loading Matrix (A)",
+            Self::GroupCorrelation => "Group Correlation",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct App {
     args: TuiArgs,
@@ -101,6 +134,7 @@ struct App {
     last_error: Option<String>,
     progress: Option<ProgressReport>,
     progress_mtime: Option<SystemTime>,
+    love_sub_view: LoveSubView,
 }
 
 impl App {
@@ -122,6 +156,7 @@ impl App {
             last_error: None,
             progress: None,
             progress_mtime: None,
+            love_sub_view: LoveSubView::Diagnostics,
         })
     }
 
@@ -300,13 +335,17 @@ impl App {
             }
         }
 
-        let footer = Line::from(vec![
+        let mut footer_spans = vec![
             "q quit".into(),
             " | tab switch".dark_gray(),
             " | j/k run".dark_gray(),
             " | pgup/pgdn factor".dark_gray(),
             " | r reload".dark_gray(),
-        ]);
+        ];
+        if self.tab == Tab::Love {
+            footer_spans.push(" | v heatmap".dark_gray());
+        }
+        let footer = Line::from(footer_spans);
         frame.render_widget(Paragraph::new(footer), layout[2]);
     }
 
@@ -403,7 +442,20 @@ impl App {
             middle[0],
         );
         frame.render_widget(self.delta_profile_widget(), middle[1]);
-        frame.render_widget(self.love_detail_widget(), sections[2]);
+        match self.love_sub_view {
+            LoveSubView::Diagnostics => {
+                frame.render_widget(self.love_detail_widget(), sections[2]);
+            }
+            LoveSubView::FactorCovariance => {
+                frame.render_widget(self.factor_covariance_heatmap(), sections[2]);
+            }
+            LoveSubView::LoadingMatrix => {
+                frame.render_widget(self.loading_matrix_heatmap(), sections[2]);
+            }
+            LoveSubView::GroupCorrelation => {
+                frame.render_widget(self.group_correlation_heatmap(), sections[2]);
+            }
+        }
     }
 
     fn summary_widget(&self) -> Paragraph<'static> {
@@ -789,6 +841,160 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title("LOVE Diagnostics"))
             .wrap(Wrap { trim: true })
     }
+
+    fn factor_covariance_heatmap(&self) -> Table<'static> {
+        let title = self.love_sub_view.label();
+        let Some(run) = self.current_run() else {
+            return empty_table(title);
+        };
+        let k = run.love.k;
+        if k == 0 {
+            return empty_table(title);
+        }
+        let c = run.love.c.as_ndarray();
+        let mut header = vec![Cell::from("")];
+        for f in 0..k {
+            header.push(Cell::from(format!("F{}", f + 1)));
+        }
+        let rows: Vec<Row> = (0..k)
+            .map(|i| {
+                let mut cells = vec![Cell::from(format!("F{}", i + 1))];
+                for j in 0..k {
+                    let v = c[(i, j)];
+                    cells.push(
+                        Cell::from(format!("{v:.2}"))
+                            .style(Style::default().fg(diverging_color(v))),
+                    );
+                }
+                Row::new(cells)
+            })
+            .collect();
+        let mut widths = vec![Constraint::Length(4)];
+        widths.extend((0..k).map(|_| Constraint::Length(7)));
+        Table::new(rows, widths)
+            .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
+            .block(Block::default().borders(Borders::ALL).title(title))
+    }
+
+    fn loading_matrix_heatmap(&self) -> Table<'static> {
+        let title = self.love_sub_view.label();
+        let Some(run) = self.current_run() else {
+            return empty_table(title);
+        };
+        let k = run.love.k;
+        if k == 0 {
+            return empty_table(title);
+        }
+        let a = run.love.a.as_ndarray();
+        let nfeatures = a.nrows();
+
+        // Collect top 8 variable indices per factor
+        let mut selected_vars = std::collections::BTreeSet::new();
+        for factor in 0..k {
+            let mut indices: Vec<usize> = (0..nfeatures).collect();
+            indices.sort_by(|&i, &j| {
+                a[(j, factor)]
+                    .abs()
+                    .total_cmp(&a[(i, factor)].abs())
+            });
+            for &idx in indices.iter().take(8) {
+                selected_vars.insert(idx);
+            }
+        }
+        let var_indices: Vec<usize> = selected_vars.into_iter().collect();
+
+        // Check pure membership per variable
+        let pure_set: std::collections::HashSet<usize> = run
+            .love
+            .pure_ind
+            .iter()
+            .flat_map(|g| g.pos.iter().chain(g.neg.iter()).copied())
+            .collect();
+
+        let mut header = vec![Cell::from("var".to_owned())];
+        for f in 0..k {
+            header.push(Cell::from(format!("F{}", f + 1)));
+        }
+        header.push(Cell::from("pure?".to_owned()));
+
+        let feature_names = &self.data().feature_names;
+        let rows: Vec<Row> = var_indices
+            .iter()
+            .map(|&vi| {
+                let name = feature_names
+                    .get(vi)
+                    .cloned()
+                    .unwrap_or_else(|| format!("f{}", vi + 1));
+                let truncated: String = name.chars().take(16).collect();
+                let mut cells = vec![Cell::from(truncated)];
+                for f in 0..k {
+                    let v = a[(vi, f)];
+                    let text = if v.abs() < 0.01 {
+                        ".".to_owned()
+                    } else {
+                        format!("{v:.2}")
+                    };
+                    cells.push(
+                        Cell::from(text).style(Style::default().fg(diverging_color(v))),
+                    );
+                }
+                let is_pure = if pure_set.contains(&vi) { "Y" } else { "" };
+                cells.push(Cell::from(is_pure.to_owned()));
+                Row::new(cells)
+            })
+            .collect();
+
+        let mut widths = vec![Constraint::Length(17)];
+        widths.extend((0..k).map(|_| Constraint::Length(7)));
+        widths.push(Constraint::Length(5));
+        Table::new(rows, widths)
+            .header(
+                Row::new(header)
+                    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            )
+            .block(Block::default().borders(Borders::ALL).title(title))
+    }
+
+    fn group_correlation_heatmap(&self) -> Table<'static> {
+        let title = self.love_sub_view.label();
+        let Some(run) = self.current_run() else {
+            return empty_table(title);
+        };
+        let k = run.love.k;
+        if k == 0 {
+            return empty_table(title);
+        }
+        let gc = self
+            .data()
+            .group_correlations
+            .get(self.selected_run)
+            .and_then(|opt| opt.as_ref());
+        let Some(gc) = gc else {
+            return empty_table(title);
+        };
+        let mut header = vec![Cell::from("")];
+        for f in 0..k {
+            header.push(Cell::from(format!("F{}", f + 1)));
+        }
+        let rows: Vec<Row> = (0..k)
+            .map(|i| {
+                let mut cells = vec![Cell::from(format!("F{}", i + 1))];
+                for j in 0..k {
+                    let v = gc[(i, j)];
+                    cells.push(
+                        Cell::from(format!("{v:.2}"))
+                            .style(Style::default().fg(diverging_color(v))),
+                    );
+                }
+                Row::new(cells)
+            })
+            .collect();
+        let mut widths = vec![Constraint::Length(4)];
+        widths.extend((0..k).map(|_| Constraint::Length(7)));
+        Table::new(rows, widths)
+            .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
+            .block(Block::default().borders(Borders::ALL).title(title))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -827,6 +1033,8 @@ struct DashboardData {
     response_type: OptimizeResponseType,
     config_lines: Vec<String>,
     factor_rankings: Vec<Vec<FactorRanking>>,
+    feature_names: Vec<String>,
+    group_correlations: Vec<Option<Array2<Scalar>>>,
 }
 
 impl DashboardData {
@@ -854,6 +1062,10 @@ impl DashboardData {
             .map(|run| compute_factor_rankings(run, &standardized_x, &checkpoint.y, &feature_names, response_type))
             .collect::<Result<Vec<_>>>()?;
         let config_lines = build_config_lines(&checkpoint, args.config.as_deref())?;
+        let group_correlations = runs
+            .iter()
+            .map(|run| compute_group_correlation_matrix(run, &standardized_x))
+            .collect();
         let best_run = runs
             .iter()
             .max_by(|left, right| left.score.total_cmp(&right.score))
@@ -874,6 +1086,8 @@ impl DashboardData {
             response_type,
             config_lines,
             factor_rankings,
+            feature_names,
+            group_correlations,
         })
     }
 }
@@ -1318,6 +1532,89 @@ fn yaml_value_string(value: &serde_yaml::Value) -> String {
         serde_yaml::Value::Mapping(_) => "{...}".to_owned(),
         serde_yaml::Value::Tagged(tagged) => yaml_value_string(&tagged.value),
     }
+}
+
+fn diverging_color(value: Scalar) -> Color {
+    if value < -0.5 {
+        Color::Blue
+    } else if value < -0.1 {
+        Color::LightBlue
+    } else if value <= 0.1 {
+        Color::White
+    } else if value <= 0.5 {
+        Color::LightRed
+    } else {
+        Color::Red
+    }
+}
+
+fn compute_group_correlation_matrix(
+    run: &SlideRunResult,
+    standardized_x: &Matrix,
+) -> Option<Array2<Scalar>> {
+    let k = run.love.k;
+    if k == 0 {
+        return None;
+    }
+    let x = standardized_x.as_ndarray();
+    let pure_ind = &run.love.pure_ind;
+    if pure_ind.len() != k {
+        return None;
+    }
+
+    // Collect variable indices per group
+    let groups: Vec<Vec<usize>> = pure_ind
+        .iter()
+        .map(|g| {
+            let mut indices: Vec<usize> = g.pos.iter().chain(g.neg.iter()).copied().collect();
+            indices.sort_unstable();
+            indices.dedup();
+            indices
+        })
+        .collect();
+
+    let mut corr_matrix = Array2::zeros((k, k));
+    for i in 0..k {
+        corr_matrix[(i, i)] = 1.0;
+        for j in (i + 1)..k {
+            let mut total = 0.0;
+            let mut count = 0usize;
+            for &vi in &groups[i] {
+                for &vj in &groups[j] {
+                    if vi < x.ncols() && vj < x.ncols() {
+                        let col_i = x.column(vi);
+                        let col_j = x.column(vj);
+                        let n = col_i.len() as Scalar;
+                        let mean_i = col_i.sum() / n;
+                        let mean_j = col_j.sum() / n;
+                        let mut num = 0.0;
+                        let mut ss_i = 0.0;
+                        let mut ss_j = 0.0;
+                        for idx in 0..col_i.len() {
+                            let di = col_i[idx] - mean_i;
+                            let dj = col_j[idx] - mean_j;
+                            num += di * dj;
+                            ss_i += di * di;
+                            ss_j += dj * dj;
+                        }
+                        let denom = (ss_i * ss_j).sqrt();
+                        if denom > 0.0 {
+                            total += (num / denom).abs();
+                        }
+                        count += 1;
+                    }
+                }
+            }
+            let mean_corr = if count > 0 {
+                total / count as Scalar
+            } else {
+                0.0
+            };
+            corr_matrix[(i, j)] = mean_corr;
+            corr_matrix[(j, i)] = mean_corr;
+        }
+    }
+    Some(corr_matrix)
 }
 
 fn format_phase(phase: &Phase) -> String {
