@@ -120,6 +120,7 @@ enum LoveSubView {
     LoadingMatrix,
     GroupCorrelation,
     BlockCorrelation,
+    GammaDistribution,
 }
 
 impl LoveSubView {
@@ -129,7 +130,8 @@ impl LoveSubView {
             Self::FactorCovariance => Self::LoadingMatrix,
             Self::LoadingMatrix => Self::GroupCorrelation,
             Self::GroupCorrelation => Self::BlockCorrelation,
-            Self::BlockCorrelation => Self::Diagnostics,
+            Self::BlockCorrelation => Self::GammaDistribution,
+            Self::GammaDistribution => Self::Diagnostics,
         }
     }
 
@@ -140,6 +142,7 @@ impl LoveSubView {
             Self::LoadingMatrix => "Loading Matrix (A)",
             Self::GroupCorrelation => "Group Correlation",
             Self::BlockCorrelation => "Block Correlation",
+            Self::GammaDistribution => "Gamma (Noise Variance)",
         }
     }
 }
@@ -429,15 +432,17 @@ impl App {
         let body = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(34),
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
             ])
             .split(sections[1]);
 
         frame.render_widget(self.factor_overview_widget(), body[0]);
         frame.render_widget(self.factor_feature_table(FactorMetric::Loading), body[1]);
         frame.render_widget(self.factor_feature_table(FactorMetric::Association), body[2]);
+        frame.render_widget(self.factor_histogram_widget(), body[3]);
     }
 
     fn render_love(&self, frame: &mut Frame, area: Rect) {
@@ -484,6 +489,9 @@ impl App {
             }
             LoveSubView::BlockCorrelation => {
                 frame.render_widget(self.block_correlation_heatmap(sections[2]), sections[2]);
+            }
+            LoveSubView::GammaDistribution => {
+                frame.render_widget(self.gamma_distribution_widget(), sections[2]);
             }
         }
     }
@@ -1110,6 +1118,127 @@ impl App {
         }
 
         let title_str = format!("Block Correlation ({p} pure vars, {k} groups)");
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title_str))
+    }
+
+    fn factor_histogram_widget(&self) -> Paragraph<'static> {
+        let title = "Factor Score Distribution";
+        let Some(run) = self.current_run() else {
+            return empty_widget(title);
+        };
+        let k = run.love.k;
+        if k == 0 {
+            return empty_widget(title);
+        }
+        let factor = self.selected_factor.min(k - 1);
+        let z = run.z.as_ndarray();
+        let col = z.column(factor);
+        let n = col.len();
+        if n == 0 {
+            return empty_widget(title);
+        }
+
+        let mean = col.sum() / n as Scalar;
+        let std = (col.iter().map(|v| (v - mean).powi(2)).sum::<Scalar>() / n as Scalar).sqrt();
+
+        // Build 20-bin histogram
+        let min_val = col.iter().copied().fold(Scalar::INFINITY, Scalar::min);
+        let max_val = col
+            .iter()
+            .copied()
+            .fold(Scalar::NEG_INFINITY, Scalar::max);
+        let range = (max_val - min_val).max(1.0e-10);
+        let nbins = 20usize;
+        let mut bins = vec![0u64; nbins];
+        for &v in col.iter() {
+            let idx = ((v - min_val) / range * nbins as Scalar) as usize;
+            bins[idx.min(nbins - 1)] += 1;
+        }
+
+        let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
+
+        // Unicode vertical blocks: ▁▂▃▄▅▆▇█
+        let blocks = [' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
+        let sparkline: String = bins
+            .iter()
+            .map(|&c| {
+                let level = (c as f64 / max_count as f64 * 8.0).round() as usize;
+                blocks[level.min(8)]
+            })
+            .collect();
+
+        let title_str = format!(
+            "Z[*, F{}] (n={}, mean={:.2}, sd={:.2})",
+            factor + 1,
+            n,
+            mean,
+            std
+        );
+        let lines = vec![
+            Line::from(format!("range: [{:.2}, {:.2}]", min_val, max_val)),
+            Line::from(ratatui::text::Span::styled(
+                sparkline,
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(format!("max bin count: {max_count}")),
+        ];
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title_str))
+    }
+
+    fn gamma_distribution_widget(&self) -> Paragraph<'static> {
+        let title = "Gamma (Noise Variance)";
+        let Some(run) = self.current_run() else {
+            return empty_widget(title);
+        };
+        let gamma = run.love.gamma.as_ndarray();
+        if gamma.is_empty() {
+            return empty_widget(title);
+        }
+
+        let feature_names = &self.data().feature_names;
+        let mut indexed: Vec<(usize, Scalar)> = gamma
+            .iter()
+            .copied()
+            .enumerate()
+            .collect();
+        indexed.sort_by(|a, b| b.1.total_cmp(&a.1));
+        indexed.truncate(30);
+
+        let max_gamma = indexed.first().map_or(1.0, |e| e.1).max(1.0e-10);
+        let med_gamma = median(gamma.to_vec());
+        let n_features = gamma.len();
+
+        let max_bar_width = 20usize;
+        let mut lines = Vec::with_capacity(indexed.len());
+        for (idx, val) in &indexed {
+            let name = feature_names
+                .get(*idx)
+                .cloned()
+                .unwrap_or_else(|| format!("f{}", idx + 1));
+            let truncated: String = name.chars().take(12).collect();
+            let bar_len = (val / max_gamma * max_bar_width as Scalar).round() as usize;
+            let bar: String = "\u{2588}".repeat(bar_len);
+            // Color gradient: green (low noise) → yellow → red (high noise)
+            let color = if *val < med_gamma * 0.5 {
+                Color::Green
+            } else if *val < med_gamma * 1.5 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+            let label = format!("{:<12} {:.4} ", truncated, val);
+            lines.push(Line::from(vec![
+                ratatui::text::Span::raw(label),
+                ratatui::text::Span::styled(bar, Style::default().fg(color)),
+            ]));
+        }
+
+        let title_str = format!(
+            "Gamma: top 30 / {} features (median={:.4}, max={:.4})",
+            n_features, med_gamma, max_gamma
+        );
         Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title(title_str))
     }
