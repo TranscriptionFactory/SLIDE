@@ -85,3 +85,9 @@ ipython_config.py
 comparison/output_comparison/
 .serena_home/
 .tmp-serena-home/
+.codex
+.github_bak
+.serena*
+runs
+code-dev.def
+start-code.sh
