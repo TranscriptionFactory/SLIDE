@@ -15,7 +15,12 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Alignment, Color, Line, Modifier, Style, Stylize};
 use ratatui::text::Text;
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap};
+use ratatui::symbols;
+use ratatui::widgets::canvas::Canvas;
+use ratatui::widgets::{
+    Bar, BarChart, BarGroup, Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table, Tabs,
+    Wrap,
+};
 use ratatui::{DefaultTerminal, Frame};
 use slide_core::{
     OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideResult, Phase, ProgressReport,
@@ -452,6 +457,16 @@ impl App {
     }
 
     fn render_waiting(&self, frame: &mut Frame, area: Rect) {
+        let has_phase = self.progress.is_some();
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(if has_phase {
+                vec![Constraint::Min(3), Constraint::Length(1)]
+            } else {
+                vec![Constraint::Min(3), Constraint::Length(0)]
+            })
+            .split(area);
+
         let mut lines: Vec<Line<'_>> = Vec::new();
 
         lines.push(Line::from("Checkpoint: ".to_owned() + &self.args.checkpoint.display().to_string()));
@@ -464,7 +479,6 @@ impl App {
             lines.push(Line::default());
         }
 
-        // Show progress if available (polled independently of checkpoint)
         if let Some(ref prog) = self.progress {
             lines.push(Line::from(format!(
                 "Progress: eval {}/{} (delta={:.4}, lambda={:.4})",
@@ -473,7 +487,6 @@ impl App {
                 prog.delta,
                 prog.lambda,
             )));
-            lines.push(phase_timeline(&prog.phase));
         } else {
             lines.push(Line::from("Waiting for pipeline to start...".dark_gray()));
         }
@@ -485,7 +498,11 @@ impl App {
         };
         let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title(title));
-        frame.render_widget(paragraph, area);
+        frame.render_widget(paragraph, parts[0]);
+
+        if let Some(ref prog) = self.progress {
+            render_phase_timeline(frame, parts[1], &prog.phase);
+        }
     }
 
     fn render_runs(&self, frame: &mut Frame, area: Rect) {
@@ -503,7 +520,7 @@ impl App {
             ])
             .split(sections[0]);
 
-        frame.render_widget(self.summary_widget(), left[0]);
+        self.render_summary(frame, left[0]);
         frame.render_widget(self.run_table(), left[1]);
         frame.render_widget(self.grid_widget("Score Grid", GridMetric::Score), left[2]);
         frame.render_widget(self.config_widget(), sections[1]);
@@ -551,7 +568,7 @@ impl App {
         frame.render_widget(self.factor_overview_widget(), body[0]);
         frame.render_widget(self.factor_feature_table(FactorMetric::Loading), body[1]);
         frame.render_widget(self.factor_feature_table(FactorMetric::Association), body[2]);
-        frame.render_widget(self.factor_histogram_widget(), body[3]);
+        self.render_factor_histogram(frame, body[3]);
     }
 
     fn render_love(&self, frame: &mut Frame, area: Rect) {
@@ -597,7 +614,7 @@ impl App {
                 frame.render_widget(self.group_correlation_heatmap(), sections[2]);
             }
             LoveSubView::BlockCorrelation => {
-                frame.render_widget(self.block_correlation_heatmap(sections[2]), sections[2]);
+                self.render_block_correlation_heatmap(frame, sections[2]);
             }
             LoveSubView::GammaDistribution => {
                 frame.render_widget(self.gamma_distribution_widget(), sections[2]);
@@ -608,7 +625,7 @@ impl App {
         }
     }
 
-    fn summary_widget(&self) -> Paragraph<'static> {
+    fn render_summary(&self, frame: &mut Frame, area: Rect) {
         let completed = self.data().runs.len();
         let total = self.data().total_grid_points;
         let progress_pct = if total == 0 {
@@ -634,13 +651,15 @@ impl App {
             "status: complete".to_owned()
         };
 
-        let phase_bar = if completed < total {
-            self.progress
-                .as_ref()
-                .map_or_else(Line::default, |prog| phase_timeline(&prog.phase))
-        } else {
-            Line::default()
-        };
+        let has_phase = completed < total && self.progress.is_some();
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(if has_phase {
+                vec![Constraint::Min(3), Constraint::Length(1)]
+            } else {
+                vec![Constraint::Min(3), Constraint::Length(0)]
+            })
+            .split(area);
 
         let lines = vec![
             Line::from(format!(
@@ -654,7 +673,6 @@ impl App {
                 self.args.poll_ms
             )),
             Line::from(running_line),
-            phase_bar,
             Line::from(format!(
                 "best: {}",
                 best.map_or_else(
@@ -677,9 +695,16 @@ impl App {
                     .map_or_else(|| "".to_owned(), |err| format!("error: {err}")),
             ),
         ];
-        Paragraph::new(Text::from(lines))
+        let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title("Run Summary"))
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, parts[0]);
+
+        if has_phase {
+            if let Some(ref prog) = self.progress {
+                render_phase_timeline(frame, parts[1], &prog.phase);
+            }
+        }
     }
 
     fn config_widget(&self) -> Paragraph<'static> {
@@ -1021,7 +1046,7 @@ impl App {
                     let v = c[(i, j)];
                     cells.push(
                         Cell::from(format!("{v:.2}"))
-                            .style(Style::default().fg(diverging_color(v))),
+                            .style(Style::default().fg(diverging_color_rgb(v))),
                     );
                 }
                 Row::new(cells)
@@ -1093,7 +1118,7 @@ impl App {
                         format!("{v:.2}")
                     };
                     cells.push(
-                        Cell::from(text).style(Style::default().fg(diverging_color(v))),
+                        Cell::from(text).style(Style::default().fg(diverging_color_rgb(v))),
                     );
                 }
                 let is_pure = if pure_set.contains(&vi) { "Y" } else { "" };
@@ -1141,7 +1166,7 @@ impl App {
                     let v = gc[(i, j)];
                     cells.push(
                         Cell::from(format!("{v:.2}"))
-                            .style(Style::default().fg(diverging_color(v))),
+                            .style(Style::default().fg(diverging_color_rgb(v))),
                     );
                 }
                 Row::new(cells)
@@ -1154,7 +1179,7 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title(title))
     }
 
-    fn block_correlation_heatmap(&self, area: Rect) -> Paragraph<'static> {
+    fn render_block_correlation_heatmap(&self, frame: &mut Frame, area: Rect) {
         let title = "Block Correlation";
         let Some(bc) = self
             .data()
@@ -1162,99 +1187,82 @@ impl App {
             .get(self.selected_run)
             .and_then(|opt| opt.as_ref())
         else {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         };
         let (corr, boundaries) = bc;
         let p = corr.nrows();
         if p == 0 {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         }
-        let k = boundaries.len();
-
-        // Available width/height inside borders
-        let width = (area.width as usize).saturating_sub(2);
-        let height = (area.height as usize).saturating_sub(2);
-        // Each row of text covers 2 pixel rows via half-block
-        let pixel_rows = height * 2;
-
-        // Subsample if matrix is larger than available space
-        let col_indices: Vec<usize> = if p > width {
-            (0..width).map(|i| i * p / width).collect()
-        } else {
-            (0..p).collect()
-        };
-        let row_indices: Vec<usize> = if p > pixel_rows {
-            (0..pixel_rows).map(|i| i * p / pixel_rows).collect()
-        } else {
-            (0..p).collect()
-        };
-
-        // Build boundary set for separator hints
+        let n_groups = boundaries.len();
         let boundary_set: std::collections::HashSet<usize> =
             boundaries.iter().copied().collect();
 
-        let mut lines = Vec::new();
-        let mut r = 0;
-        while r + 1 < row_indices.len() {
-            let top_row = row_indices[r];
-            let bot_row = row_indices[r + 1];
-
-            // Check if a group boundary falls between these two rows
-            let is_boundary = boundary_set.iter().any(|&b| {
-                (top_row < b && b <= bot_row) || (bot_row < b && b <= top_row + 1)
-            });
-
-            if is_boundary {
-                // Render a thin separator line
-                let sep: String = "\u{2500}".repeat(col_indices.len());
-                lines.push(Line::from(
-                    ratatui::text::Span::styled(sep, Style::default().fg(Color::DarkGray)),
-                ));
-            } else {
-                let spans: Vec<ratatui::text::Span> = col_indices
-                    .iter()
-                    .map(|&c| {
-                        let top_val = corr[(top_row, c)];
-                        let bot_val = corr[(bot_row, c)];
-                        let fg = diverging_color_rgb(top_val);
-                        let bg = diverging_color_rgb(bot_val);
-                        ratatui::text::Span::styled(
-                            "\u{2580}",
-                            Style::default().fg(fg).bg(bg),
-                        )
-                    })
-                    .collect();
-                lines.push(Line::from(spans));
-            }
-            r += 2;
-        }
-
-        let title_str = format!("Block Correlation ({p} pure vars, {k} groups)");
-        Paragraph::new(Text::from(lines))
+        let title_str = format!("Block Correlation ({p} pure vars, {n_groups} groups)");
+        let canvas = Canvas::default()
             .block(Block::default().borders(Borders::ALL).title(title_str))
+            .marker(symbols::Marker::HalfBlock)
+            .x_bounds([0.0, p as f64])
+            .y_bounds([0.0, p as f64])
+            .paint(move |ctx| {
+                // Paint each cell of the correlation matrix
+                for row in 0..p {
+                    for col in 0..p {
+                        let v = corr[(row, col)];
+                        let color = diverging_color_rgb(v);
+                        // Canvas y=0 is bottom, so flip: y = p - 1 - row
+                        ctx.draw(&CanvasPoint {
+                            x: col as f64 + 0.5,
+                            y: (p - 1 - row) as f64 + 0.5,
+                            color,
+                        });
+                    }
+                }
+                // Draw boundary lines
+                for &b in &boundary_set {
+                    let y = (p - b) as f64;
+                    ctx.draw(&CanvasHLine {
+                        y,
+                        x_start: 0.0,
+                        x_end: p as f64,
+                        color: Color::DarkGray,
+                    });
+                    ctx.draw(&CanvasVLine {
+                        x: b as f64,
+                        y_start: 0.0,
+                        y_end: p as f64,
+                        color: Color::DarkGray,
+                    });
+                }
+            });
+        frame.render_widget(canvas, area);
     }
 
-    fn factor_histogram_widget(&self) -> Paragraph<'static> {
+    fn render_factor_histogram(&self, frame: &mut Frame, area: Rect) {
         let title = "Factor Score Distribution";
         let Some(run) = self.current_run() else {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         };
         let k = run.love.k;
         if k == 0 {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         }
         let factor = self.selected_factor.min(k - 1);
         let z = run.z.as_ndarray();
         let col = z.column(factor);
         let n = col.len();
         if n == 0 {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         }
 
         let mean = col.sum() / n as Scalar;
         let std = (col.iter().map(|v| (v - mean).powi(2)).sum::<Scalar>() / n as Scalar).sqrt();
 
-        // Build 20-bin histogram
         let min_val = col.iter().copied().fold(Scalar::INFINITY, Scalar::min);
         let max_val = col
             .iter()
@@ -1267,18 +1275,7 @@ impl App {
             let idx = ((v - min_val) / range * nbins as Scalar) as usize;
             bins[idx.min(nbins - 1)] += 1;
         }
-
         let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
-
-        // Unicode vertical blocks: ▁▂▃▄▅▆▇█
-        let blocks = [' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
-        let sparkline: String = bins
-            .iter()
-            .map(|&c| {
-                let level = (c as f64 / max_count as f64 * 8.0).round() as usize;
-                blocks[level.min(8)]
-            })
-            .collect();
 
         let title_str = format!(
             "Z[*, F{}] (n={}, mean={:.2}, sd={:.2})",
@@ -1287,34 +1284,41 @@ impl App {
             mean,
             std
         );
-        let lines = vec![
-            Line::from(format!("range: [{:.2}, {:.2}]", min_val, max_val)),
-            Line::from(ratatui::text::Span::styled(
-                sparkline,
-                Style::default().fg(Color::Cyan),
-            )),
-            Line::from(format!("max bin count: {max_count}")),
-        ];
-        Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title(title_str))
+
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(area);
+
+        let stats = Paragraph::new(Text::from(vec![
+            Line::from(format!("range: [{:.2}, {:.2}]  max bin: {max_count}", min_val, max_val)),
+        ]))
+        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT).title(title_str));
+        frame.render_widget(stats, parts[0]);
+
+        let sparkline = Sparkline::default()
+            .data(&bins)
+            .max(max_count)
+            .style(Style::new().cyan())
+            .bar_set(symbols::bar::NINE_LEVELS)
+            .block(Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT));
+        frame.render_widget(sparkline, parts[1]);
     }
 
-    fn gamma_distribution_widget(&self) -> Paragraph<'static> {
+    fn gamma_distribution_widget(&self) -> BarChart<'static> {
         let title = "Gamma (Noise Variance)";
         let Some(run) = self.current_run() else {
-            return empty_widget(title);
+            return BarChart::default()
+                .block(Block::default().borders(Borders::ALL).title(title));
         };
         let gamma = run.love.gamma.as_ndarray();
         if gamma.is_empty() {
-            return empty_widget(title);
+            return BarChart::default()
+                .block(Block::default().borders(Borders::ALL).title(title));
         }
 
         let feature_names = &self.data().feature_names;
-        let mut indexed: Vec<(usize, Scalar)> = gamma
-            .iter()
-            .copied()
-            .enumerate()
-            .collect();
+        let mut indexed: Vec<(usize, Scalar)> = gamma.iter().copied().enumerate().collect();
         indexed.sort_by(|a, b| b.1.total_cmp(&a.1));
         indexed.truncate(30);
 
@@ -1322,37 +1326,41 @@ impl App {
         let med_gamma = median(gamma.to_vec());
         let n_features = gamma.len();
 
-        let max_bar_width = 20usize;
-        let mut lines = Vec::with_capacity(indexed.len());
-        for (idx, val) in &indexed {
-            let name = feature_names
-                .get(*idx)
-                .cloned()
-                .unwrap_or_else(|| format!("f{}", idx + 1));
-            let truncated: String = name.chars().take(12).collect();
-            let bar_len = (val / max_gamma * max_bar_width as Scalar).round() as usize;
-            let bar: String = "\u{2588}".repeat(bar_len);
-            // Color gradient: green (low noise) → yellow → red (high noise)
-            let color = if *val < med_gamma * 0.5 {
-                Color::Green
-            } else if *val < med_gamma * 1.5 {
-                Color::Yellow
-            } else {
-                Color::Red
-            };
-            let label = format!("{:<12} {:.4} ", truncated, val);
-            lines.push(Line::from(vec![
-                ratatui::text::Span::raw(label),
-                ratatui::text::Span::styled(bar, Style::default().fg(color)),
-            ]));
-        }
+        let scale = 1000.0 / max_gamma;
+        let bars: Vec<Bar<'static>> = indexed
+            .iter()
+            .map(|(idx, val)| {
+                let name = feature_names
+                    .get(*idx)
+                    .cloned()
+                    .unwrap_or_else(|| format!("f{}", idx + 1));
+                let truncated: String = name.chars().take(12).collect();
+                let color = if *val < med_gamma * 0.5 {
+                    Color::Green
+                } else if *val < med_gamma * 1.5 {
+                    Color::Yellow
+                } else {
+                    Color::Red
+                };
+                Bar::default()
+                    .value((val * scale) as u64)
+                    .label(Line::from(truncated))
+                    .text_value(format!("{val:.4}"))
+                    .style(Style::default().fg(color))
+            })
+            .collect();
 
         let title_str = format!(
             "Gamma: top 30 / {} features (median={:.4}, max={:.4})",
             n_features, med_gamma, max_gamma
         );
-        Paragraph::new(Text::from(lines))
+        BarChart::default()
+            .data(BarGroup::default().bars(&bars))
             .block(Block::default().borders(Borders::ALL).title(title_str))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .bar_gap(0)
+            .max(1000)
     }
 
     fn interaction_network_widget(&self) -> Paragraph<'static> {
@@ -1448,165 +1456,197 @@ impl App {
 
         match self.selection_sub_view {
             SelectionSubView::Marginal => {
-                frame.render_widget(self.selection_frequency_widget(), sections[0]);
+                self.render_selection_frequency(frame, sections[0]);
             }
             SelectionSubView::Interactions => {
-                frame.render_widget(self.interaction_frequency_widget(), sections[0]);
+                self.render_interaction_frequency(frame, sections[0]);
             }
         }
         frame.render_widget(self.factor_response_corr_widget(), sections[1]);
     }
 
-    fn selection_frequency_widget(&self) -> Paragraph<'static> {
+    fn render_selection_frequency(&self, frame: &mut Frame, area: Rect) {
         let title = "Knockoff Selection Frequency (marginal)";
         let Some(run) = self.current_run() else {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         };
         let freq = run.marginal.voting.selection_frequency.as_ndarray();
         let k = freq.len();
         if k == 0 {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         }
         let selected = &run.marginal.voting.selected;
         let threshold = run.marginal.voting.threshold;
 
-        let mut lines = vec![Line::from(format!(
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(area);
+
+        let header = Paragraph::new(format!(
             "threshold: {:.0}% | {} selected | v: toggle marginal/interaction",
             threshold * 100.0,
             selected.len()
-        ))];
+        ))
+        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT).title(title));
+        frame.render_widget(header, parts[0]);
 
-        let max_bar_width = 30usize;
-        for i in 0..k {
-            let f = freq[i];
-            let pct = f * 100.0;
-            let bar_len = (f * max_bar_width as Scalar).round() as usize;
-            let bar: String = "\u{2588}".repeat(bar_len);
-            let is_selected = selected.contains(&i);
-            let color = if is_selected {
-                Color::Green
-            } else {
-                Color::Red
-            };
-            let label = format!("F{:<3} {:5.1}% ", i + 1, pct);
-            lines.push(Line::from(vec![
-                ratatui::text::Span::raw(label),
-                ratatui::text::Span::styled(bar, Style::default().fg(color)),
-            ]));
-        }
+        let bars: Vec<Bar<'static>> = (0..k)
+            .map(|i| {
+                let f = freq[i];
+                let pct = f * 100.0;
+                let is_selected = selected.contains(&i);
+                let color = if is_selected { Color::Green } else { Color::Red };
+                Bar::default()
+                    .value((f * 1000.0) as u64)
+                    .label(Line::from(format!("F{}", i + 1)))
+                    .text_value(format!("{pct:.1}%"))
+                    .style(Style::default().fg(color))
+            })
+            .collect();
 
-        Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title(title))
+        let chart = BarChart::default()
+            .data(BarGroup::default().bars(&bars))
+            .block(Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .bar_gap(0)
+            .max(1000);
+        frame.render_widget(chart, parts[1]);
     }
 
-    fn interaction_frequency_widget(&self) -> Paragraph<'static> {
+    fn render_interaction_frequency(&self, frame: &mut Frame, area: Rect) {
         let title = "Knockoff Selection Frequency (interactions)";
         let Some(run) = self.current_run() else {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         };
         let interaction_voting = &run.interactions.voting;
         if interaction_voting.is_empty() {
-            return empty_widget(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         }
 
-        let mut lines = vec![Line::from(format!(
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(area);
+
+        let header = Paragraph::new(format!(
             "{} marginal LFs with interaction voting | v: toggle marginal/interaction",
             interaction_voting.len()
-        ))];
+        ))
+        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT).title(title));
+        frame.render_widget(header, parts[0]);
 
-        let max_bar_width = 25usize;
-        for iv in interaction_voting {
-            lines.push(Line::from(format!(
-                "── F{} interactions ──",
-                iv.marginal_lf + 1
-            )).style(Style::default().fg(Color::Yellow)));
+        let groups: Vec<BarGroup<'static>> = interaction_voting
+            .iter()
+            .map(|iv| {
+                let freq = iv.voting.selection_frequency.as_ndarray();
+                let selected = &iv.voting.selected;
+                let bars: Vec<Bar<'static>> = iv
+                    .candidate_lfs
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j < freq.len())
+                    .map(|(j, &candidate)| {
+                        let f = freq[j];
+                        let pct = f * 100.0;
+                        let is_selected = selected.contains(&j);
+                        let color = if is_selected { Color::Green } else { Color::Red };
+                        Bar::default()
+                            .value((f * 1000.0) as u64)
+                            .label(Line::from(format!("F{}", candidate + 1)))
+                            .text_value(format!("{pct:.1}%"))
+                            .style(Style::default().fg(color))
+                    })
+                    .collect();
+                BarGroup::default()
+                    .label(Line::from(format!("F{}", iv.marginal_lf + 1)).yellow())
+                    .bars(&bars)
+            })
+            .collect();
 
-            let freq = iv.voting.selection_frequency.as_ndarray();
-            let selected = &iv.voting.selected;
-            for (j, &candidate) in iv.candidate_lfs.iter().enumerate() {
-                if j >= freq.len() {
-                    break;
-                }
-                let f = freq[j];
-                let pct = f * 100.0;
-                let bar_len = (f * max_bar_width as Scalar).round() as usize;
-                let bar: String = "\u{2588}".repeat(bar_len);
-                let is_selected = selected.contains(&j);
-                let color = if is_selected {
-                    Color::Green
-                } else {
-                    Color::Red
-                };
-                let label = format!("  F{:<3} {:5.1}% ", candidate + 1, pct);
-                lines.push(Line::from(vec![
-                    ratatui::text::Span::raw(label),
-                    ratatui::text::Span::styled(bar, Style::default().fg(color)),
-                ]));
-            }
+        let mut chart = BarChart::default()
+            .block(Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .bar_gap(0)
+            .group_gap(1)
+            .max(1000);
+        for group in groups {
+            chart = chart.data(group);
         }
-
-        Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title(title))
+        frame.render_widget(chart, parts[1]);
     }
 
-    fn factor_response_corr_widget(&self) -> Paragraph<'static> {
-        let title = if self.data().response_type == OptimizeResponseType::Binary {
+    fn factor_response_corr_widget(&self) -> BarChart<'static> {
+        let title: &'static str = if self.data().response_type == OptimizeResponseType::Binary {
             "Factor-Response AUC"
         } else {
             "Factor-Response Correlation"
         };
+        let empty = || {
+            BarChart::default()
+                .block(Block::default().borders(Borders::ALL).title(title))
+        };
         let Some(run) = self.current_run() else {
-            return empty_widget(title);
+            return empty();
         };
         let corrs = self
             .data()
             .factor_response_corr
             .get(self.selected_run);
         let Some(corrs) = corrs else {
-            return empty_widget(title);
+            return empty();
         };
         let k = run.love.k;
         if k == 0 || corrs.is_empty() {
-            return empty_widget(title);
+            return empty();
         }
 
-        let max_bar_width = 20usize;
         let max_abs = corrs.iter().map(|v| v.abs()).fold(0.0_f64, Scalar::max).max(0.01);
         let is_binary = self.data().response_type == OptimizeResponseType::Binary;
+        let scale = 1000.0 / max_abs;
 
-        let mut lines = Vec::with_capacity(k);
-        for i in 0..k.min(corrs.len()) {
-            let r = corrs[i];
-            let bar_len = ((r.abs() / max_abs) * max_bar_width as Scalar).round() as usize;
-            let (bar_char, color) = if is_binary {
-                // AUC is 0-1, use green for high, yellow for mid
-                let c = if r >= 0.7 {
+        let bars: Vec<Bar<'static>> = (0..k.min(corrs.len()))
+            .map(|i| {
+                let r = corrs[i];
+                let color = if is_binary {
+                    if r >= 0.7 {
+                        Color::Green
+                    } else if r >= 0.55 {
+                        Color::Yellow
+                    } else {
+                        Color::DarkGray
+                    }
+                } else if r >= 0.0 {
                     Color::Green
-                } else if r >= 0.55 {
-                    Color::Yellow
                 } else {
-                    Color::DarkGray
+                    Color::Red
                 };
-                ("\u{2588}", c)
-            } else if r >= 0.0 {
-                ("\u{2588}", Color::Green)
-            } else {
-                ("\u{2588}", Color::Red)
-            };
-            let bar: String = bar_char.repeat(bar_len);
-            let label = if is_binary {
-                format!("F{:<3} AUC {:.3} ", i + 1, r)
-            } else {
-                format!("F{:<3} {:+.3}  ", i + 1, r)
-            };
-            lines.push(Line::from(vec![
-                ratatui::text::Span::raw(label),
-                ratatui::text::Span::styled(bar, Style::default().fg(color)),
-            ]));
-        }
+                let text_val = if is_binary {
+                    format!("AUC {:.3}", r)
+                } else {
+                    format!("{:+.3}", r)
+                };
+                Bar::default()
+                    .value((r.abs() * scale) as u64)
+                    .label(Line::from(format!("F{}", i + 1)))
+                    .text_value(text_val)
+                    .style(Style::default().fg(color))
+            })
+            .collect();
 
-        Paragraph::new(Text::from(lines))
+        BarChart::default()
+            .data(BarGroup::default().bars(&bars))
             .block(Block::default().borders(Borders::ALL).title(title))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .bar_gap(0)
+            .max(1000)
     }
 }
 
@@ -2179,19 +2219,62 @@ fn yaml_value_string(value: &serde_yaml::Value) -> String {
     }
 }
 
-fn diverging_color(value: Scalar) -> Color {
-    if value < -0.5 {
-        Color::Blue
-    } else if value < -0.1 {
-        Color::LightBlue
-    } else if value <= 0.1 {
-        Color::White
-    } else if value <= 0.5 {
-        Color::LightRed
-    } else {
-        Color::Red
+// Canvas shape helpers for block_correlation_heatmap
+use ratatui::widgets::canvas::Shape;
+
+struct CanvasPoint {
+    x: f64,
+    y: f64,
+    color: Color,
+}
+
+impl Shape for CanvasPoint {
+    fn draw(&self, painter: &mut ratatui::widgets::canvas::Painter) {
+        if let Some((x, y)) = painter.get_point(self.x, self.y) {
+            painter.paint(x, y, self.color);
+        }
     }
 }
+
+struct CanvasHLine {
+    y: f64,
+    x_start: f64,
+    x_end: f64,
+    color: Color,
+}
+
+impl Shape for CanvasHLine {
+    fn draw(&self, painter: &mut ratatui::widgets::canvas::Painter) {
+        // Draw a horizontal line by painting points at regular intervals
+        let steps = ((self.x_end - self.x_start).abs() * 2.0) as usize + 1;
+        for i in 0..=steps {
+            let x = self.x_start + (self.x_end - self.x_start) * i as f64 / steps as f64;
+            if let Some((px, py)) = painter.get_point(x, self.y) {
+                painter.paint(px, py, self.color);
+            }
+        }
+    }
+}
+
+struct CanvasVLine {
+    x: f64,
+    y_start: f64,
+    y_end: f64,
+    color: Color,
+}
+
+impl Shape for CanvasVLine {
+    fn draw(&self, painter: &mut ratatui::widgets::canvas::Painter) {
+        let steps = ((self.y_end - self.y_start).abs() * 2.0) as usize + 1;
+        for i in 0..=steps {
+            let y = self.y_start + (self.y_end - self.y_start) * i as f64 / steps as f64;
+            if let Some((px, py)) = painter.get_point(self.x, y) {
+                painter.paint(px, py, self.color);
+            }
+        }
+    }
+}
+
 
 fn compute_group_correlation_matrix(
     run: &SlideRunResult,
@@ -2379,14 +2462,8 @@ fn compute_factor_response_corr(
         .collect()
 }
 
-/// Build a visual phase timeline bar.
-///
-/// Completed phases render as `████` in DarkGray, the current phase in Cyan+Bold,
-/// pending phases as `░░░░` in DarkGray.
-fn phase_timeline(current: &Phase) -> Line<'static> {
-    use ratatui::text::Span;
-
-    // Phase ordinals: Love=0, ZMap=1, KnockoffMarginal=2, KnockoffInteraction=3, Scoring=4
+/// Render a phase timeline as a row of 5 small Gauge widgets.
+fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
     let current_ord = match current {
         Phase::Love => 0,
         Phase::ZMap => 1,
@@ -2396,41 +2473,46 @@ fn phase_timeline(current: &Phase) -> Line<'static> {
     };
 
     let labels = [
-        "LOVE".to_owned(),
-        "ZMap".to_owned(),
-        "Knockoff".to_owned(),
-        match current {
-            Phase::KnockoffInteraction {
-                marginal_lf,
-                total_marginals,
-            } => format!("Interact ({}/{})", marginal_lf + 1, total_marginals),
-            _ => "Interact".to_owned(),
-        },
-        "Score".to_owned(),
+        "LOVE",
+        "ZMap",
+        "Knockoff",
+        "Interact",
+        "Score",
     ];
 
-    let mut spans = vec![Span::raw("[")];
-    for (i, label) in labels.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        let (block, style) = if i < current_ord {
-            // completed
-            ("████", Style::default().fg(Color::DarkGray))
-        } else if i == current_ord {
-            // current
-            (
-                "████",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
+    // For KnockoffInteraction, show progress info in the label
+    let interact_label = match current {
+        Phase::KnockoffInteraction {
+            marginal_lf,
+            total_marginals,
+        } => format!("Interact ({}/{})", marginal_lf + 1, total_marginals),
+        _ => String::new(),
+    };
+
+    let constraints: Vec<Constraint> = (0..5).map(|_| Constraint::Percentage(20)).collect();
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+
+    for (i, &label) in labels.iter().enumerate() {
+        let display_label = if i == 3 && !interact_label.is_empty() {
+            interact_label.as_str()
         } else {
-            // pending
-            ("░░░░", Style::default().fg(Color::DarkGray))
+            label
         };
-        spans.push(Span::styled(format!("{label} {block}"), style));
+        let (ratio, style) = if i < current_ord {
+            (1.0, Style::default().fg(Color::DarkGray).bg(Color::DarkGray))
+        } else if i == current_ord {
+            (1.0, Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+        } else {
+            (0.0, Style::default().fg(Color::DarkGray).bg(Color::DarkGray))
+        };
+        let gauge = Gauge::default()
+            .label(display_label.to_owned())
+            .ratio(ratio)
+            .gauge_style(style)
+            .use_unicode(true);
+        frame.render_widget(gauge, cols[i]);
     }
-    spans.push(Span::raw("]"));
-    Line::from(spans)
 }
