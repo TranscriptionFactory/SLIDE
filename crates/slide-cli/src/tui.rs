@@ -91,17 +91,22 @@ impl Tab {
 struct App {
     args: TuiArgs,
     tab: Tab,
-    data: DashboardData,
+    data: Option<DashboardData>,
     selected_run: usize,
     selected_factor: usize,
-    last_reload: SystemTime,
+    last_reload: Option<SystemTime>,
     last_error: Option<String>,
 }
 
 impl App {
     fn load(args: TuiArgs) -> Result<Self> {
-        let data = DashboardData::load(&args)?;
-        let last_reload = latest_mtime(&args)?;
+        let (data, last_reload) = if args.checkpoint.exists() {
+            let data = DashboardData::load(&args)?;
+            let mtime = latest_mtime(&args)?;
+            (Some(data), Some(mtime))
+        } else {
+            (None, None)
+        };
         Ok(Self {
             args,
             tab: Tab::Runs,
@@ -116,14 +121,19 @@ impl App {
     fn reload(&mut self) -> Result<()> {
         match DashboardData::load(&self.args) {
             Ok(data) => {
-                self.data = data;
-                self.selected_run = self
-                    .selected_run
-                    .min(self.data.runs.len().saturating_sub(1));
-                self.selected_factor = self
-                    .selected_factor
-                    .min(self.current_run().map_or(0, |run| run.love.k.saturating_sub(1)));
-                self.last_reload = latest_mtime(&self.args)?;
+                if self.data.is_some() {
+                    self.selected_run = self
+                        .selected_run
+                        .min(data.runs.len().saturating_sub(1));
+                    self.selected_factor = self
+                        .selected_factor
+                        .min(self.current_run().map_or(0, |run| run.love.k.saturating_sub(1)));
+                } else {
+                    self.selected_run = 0;
+                    self.selected_factor = 0;
+                }
+                self.data = Some(data);
+                self.last_reload = Some(latest_mtime(&self.args)?);
                 self.last_error = None;
                 Ok(())
             }
@@ -138,9 +148,18 @@ impl App {
         if self.args.no_follow {
             return Ok(());
         }
-        let newest = latest_mtime(&self.args)?;
-        if newest > self.last_reload {
-            let _ = self.reload();
+        if !self.args.checkpoint.exists() {
+            return Ok(());
+        }
+        match (latest_mtime(&self.args), self.last_reload) {
+            (Ok(newest), Some(last)) if newest > last => {
+                let _ = self.reload();
+            }
+            (Ok(_), None) => {
+                // File appeared for the first time
+                let _ = self.reload();
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -162,8 +181,9 @@ impl App {
     }
 
     fn next_run(&mut self) {
-        if !self.data.runs.is_empty() {
-            self.selected_run = (self.selected_run + 1) % self.data.runs.len();
+        let Some(ref data) = self.data else { return };
+        if !data.runs.is_empty() {
+            self.selected_run = (self.selected_run + 1) % data.runs.len();
             self.selected_factor = self
                 .selected_factor
                 .min(self.current_run().map_or(0, |run| run.love.k.saturating_sub(1)));
@@ -171,9 +191,10 @@ impl App {
     }
 
     fn prev_run(&mut self) {
-        if !self.data.runs.is_empty() {
+        let Some(ref data) = self.data else { return };
+        if !data.runs.is_empty() {
             self.selected_run = if self.selected_run == 0 {
-                self.data.runs.len() - 1
+                data.runs.len() - 1
             } else {
                 self.selected_run - 1
             };
@@ -203,8 +224,19 @@ impl App {
         }
     }
 
+    /// Returns a reference to the loaded dashboard data.
+    ///
+    /// # Panics
+    /// Panics if called before data has been loaded (callers must gate on `self.data.is_some()`).
+    fn data(&self) -> &DashboardData {
+        match self.data.as_ref() {
+            Some(d) => d,
+            None => unreachable!("data() called before checkpoint loaded"),
+        }
+    }
+
     fn current_run(&self) -> Option<&SlideRunResult> {
-        self.data.runs.get(self.selected_run)
+        self.data.as_ref()?.runs.get(self.selected_run)
     }
 
     fn render(&self, frame: &mut Frame) {
@@ -227,10 +259,20 @@ impl App {
             .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
         frame.render_widget(titles, layout[0]);
 
-        match self.tab {
-            Tab::Runs => self.render_runs(frame, layout[1]),
-            Tab::Factors => self.render_factors(frame, layout[1]),
-            Tab::Love => self.render_love(frame, layout[1]),
+        if self.data.is_none() {
+            let waiting = Paragraph::new(format!(
+                "Waiting for checkpoint file: {}\n\nStart a SLIDE run to begin.",
+                self.args.checkpoint.display()
+            ))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Waiting"));
+            frame.render_widget(waiting, layout[1]);
+        } else {
+            match self.tab {
+                Tab::Runs => self.render_runs(frame, layout[1]),
+                Tab::Factors => self.render_factors(frame, layout[1]),
+                Tab::Love => self.render_love(frame, layout[1]),
+            }
         }
 
         let footer = Line::from(vec![
@@ -278,7 +320,7 @@ impl App {
                 run.lambda,
                 self.selected_factor + 1,
                 run.love.k.max(1),
-                if self.data.response_type == OptimizeResponseType::Binary {
+                if self.data().response_type == OptimizeResponseType::Binary {
                     "AUC"
                 } else {
                     "corr"
@@ -340,14 +382,14 @@ impl App {
     }
 
     fn summary_widget(&self) -> Paragraph<'static> {
-        let completed = self.data.runs.len();
-        let total = self.data.total_grid_points;
+        let completed = self.data().runs.len();
+        let total = self.data().total_grid_points;
         let progress = if total == 0 {
             0.0
         } else {
             completed as f64 / total as f64
         };
-        let best = self.data.best_run.as_ref();
+        let best = self.data().best_run.as_ref();
         let lines = vec![
             Line::from(format!(
                 "checkpoint: {}",
@@ -388,7 +430,7 @@ impl App {
 
     fn config_widget(&self) -> Paragraph<'static> {
         let lines = self
-            .data
+            .data()
             .config_lines
             .iter()
             .map(|line| Line::from(line.clone()))
@@ -404,7 +446,7 @@ impl App {
         ])
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
 
-        let rows = self.data.runs.iter().enumerate().map(|(index, run)| {
+        let rows = self.data().runs.iter().enumerate().map(|(index, run)| {
             let selected = if index == self.selected_run { ">" } else { "" };
             Row::new([
                 selected.to_owned(),
@@ -474,13 +516,13 @@ impl App {
             )),
             Line::from(format!(
                 "top |loading|: {:.3} | top assoc: {:.3}",
-                self.data
+                self.data()
                     .factor_rankings
                     .get(self.selected_run)
                     .and_then(|f| f.get(factor))
                     .and_then(|r| r.by_loading.first())
                     .map_or(0.0, |entry| entry.loading.abs()),
-                self.data
+                self.data()
                     .factor_rankings
                     .get(self.selected_run)
                     .and_then(|f| f.get(factor))
@@ -506,7 +548,7 @@ impl App {
         }
         let factor = self.selected_factor.min(run.love.k - 1);
         let rankings = self
-            .data
+            .data()
             .factor_rankings
             .get(self.selected_run)
             .and_then(|per_run| per_run.get(factor));
@@ -549,23 +591,23 @@ impl App {
         let mut rows = Vec::new();
         let mut header = vec![Cell::from("delta \\ lambda".to_owned())];
         header.extend(
-            self.data
+            self.data()
                 .lambda_values
                 .iter()
                 .map(|value| Cell::from(format!("{value:.3}"))),
         );
 
-        for delta in &self.data.delta_values {
+        for delta in &self.data().delta_values {
             let mut cells = vec![Cell::from(format!("{delta:.3}"))];
-            for lambda in &self.data.lambda_values {
+            for lambda in &self.data().lambda_values {
                 let cell = self
-                    .data
+                    .data()
                     .run_lookup
                     .get(&(ScalarKey::new(*delta), ScalarKey::new(*lambda)))
                     .map_or_else(
                         || Cell::from("·".to_owned()).style(Style::default().fg(Color::DarkGray)),
                         |&index| {
-                            let run = &self.data.runs[index];
+                            let run = &self.data().runs[index];
                             let value = match metric {
                                 GridMetric::Score => run.score,
                                 GridMetric::FactorCount => run.love.k as Scalar,
@@ -596,20 +638,20 @@ impl App {
         }
 
         let mut widths = vec![Constraint::Length(14)];
-        widths.extend(self.data.lambda_values.iter().map(|_| Constraint::Length(8)));
+        widths.extend(self.data().lambda_values.iter().map(|_| Constraint::Length(8)));
         Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
     }
 
     fn delta_profile_widget(&self) -> Paragraph<'static> {
-        let Some(best) = self.data.best_run.as_ref() else {
+        let Some(best) = self.data().best_run.as_ref() else {
             return empty_widget("Delta Profile");
         };
         let mut lines = Vec::new();
-        for delta in &self.data.delta_values {
+        for delta in &self.data().delta_values {
             let mut matching = self
-                .data
+                .data()
                 .runs
                 .iter()
                 .filter(|run| ScalarKey::new(run.delta) == ScalarKey::new(*delta))
