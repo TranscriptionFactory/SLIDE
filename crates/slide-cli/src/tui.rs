@@ -71,6 +71,13 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                         }
                         _ => {}
                     },
+                    KeyCode::Char(c @ '1'..='7') if app.tab == Tab::Love => {
+                        if let Some(view) =
+                            LoveSubView::from_number(c as u8 - b'0')
+                        {
+                            app.love_sub_view = view;
+                        }
+                    }
                     _ => {}
                 },
                 Event::Resize(_, _) => {}
@@ -121,6 +128,7 @@ enum LoveSubView {
     GroupCorrelation,
     BlockCorrelation,
     GammaDistribution,
+    InteractionNetwork,
 }
 
 impl LoveSubView {
@@ -131,7 +139,21 @@ impl LoveSubView {
             Self::LoadingMatrix => Self::GroupCorrelation,
             Self::GroupCorrelation => Self::BlockCorrelation,
             Self::BlockCorrelation => Self::GammaDistribution,
-            Self::GammaDistribution => Self::Diagnostics,
+            Self::GammaDistribution => Self::InteractionNetwork,
+            Self::InteractionNetwork => Self::Diagnostics,
+        }
+    }
+
+    fn from_number(n: u8) -> Option<Self> {
+        match n {
+            1 => Some(Self::Diagnostics),
+            2 => Some(Self::FactorCovariance),
+            3 => Some(Self::LoadingMatrix),
+            4 => Some(Self::GroupCorrelation),
+            5 => Some(Self::BlockCorrelation),
+            6 => Some(Self::GammaDistribution),
+            7 => Some(Self::InteractionNetwork),
+            _ => None,
         }
     }
 
@@ -143,6 +165,7 @@ impl LoveSubView {
             Self::GroupCorrelation => "Group Correlation",
             Self::BlockCorrelation => "Block Correlation",
             Self::GammaDistribution => "Gamma (Noise Variance)",
+            Self::InteractionNetwork => "Interaction Network",
         }
     }
 }
@@ -372,7 +395,9 @@ impl App {
             " | pgup/pgdn factor".dark_gray(),
             " | r reload".dark_gray(),
         ];
-        if self.tab == Tab::Love || self.tab == Tab::Selection {
+        if self.tab == Tab::Love {
+            footer_spans.push(" | v/1-7 sub-view".dark_gray());
+        } else if self.tab == Tab::Selection {
             footer_spans.push(" | v sub-view".dark_gray());
         }
         let footer = Line::from(footer_spans);
@@ -492,6 +517,9 @@ impl App {
             }
             LoveSubView::GammaDistribution => {
                 frame.render_widget(self.gamma_distribution_widget(), sections[2]);
+            }
+            LoveSubView::InteractionNetwork => {
+                frame.render_widget(self.interaction_network_widget(), sections[2]);
             }
         }
     }
@@ -1241,6 +1269,91 @@ impl App {
         );
         Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title(title_str))
+    }
+
+    fn interaction_network_widget(&self) -> Paragraph<'static> {
+        let title = "Interaction Network";
+        let Some(run) = self.current_run() else {
+            return empty_widget(title);
+        };
+        let k = run.love.k;
+        let sig_interacts = &run.interactions.sig_interacts;
+        let marginal_lfs = &run.marginal.sig_lfs;
+
+        if sig_interacts.is_empty() {
+            let lines = vec![
+                Line::from(format!("k = {k} factors, 0 significant interactions")),
+                Line::from("No interaction edges to display."),
+            ];
+            return Paragraph::new(Text::from(lines))
+                .block(Block::default().borders(Borders::ALL).title(title));
+        }
+
+        if k <= 12 {
+            // Circle layout rendered as text art
+            let mut lines = vec![Line::from(format!(
+                "{} interactions among {} factors ({} marginal)",
+                sig_interacts.len(),
+                k,
+                marginal_lfs.len(),
+            ))];
+
+            // Build adjacency per factor
+            let mut adj: std::collections::BTreeMap<usize, Vec<usize>> =
+                std::collections::BTreeMap::new();
+            for &(a, b) in sig_interacts {
+                adj.entry(a).or_default().push(b);
+                adj.entry(b).or_default().push(a);
+            }
+
+            // List edges
+            for (factor, neighbors) in &adj {
+                let neighbor_str: Vec<String> =
+                    neighbors.iter().map(|n| format!("F{}", n + 1)).collect();
+                let is_marginal = marginal_lfs.contains(factor);
+                let marker = if is_marginal { "*" } else { " " };
+                lines.push(Line::from(format!(
+                    " {marker}F{:<2} \u{2500}\u{2500} {}",
+                    factor + 1,
+                    neighbor_str.join(", ")
+                )));
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(
+                "* = marginal LF".to_owned(),
+            ).style(Style::default().fg(Color::DarkGray)));
+
+            Paragraph::new(Text::from(lines))
+                .block(Block::default().borders(Borders::ALL).title(title))
+        } else {
+            // Adjacency list for large k
+            let mut lines = vec![Line::from(format!(
+                "{} interactions among {} factors",
+                sig_interacts.len(),
+                k,
+            ))];
+
+            let mut adj: std::collections::BTreeMap<usize, Vec<usize>> =
+                std::collections::BTreeMap::new();
+            for &(a, b) in sig_interacts {
+                adj.entry(a).or_default().push(b);
+                adj.entry(b).or_default().push(a);
+            }
+
+            for (factor, neighbors) in &adj {
+                let neighbor_str: Vec<String> =
+                    neighbors.iter().map(|n| format!("F{}", n + 1)).collect();
+                lines.push(Line::from(format!(
+                    "F{} \u{2500}\u{2500} {}",
+                    factor + 1,
+                    neighbor_str.join(", ")
+                )));
+            }
+
+            Paragraph::new(Text::from(lines))
+                .block(Block::default().borders(Borders::ALL).title(title))
+        }
     }
 
     fn render_selection(&self, frame: &mut Frame, area: Rect) {
