@@ -1,0 +1,21 @@
+[package]
+name = "slide-sdp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+clarabel = { version = "0.11.1", features = ["sdp-openblas"] }
+nalgebra.workspace = true
+ndarray.workspace = true
+thiserror.workspace = true
+slide-types = { path = "../slide-types" }

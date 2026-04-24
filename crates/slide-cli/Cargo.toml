@@ -1,0 +1,29 @@
+[package]
+name = "slide-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[[bin]]
+name = "slide-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+csv.workspace = true
+ndarray.workspace = true
+serde.workspace = true
+serde_json = "1.0"
+serde_yaml = "0.9"
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+ratatui = "0.29"
+slide-core = { path = "../slide-core" }
+slide-data-io = { path = "../slide-data-io" }
+slide-types = { path = "../slide-types" }

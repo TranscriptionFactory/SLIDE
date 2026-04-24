@@ -20,6 +20,7 @@ networkx = ">=3.0"
 matplotlib = ">=3.7"
 seaborn = ">=0.12"
 pyyaml = ">=6.0"
+r-base = ">=4.5.3,<4.6"
 
 [pypi-dependencies]
 loveslide = { path = ".", editable = true }

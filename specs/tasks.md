@@ -1,24 +1,27 @@
 ## 1. Project Setup
-- [ ] 1.1 Initialize Rust workspace with Cargo.toml (slide-rs)
-- [ ] 1.2 Set up sub-crates: slide-love, slide-knockoff, slide-core, slide-glmnet, slide-sdp
-- [ ] 1.3 Add dependencies: nalgebra, ndarray, rand, rayon, thiserror, anyhow, serde, csv
-- [ ] 1.4 Set up CI with cargo test, clippy, fmt
-- [ ] 1.5 Create test fixtures from R reference outputs (SSc dataset)
+- [x] 1.1 Initialize Rust workspace with Cargo.toml (slide-rs) — done: added a root Cargo workspace manifest with shared metadata and validated it with `cargo metadata`/`cargo test --workspace`
+- [x] 1.2 Set up sub-crates: slide-love, slide-knockoff, slide-core, slide-glmnet, slide-sdp — done: scaffolded the core library crates with strict lint placeholders and smoke tests
+- [x] 1.3 Add dependencies: nalgebra, ndarray, rand, rayon, thiserror, anyhow, serde, csv — done: added shared workspace versions and wired crate-level dependencies for the scaffolded crates
+- [ ] 1.3a Add design-specific supporting deps when implementation begins: clarabel, proptest, criterion, MT19937-compatible RNG
+- [x] 1.4 Set up CI with cargo test, clippy, fmt — done: added a dedicated GitHub Actions Rust workflow running fmt, clippy (-D warnings), and workspace tests
+- [~] 1.5 Create test fixtures from R reference outputs (SSc dataset) — blocked: repo lacks committed SSc fixture inputs/outputs and this environment has no `Rscript`; existing SSc references point to external `/ix/...` paths
+- [x] 1.2a Align workspace scaffolding with design.md extras: slide-types, cv, score, data-io, slide-cli — done: added design-aligned support crates plus the placeholder binary crate
+- [ ] 1.5a Add committed `tests/fixtures/` generation assets or a portable SSc fixture snapshot so correctness tests do not depend on external `/ix/...` paths
 
 ## 2. Linear Algebra Foundation
-- [ ] 2.1 Matrix types and conversion (nalgebra ↔ ndarray)
-- [ ] 2.2 Eigendecomposition wrapper (matching LAPACK dsyev)
-- [ ] 2.3 Cholesky decomposition with PD checks
-- [ ] 2.4 Pseudoinverse (pinv) implementation
-- [ ] 2.5 Graphical lasso (glasso) implementation for precision matrix
+- [x] 2.1 Matrix types and conversion (nalgebra ↔ ndarray) — done: added `slide-types` Matrix/Vector newtypes with ndarray↔nalgebra conversions, shape validation, and unit tests
+- [x] 2.2 Eigendecomposition wrapper (matching LAPACK dsyev) — done: added a LAPACK-backed symmetric eigensolver wrapper with square/symmetry validation, descending eigenpair ordering, sign normalization, and unit tests
+- [x] 2.3 Cholesky decomposition with PD checks — done: added a LAPACK-backed Cholesky wrapper with explicit minimum-eigenvalue PD checks, descriptive errors, triangular factor access, factored solves, and unit tests
+- [x] 2.4 Pseudoinverse (pinv) implementation — done: added a LAPACK-SVD-based pseudoinverse with configurable singular-value cutoff and unit tests for full-rank, singular, and rectangular matrices
+- [x] 2.5 Graphical lasso (glasso) implementation for precision matrix — done: added the slide-love estOmega column-wise LP solver with Clarabel retries, rayon parallel column solves, and targeted unit tests
 
 ## 3. LOVE Implementation
 - [ ] 3.1 Delta cross-validation (CV_delta, KfoldCV_delta)
-- [ ] 3.2 Pure variable detection — homogeneous (EstAI, EstC, FindSignPureNode)
+- [x] 3.2 Pure variable detection — homogeneous (EstAI, EstC, FindSignPureNode) — done: added slide-love pure_homo module with deterministic sign partitioning, EstAI/EstC helpers, and targeted unit tests
 - [ ] 3.3 Pure variable detection — heterogeneous (Est_BI_C, Re_Est_Pure) — must match R
-- [ ] 3.4 Non-pure row estimation (EstY, EstAJInv, EstAJDant, Dantzig LP)
+- [x] 3.4 Non-pure row estimation (EstY, EstAJInv, EstAJDant, Dantzig LP) — done: added slide-love non-pure estimation helpers plus Clarabel-backed ST/Dantzig LP solvers with focused tests for sign adjustment, normalization, and closed-form identity cases
 - [ ] 3.5 Precision matrix estimation (estOmega via glasso)
-- [ ] 3.6 Z-matrix computation (MAP estimate)
+- [x] 3.6 Z-matrix computation (MAP estimate) — done: added slide-love MAP Z-score helper with Gamma-weighted loadings, pseudoinverse-based C/G solves, and focused tests for diagonal closed forms plus singular-C behavior
 - [ ] 3.7 Pre-screening (Screen_X) — must match R
 - [ ] 3.8 LOVE integration tests against R reference
 

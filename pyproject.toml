@@ -134,6 +134,11 @@ include-package-data = true
 "loveslide.knockoff._vendor" = ["**/*"]
 "loveslide.dsdp_solver" = ["*.so", "dsdp/**/*"]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.15.9",
+]
+
 [project.urls]
 Homepage = "https://github.com/alw399/SLIDE_py"
 Issues = "https://github.com/alw399/SLIDE_py/issues"

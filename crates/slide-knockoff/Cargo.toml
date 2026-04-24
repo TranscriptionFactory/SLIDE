@@ -1,0 +1,25 @@
+[package]
+name = "slide-knockoff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+nalgebra.workspace = true
+ndarray.workspace = true
+rand.workspace = true
+rayon.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+slide-glmnet = { path = "../slide-glmnet" }
+slide-sdp = { path = "../slide-sdp" }
+slide-types = { path = "../slide-types" }
