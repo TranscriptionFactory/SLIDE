@@ -7,6 +7,18 @@ diagnostics, and more.
 
 ---
 
+# Fast Example
+From the project root
+```bash
+cargo build --release && ./target/release/slide-cli monitor \
+  --config tests/test_config_quick.yaml \
+  --checkpoint tests/test_config_checkpoint.json
+```
+
+
+
+
+
 ## Building
 
 From the repo root:
