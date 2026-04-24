@@ -6,7 +6,7 @@ mod tui;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -24,6 +24,8 @@ enum Command {
     Tui(TuiArgs),
     /// Run the SLIDE pipeline and monitor it in the TUI simultaneously.
     Monitor(MonitorArgs),
+    /// Submit a SLURM batch job and monitor it in the TUI.
+    Submit(SubmitArgs),
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -64,12 +66,28 @@ pub struct MonitorArgs {
     checkpoint: PathBuf,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct SubmitArgs {
+    /// SLURM batch script to submit.
+    #[arg(long)]
+    script: PathBuf,
+
+    /// YAML config (passed to TUI for config summary display).
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Checkpoint path the SLURM job will write to.
+    #[arg(long)]
+    checkpoint: PathBuf,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run::run(args),
         Command::Tui(args) => tui::run(args),
         Command::Monitor(args) => monitor(args),
+        Command::Submit(args) => submit(args),
     }
 }
 
@@ -123,4 +141,29 @@ fn monitor(args: MonitorArgs) -> Result<()> {
 
     eprintln!("Pipeline log: {}", log_path.display());
     tui_result
+}
+
+fn submit(args: SubmitArgs) -> Result<()> {
+    let output = std::process::Command::new("sbatch")
+        .arg(&args.script)
+        .output()
+        .context("failed to run sbatch — is SLURM available?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("sbatch failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    eprintln!("{}", stdout.trim());
+
+    let tui_args = TuiArgs {
+        checkpoint: args.checkpoint,
+        config: args.config,
+        result: None,
+        x: None,
+        poll_ms: 1_000,
+        no_follow: false,
+    };
+    tui::run(tui_args)
 }
