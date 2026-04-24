@@ -133,6 +133,16 @@ pub struct SlideRunResult {
     pub score: Scalar,
 }
 
+/// Written as a sidecar file during evaluation so the TUI can show
+/// LOVE results before the full grid eval completes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LiveEvaluation {
+    pub grid_index: usize,
+    pub delta: Scalar,
+    pub lambda: Scalar,
+    pub love: LoveResult,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OptimizeSlideResult {
     pub best: SlideRunResult,
@@ -189,6 +199,17 @@ fn write_progress(path: Option<&Path>, report: &ProgressReport) {
     let Some(path) = path else { return };
     let tmp = path.with_extension("progress.json.tmp");
     let Ok(bytes) = serde_json::to_vec_pretty(report) else {
+        return;
+    };
+    if std::fs::write(&tmp, bytes).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+fn write_live_evaluation(path: Option<&Path>, live: &LiveEvaluation) {
+    let Some(path) = path else { return };
+    let tmp = path.with_extension("live.json.tmp");
+    let Ok(bytes) = serde_json::to_vec_pretty(live) else {
         return;
     };
     if std::fs::write(&tmp, bytes).is_ok() {
@@ -570,6 +591,7 @@ pub fn optimize_slide_resume(
             lambda,
             &checkpoint.config,
             None,
+            None,
             grid_index,
             total_grid,
         )?);
@@ -666,6 +688,12 @@ pub fn optimize_slide_with_checkpoint_progress(
     let total_grid = grid.len();
     validate_checkpoint_evaluations(&checkpoint.evaluations, &grid)?;
 
+    // Save checkpoint before eval loop so the TUI can load data references
+    // (X, Y paths) and show the tab layout even with 0 completed runs.
+    save_optimize_slide_checkpoint(path, &checkpoint)?;
+
+    let live_path = progress_path.map(|_| path.with_extension("live.json"));
+
     for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
     {
         checkpoint.evaluations.push(run_slide_evaluation(
@@ -675,10 +703,15 @@ pub fn optimize_slide_with_checkpoint_progress(
             lambda,
             &checkpoint.config,
             progress_path,
+            live_path.as_deref(),
             grid_index,
             total_grid,
         )?);
         save_optimize_slide_checkpoint(path, &checkpoint)?;
+        // Remove live sidecar now that the checkpoint includes this eval.
+        if let Some(ref lp) = live_path {
+            let _ = std::fs::remove_file(lp);
+        }
     }
 
     finalize_checkpoint(checkpoint)
@@ -786,6 +819,7 @@ fn run_slide_evaluation(
     lambda: Scalar,
     config: &OptimizeSlideConfig,
     progress_path: Option<&Path>,
+    live_path: Option<&Path>,
     grid_index: usize,
     total_grid: usize,
 ) -> Result<SlideRunResult, SlideCoreError> {
@@ -803,6 +837,14 @@ fn run_slide_evaluation(
     love_config.lbd = Vector::from_ndarray(Array1::from_vec(vec![lambda]));
 
     let love_result = love(standardized_x, &love_config)?;
+
+    // Write live sidecar so the TUI can display LOVE results immediately.
+    write_live_evaluation(live_path, &LiveEvaluation {
+        grid_index,
+        delta,
+        lambda,
+        love: love_result.clone(),
+    });
 
     write_progress(progress_path, &mk(Phase::ZMap));
     let z = compute_z_map(

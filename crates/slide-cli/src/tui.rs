@@ -2477,7 +2477,7 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
             label
         };
         let (ratio, style) = if i < current_ord {
-            (1.0, Style::default().fg(Color::DarkGray).bg(Color::DarkGray))
+            (1.0, Style::default().fg(Color::Green).bg(Color::DarkGray))
         } else if i == current_ord {
             (1.0, Style::default().fg(Color::Cyan).bg(Color::DarkGray))
         } else {
