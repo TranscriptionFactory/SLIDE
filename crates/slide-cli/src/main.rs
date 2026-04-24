@@ -6,7 +6,7 @@ mod tui;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -74,13 +74,29 @@ fn main() -> Result<()> {
 }
 
 fn monitor(args: MonitorArgs) -> Result<()> {
-    let config = args.config.clone();
-    let checkpoint = args.checkpoint.clone();
+    let log_path = args.checkpoint.with_extension("log");
 
-    // Spawn the pipeline on a background thread
-    let handle = std::thread::spawn(move || run::run_pipeline(&config, &checkpoint));
+    // Spawn the pipeline as a separate child process so it doesn't share
+    // CPU with the TUI and its stderr doesn't corrupt the terminal.
+    let exe = std::env::current_exe().context("failed to locate current executable")?;
+    let log_file = std::fs::File::create(&log_path)
+        .with_context(|| format!("failed to create log file: {}", log_path.display()))?;
+    let log_err = log_file
+        .try_clone()
+        .context("failed to clone log file handle")?;
 
-    // Build TuiArgs from the monitor args and run the TUI on the main thread
+    let mut child = std::process::Command::new(exe)
+        .arg("run")
+        .arg("--config")
+        .arg(&args.config)
+        .arg("--checkpoint")
+        .arg(&args.checkpoint)
+        .stdout(log_file)
+        .stderr(log_err)
+        .spawn()
+        .context("failed to spawn pipeline process")?;
+
+    // Run the TUI on the main thread
     let tui_args = TuiArgs {
         checkpoint: args.checkpoint,
         config: Some(args.config),
@@ -91,12 +107,20 @@ fn monitor(args: MonitorArgs) -> Result<()> {
     };
     let tui_result = tui::run(tui_args);
 
-    // After TUI exits (user pressed 'q'), wait for the pipeline thread
-    match handle.join() {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => eprintln!("Pipeline error: {err:#}"),
-        Err(_) => eprintln!("Pipeline thread panicked"),
+    // After TUI exits (user pressed 'q'), terminate the child process
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            if !status.success() {
+                eprintln!("Pipeline exited with {status}");
+            }
+        }
+        _ => {
+            // Still running — kill it
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
+    eprintln!("Pipeline log: {}", log_path.display());
     tui_result
 }

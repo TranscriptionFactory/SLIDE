@@ -183,6 +183,7 @@ struct App {
     progress_mtime: Option<SystemTime>,
     love_sub_view: LoveSubView,
     selection_sub_view: SelectionSubView,
+    config_summary: Option<Vec<String>>,
 }
 
 impl App {
@@ -194,6 +195,56 @@ impl App {
         } else {
             (None, None)
         };
+        let config_summary = args.config.as_ref().and_then(|path| {
+            let yaml = fs::read_to_string(path).ok()?;
+            let cfg: crate::run::RunConfig = serde_yaml::from_str(&yaml).ok()?;
+            let total = cfg.delta.len() * cfg.lambda.len();
+            let mut lines = vec![
+                format!("Config: {}", path.display()),
+                format!("X data: {}", cfg.x_path.display()),
+                format!("Y data: {}", cfg.y_path.display()),
+                format!(
+                    "Grid:   {} delta x {} lambda = {} evaluations",
+                    cfg.delta.len(),
+                    cfg.lambda.len(),
+                    total,
+                ),
+                format!(
+                    "  delta:  [{}]",
+                    cfg.delta.iter().map(|v| format!("{v:.4}")).collect::<Vec<_>>().join(", ")
+                ),
+                format!(
+                    "  lambda: [{}]",
+                    cfg.lambda.iter().map(|v| format!("{v:.4}")).collect::<Vec<_>>().join(", ")
+                ),
+            ];
+            let mut params = Vec::new();
+            if let Some(v) = cfg.do_interacts {
+                params.push(format!("do_interacts={v}"));
+            }
+            if let Some(v) = cfg.y_factor {
+                params.push(format!("y_factor={v}"));
+            }
+            if let Some(v) = cfg.pure_homo {
+                params.push(format!("pure_homo={v}"));
+            }
+            if let Some(v) = cfg.spec {
+                params.push(format!("spec={v:.3}"));
+            }
+            if let Some(v) = cfg.fdr {
+                params.push(format!("fdr={v:.3}"));
+            }
+            if let Some(v) = cfg.slide_iter {
+                params.push(format!("SLIDE_iter={v}"));
+            }
+            if let Some(v) = cfg.thresh_fdr {
+                params.push(format!("thresh_fdr={v:.3}"));
+            }
+            if !params.is_empty() {
+                lines.push(format!("Params: {}", params.join(", ")));
+            }
+            Some(lines)
+        });
         Ok(Self {
             args,
             tab: Tab::Runs,
@@ -206,6 +257,7 @@ impl App {
             progress_mtime: None,
             love_sub_view: LoveSubView::Diagnostics,
             selection_sub_view: SelectionSubView::Marginal,
+            config_summary,
         })
     }
 
@@ -239,6 +291,8 @@ impl App {
         if self.args.no_follow {
             return Ok(());
         }
+        // Always poll progress (it can exist before the checkpoint file).
+        self.maybe_reload_progress();
         if !self.args.checkpoint.exists() {
             return Ok(());
         }
@@ -251,7 +305,6 @@ impl App {
             }
             _ => {}
         }
-        self.maybe_reload_progress();
         Ok(())
     }
 
@@ -372,13 +425,7 @@ impl App {
         frame.render_widget(titles, layout[0]);
 
         if self.data.is_none() {
-            let waiting = Paragraph::new(format!(
-                "Waiting for checkpoint file: {}\n\nStart a SLIDE run to begin.",
-                self.args.checkpoint.display()
-            ))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Waiting"));
-            frame.render_widget(waiting, layout[1]);
+            self.render_waiting(frame, layout[1]);
         } else {
             match self.tab {
                 Tab::Runs => self.render_runs(frame, layout[1]),
@@ -402,6 +449,43 @@ impl App {
         }
         let footer = Line::from(footer_spans);
         frame.render_widget(Paragraph::new(footer), layout[2]);
+    }
+
+    fn render_waiting(&self, frame: &mut Frame, area: Rect) {
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        lines.push(Line::from("Checkpoint: ".to_owned() + &self.args.checkpoint.display().to_string()));
+        lines.push(Line::default());
+
+        if let Some(ref summary) = self.config_summary {
+            for line in summary {
+                lines.push(Line::from(line.clone()));
+            }
+            lines.push(Line::default());
+        }
+
+        // Show progress if available (polled independently of checkpoint)
+        if let Some(ref prog) = self.progress {
+            lines.push(Line::from(format!(
+                "Progress: eval {}/{} (delta={:.4}, lambda={:.4})",
+                prog.grid_index + 1,
+                prog.total_grid,
+                prog.delta,
+                prog.lambda,
+            )));
+            lines.push(phase_timeline(&prog.phase));
+        } else {
+            lines.push(Line::from("Waiting for pipeline to start...".dark_gray()));
+        }
+
+        let title = if self.config_summary.is_some() {
+            "Initializing"
+        } else {
+            "Waiting"
+        };
+        let paragraph = Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title));
+        frame.render_widget(paragraph, area);
     }
 
     fn render_runs(&self, frame: &mut Frame, area: Rect) {

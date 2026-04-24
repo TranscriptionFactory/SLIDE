@@ -23,33 +23,33 @@ pub struct RunArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct RunConfig {
-    x_path: PathBuf,
-    y_path: PathBuf,
+pub struct RunConfig {
+    pub x_path: PathBuf,
+    pub y_path: PathBuf,
 
-    delta: Vec<Scalar>,
-    lambda: Vec<Scalar>,
-
-    #[serde(default)]
-    do_interacts: Option<bool>,
+    pub delta: Vec<Scalar>,
+    pub lambda: Vec<Scalar>,
 
     #[serde(default)]
-    y_factor: Option<bool>,
+    pub do_interacts: Option<bool>,
 
     #[serde(default)]
-    pure_homo: Option<bool>,
+    pub y_factor: Option<bool>,
 
     #[serde(default)]
-    thresh_fdr: Option<Scalar>,
+    pub pure_homo: Option<bool>,
 
     #[serde(default)]
-    spec: Option<Scalar>,
+    pub thresh_fdr: Option<Scalar>,
 
     #[serde(default)]
-    fdr: Option<Scalar>,
+    pub spec: Option<Scalar>,
+
+    #[serde(default)]
+    pub fdr: Option<Scalar>,
 
     #[serde(default, rename = "SLIDE_iter")]
-    slide_iter: Option<usize>,
+    pub slide_iter: Option<usize>,
 }
 
 pub fn run(args: RunArgs) -> Result<()> {
