@@ -298,6 +298,12 @@ impl App {
             return Ok(());
         }
         self.last_poll = Instant::now();
+        // Force NFS to revalidate directory entries by reading the parent
+        // directory. Without this, the NFS client may serve stale cached
+        // data indefinitely after an atomic rename on the server side.
+        if let Some(parent) = self.args.checkpoint.parent() {
+            let _ = fs::read_dir(parent);
+        }
         // Always poll progress (it can exist before the checkpoint file).
         self.maybe_reload_progress();
         if self.args.checkpoint.exists() {
