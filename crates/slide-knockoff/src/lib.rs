@@ -340,16 +340,23 @@ pub fn select_short_freq(
     }
 
     let feature_split = p.div_ceil(n_splits);
-    let mut stage_one_union = Vec::new();
 
-    for start in (0..p).step_by(feature_split) {
-        let stop = (start + feature_split).min(p);
-        let chunk = Matrix::from_ndarray(select_column_range(x, start, stop));
-        let chunk_result = knockoff_filter_voting_slide(&chunk, y, config)?;
-        stage_one_union.extend(chunk_result.selected.into_iter().map(|index| index + start));
-    }
+    let chunk_results: Vec<Vec<usize>> = (0..n_splits)
+        .into_par_iter()
+        .map(|chunk_index| {
+            let start = chunk_index * feature_split;
+            let stop = (start + feature_split).min(p);
+            let chunk = Matrix::from_ndarray(select_column_range(x, start, stop));
+            let chunk_result = knockoff_filter_voting_slide(&chunk, y, config)?;
+            Ok(chunk_result
+                .selected
+                .into_iter()
+                .map(|index| index + start)
+                .collect::<Vec<usize>>())
+        })
+        .collect::<Result<Vec<_>, KnockoffError>>()?;
 
-    let stage_one_union = sorted_unique(stage_one_union);
+    let stage_one_union = sorted_unique(chunk_results.into_iter().flatten().collect());
     if stage_one_union.is_empty() {
         return Ok(empty_voting_result(p, config, Some(stage_one_union)));
     }

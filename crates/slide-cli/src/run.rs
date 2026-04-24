@@ -20,6 +20,11 @@ pub struct RunArgs {
     /// Path where checkpoint JSON is written (monitored by the TUI).
     #[arg(long)]
     pub checkpoint: PathBuf,
+
+    /// Number of threads for the rayon thread pool.
+    /// Defaults to the value of RAYON_NUM_THREADS, or all logical CPUs.
+    #[arg(long)]
+    pub threads: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

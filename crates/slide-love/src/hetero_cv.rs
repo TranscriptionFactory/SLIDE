@@ -6,6 +6,7 @@ use clarabel::{
 };
 use ndarray::{Array1, Array2, Axis};
 use rand::seq::SliceRandom;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_types::{Matrix, Scalar, Vector};
 use thiserror::Error;
@@ -194,75 +195,90 @@ pub fn kfold_cv_delta(
     }
 
     let foldid = random_fold_partition(n_total, nfolds);
-    let mut loss = Array2::from_elem((nfolds, delta_grid.len()), Scalar::NAN);
+    let ndelta = delta_grid.len();
 
-    for (fold_index, valid_ind) in foldid.iter().enumerate() {
-        let valid_set = valid_ind
-            .iter()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>();
-        let train_ind = (0..n_total)
-            .filter(|index| !valid_set.contains(index))
-            .collect::<Vec<_>>();
+    let fold_results: Vec<(usize, Vec<Scalar>)> = foldid
+        .par_iter()
+        .enumerate()
+        .map(|(fold_index, valid_ind)| {
+            let valid_set = valid_ind
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            let train_ind = (0..n_total)
+                .filter(|index| !valid_set.contains(index))
+                .collect::<Vec<_>>();
 
-        let r1 = Matrix::from_ndarray(correlation_matrix(x, &train_ind)?);
-        let r2 = Matrix::from_ndarray(correlation_matrix(x, valid_ind)?);
-        let score_res_1 = score_mat(&r1, q, exact)?;
+            let r1 = Matrix::from_ndarray(correlation_matrix(x, &train_ind)?);
+            let r2 = Matrix::from_ndarray(correlation_matrix(x, valid_ind)?);
+            let score_res_1 = score_mat(&r1, q, exact)?;
 
-        let mut pre_i: Option<Vec<usize>> = None;
-        for (delta_index, delta_value) in delta_grid.as_ndarray().iter().copied().enumerate() {
-            let (i, i_part) = if delta_index == 0 {
-                let pure_res = est_pure(&score_res_1.score, delta_value)?;
-                (pure_res.i, pure_res.i_part)
-            } else if let Some(previous_i) = &pre_i {
-                if previous_i.is_empty() {
-                    (Vec::new(), Vec::new())
+            let mut loss_row = vec![Scalar::NAN; ndelta];
+            let mut pre_i: Option<Vec<usize>> = None;
+            for (delta_index, delta_value) in delta_grid.as_ndarray().iter().copied().enumerate() {
+                let (i, i_part) = if delta_index == 0 {
+                    let pure_res = est_pure(&score_res_1.score, delta_value)?;
+                    (pure_res.i, pure_res.i_part)
+                } else if let Some(previous_i) = &pre_i {
+                    if previous_i.is_empty() {
+                        (Vec::new(), Vec::new())
+                    } else {
+                        let sub_score =
+                            select_submatrix(score_res_1.score.as_ndarray(), previous_i);
+                        let pure_res = est_pure(&Matrix::from_ndarray(sub_score), delta_value)?;
+                        let mapped_i = pure_res
+                            .i
+                            .iter()
+                            .map(|&index| previous_i[index])
+                            .collect::<Vec<_>>();
+                        let mapped_i_part = pure_res
+                            .i_part
+                            .iter()
+                            .map(|group| group.iter().map(|&index| previous_i[index]).collect())
+                            .collect::<Vec<Vec<usize>>>();
+                        (mapped_i, mapped_i_part)
+                    }
                 } else {
-                    let sub_score = select_submatrix(score_res_1.score.as_ndarray(), previous_i);
-                    let pure_res = est_pure(&Matrix::from_ndarray(sub_score), delta_value)?;
-                    let mapped_i = pure_res
-                        .i
-                        .iter()
-                        .map(|&index| previous_i[index])
-                        .collect::<Vec<_>>();
-                    let mapped_i_part = pure_res
-                        .i_part
-                        .iter()
-                        .map(|group| group.iter().map(|&index| previous_i[index]).collect())
-                        .collect::<Vec<Vec<usize>>>();
-                    (mapped_i, mapped_i_part)
+                    (Vec::new(), Vec::new())
+                };
+
+                pre_i = (!i.is_empty()).then_some(i.clone());
+                if i_part.is_empty() {
+                    break;
                 }
-            } else {
-                (Vec::new(), Vec::new())
-            };
 
-            pre_i = (!i.is_empty()).then_some(i.clone());
-            if i_part.is_empty() {
-                break;
+                let bi_c = est_bi_c(&score_res_1.moments, &r1, &i_part, &i)?;
+                let mut tmp_r1 = r1.as_ndarray().to_owned();
+                let b_i = bi_c.b.as_ndarray().select(Axis(0), &i);
+                let reconstructed_pure = b_i.dot(bi_c.c.as_ndarray()).dot(&b_i.t());
+                assign_submatrix(&mut tmp_r1, &i, &i, &reconstructed_pure);
+
+                if i.len() != p_total {
+                    let j = (0..p_total)
+                        .filter(|index| !i.contains(index))
+                        .collect::<Vec<_>>();
+                    let tmp = bi_c
+                        .b_left_inv
+                        .as_ndarray()
+                        .dot(&r1.as_ndarray().select(Axis(0), &i).select(Axis(1), &j));
+                    let c_pinv = bi_c.c.pseudoinverse().map_err(PureHeteroError::from)?;
+                    let reconstructed_non_pure = tmp.t().dot(c_pinv.as_ndarray()).dot(&tmp);
+                    assign_submatrix(&mut tmp_r1, &j, &j, &reconstructed_non_pure);
+                }
+
+                let diff = &tmp_r1 - r2.as_ndarray();
+                loss_row[delta_index] =
+                    off_sum_scalar(&diff, 1.0) / (p_total as Scalar) / ((p_total - 1) as Scalar);
             }
 
-            let bi_c = est_bi_c(&score_res_1.moments, &r1, &i_part, &i)?;
-            let mut tmp_r1 = r1.as_ndarray().to_owned();
-            let b_i = bi_c.b.as_ndarray().select(Axis(0), &i);
-            let reconstructed_pure = b_i.dot(bi_c.c.as_ndarray()).dot(&b_i.t());
-            assign_submatrix(&mut tmp_r1, &i, &i, &reconstructed_pure);
+            Ok((fold_index, loss_row))
+        })
+        .collect::<Result<Vec<_>, HeteroCvError>>()?;
 
-            if i.len() != p_total {
-                let j = (0..p_total)
-                    .filter(|index| !i.contains(index))
-                    .collect::<Vec<_>>();
-                let tmp = bi_c
-                    .b_left_inv
-                    .as_ndarray()
-                    .dot(&r1.as_ndarray().select(Axis(0), &i).select(Axis(1), &j));
-                let c_pinv = bi_c.c.pseudoinverse().map_err(PureHeteroError::from)?;
-                let reconstructed_non_pure = tmp.t().dot(c_pinv.as_ndarray()).dot(&tmp);
-                assign_submatrix(&mut tmp_r1, &j, &j, &reconstructed_non_pure);
-            }
-
-            let diff = &tmp_r1 - r2.as_ndarray();
-            loss[(fold_index, delta_index)] =
-                off_sum_scalar(&diff, 1.0) / (p_total as Scalar) / ((p_total - 1) as Scalar);
+    let mut loss = Array2::from_elem((nfolds, ndelta), Scalar::NAN);
+    for (fold_index, row) in fold_results {
+        for (delta_index, val) in row.into_iter().enumerate() {
+            loss[(fold_index, delta_index)] = val;
         }
     }
 

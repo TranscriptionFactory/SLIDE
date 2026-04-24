@@ -9,6 +9,7 @@ use clarabel::{
     },
 };
 use ndarray::Array1;
+use rayon::prelude::*;
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use thiserror::Error;
 
@@ -123,15 +124,21 @@ pub fn create_solve_asdp_with_settings(
     }
 
     let clusters = partition_correlation_blocks(&normalized.correlation, max_block_size);
-    let mut correlation_solution = vec![0.0; normalized.dimension];
     let correlation_array = normalized.correlation.as_ndarray();
 
-    for cluster in clusters {
-        let block = submatrix(correlation_array, &cluster);
-        let block_matrix = Matrix::from_ndarray(block);
-        let mut block_solution = solve_correlation_sdp(&block_matrix, settings)?;
-        enforce_correlation_feasibility(&block_matrix, &mut block_solution)?;
+    let block_results: Vec<(Vec<usize>, Vec<Scalar>)> = clusters
+        .into_par_iter()
+        .map(|cluster| {
+            let block = submatrix(correlation_array, &cluster);
+            let block_matrix = Matrix::from_ndarray(block);
+            let mut block_solution = solve_correlation_sdp(&block_matrix, settings)?;
+            enforce_correlation_feasibility(&block_matrix, &mut block_solution)?;
+            Ok((cluster, block_solution))
+        })
+        .collect::<Result<Vec<_>, SdpError>>()?;
 
+    let mut correlation_solution = vec![0.0; normalized.dimension];
+    for (cluster, block_solution) in block_results {
         for (position, &index) in cluster.iter().enumerate() {
             correlation_solution[index] = block_solution[position];
         }

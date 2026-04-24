@@ -1630,6 +1630,7 @@ dependencies = [
  "csv",
  "ndarray",
  "ratatui",
+ "rayon",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1643,6 +1644,7 @@ name = "slide-core"
 version = "0.1.0"
 dependencies = [
  "ndarray",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",
@@ -1737,6 +1739,7 @@ dependencies = [
  "clarabel",
  "nalgebra",
  "ndarray",
+ "rayon",
  "slide-types",
  "thiserror 2.0.18",
 ]

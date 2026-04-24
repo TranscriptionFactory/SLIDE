@@ -84,7 +84,15 @@ pub struct SubmitArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Run(args) => run::run(args),
+        Command::Run(args) => {
+            if let Some(n) = args.threads {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(n)
+                    .build_global()
+                    .ok();
+            }
+            run::run(args)
+        }
         Command::Tui(args) => tui::run(args),
         Command::Monitor(args) => monitor(args),
         Command::Submit(args) => submit(args),

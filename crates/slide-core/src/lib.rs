@@ -2,6 +2,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use ndarray::{Array1, Array2, Axis};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_data_io::{standardize, ResponseType as DataResponseType};
 use slide_glmnet::GlmnetFamily;
@@ -12,6 +13,7 @@ use slide_knockoff::{
 use slide_love::{compute_z_map, love, LoveConfig, LoveError, LoveResult, ZMatrixError};
 use sha2::{Digest, Sha256};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -411,50 +413,61 @@ pub fn find_interaction_lfs(
         }
     }
 
-    let mut used_marginals = Vec::with_capacity(sig_lfs.len());
+    // Precompute candidate sets: iteration i excludes sig_lfs[0..=i]
+    let candidate_sets: Vec<Vec<usize>> = sig_lfs
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let excluded: HashSet<usize> = sig_lfs[..=i].iter().copied().collect();
+            (0..ncols).filter(|idx| !excluded.contains(idx)).collect()
+        })
+        .collect();
+
+    let knockoff_config = config.to_knockoff_config();
+
+    // Run all marginal iterations in parallel
+    let results: Vec<Option<InteractionVotingResult>> = sig_lfs
+        .par_iter()
+        .zip(candidate_sets.par_iter())
+        .map(|(&marginal_lf, candidate_lfs)| {
+            if candidate_lfs.is_empty() {
+                return Ok(None);
+            }
+            let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
+            let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
+            let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
+            let voting =
+                select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
+            let selected_interactors: Vec<_> = voting
+                .selected
+                .iter()
+                .map(|&local_index| candidate_lfs[local_index])
+                .collect();
+            Ok(Some(InteractionVotingResult {
+                marginal_lf,
+                candidate_lfs: candidate_lfs.clone(),
+                corrected_y,
+                selected_interactors,
+                voting,
+            }))
+        })
+        .collect::<Result<Vec<_>, SlideCoreError>>()?;
+
+    // Sequential post-processing: flatten into interaction_pairs, interaction_columns
     let mut interaction_pairs = Vec::new();
     let mut interaction_columns = Vec::new();
     let mut voting_results = Vec::new();
 
-    for &marginal_lf in sig_lfs {
-        used_marginals.push(marginal_lf);
-        let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
-        let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
-
-        let candidate_lfs: Vec<_> = (0..ncols)
-            .filter(|index| !used_marginals.contains(index))
-            .collect();
-        if candidate_lfs.is_empty() {
-            continue;
-        }
-
-        let interaction_terms = build_interaction_terms(z, marginal_lf, &candidate_lfs);
-        let voting = select_short_freq(
-            &interaction_terms,
-            &corrected_y,
-            &config.to_knockoff_config(),
-        )?;
-        let selected_interactors: Vec<_> = voting
-            .selected
-            .iter()
-            .map(|&local_index| candidate_lfs[local_index])
-            .collect();
-
-        for &interactor in &selected_interactors {
-            interaction_pairs.push((marginal_lf, interactor));
+    for result in results.into_iter().flatten() {
+        for &interactor in &result.selected_interactors {
+            interaction_pairs.push((result.marginal_lf, interactor));
             interaction_columns.push(
-                (&z.as_ndarray().column(marginal_lf) * &z.as_ndarray().column(interactor))
-                    .to_owned(),
+                (&z.as_ndarray().column(result.marginal_lf)
+                    * &z.as_ndarray().column(interactor))
+                .to_owned(),
             );
         }
-
-        voting_results.push(InteractionVotingResult {
-            marginal_lf,
-            candidate_lfs,
-            corrected_y,
-            selected_interactors,
-            voting,
-        });
+        voting_results.push(result);
     }
 
     Ok(InteractionLfSelection {
@@ -470,7 +483,7 @@ fn find_interaction_lfs_with_progress(
     sig_lfs: &[usize],
     config: &MarginalLfSelectionConfig,
     progress_path: Option<&Path>,
-    mk: &dyn Fn(Phase) -> ProgressReport,
+    mk: &(dyn Fn(Phase) -> ProgressReport + Sync),
 ) -> Result<InteractionLfSelection, SlideCoreError> {
     if y.len() != z.nrows() {
         return Err(SlideCoreError::ResponseLengthMismatch {
@@ -490,57 +503,81 @@ fn find_interaction_lfs_with_progress(
     }
 
     let total_marginals = sig_lfs.len();
-    let mut used_marginals = Vec::with_capacity(sig_lfs.len());
+
+    // Report start of interaction phase
+    write_progress(
+        progress_path,
+        &mk(Phase::KnockoffInteraction {
+            marginal_lf: 0,
+            total_marginals,
+        }),
+    );
+
+    // Precompute candidate sets: iteration i excludes sig_lfs[0..=i]
+    let candidate_sets: Vec<Vec<usize>> = sig_lfs
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let excluded: HashSet<usize> = sig_lfs[..=i].iter().copied().collect();
+            (0..ncols).filter(|idx| !excluded.contains(idx)).collect()
+        })
+        .collect();
+
+    let knockoff_config = config.to_knockoff_config();
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+
+    // Run all marginal iterations in parallel
+    let results: Vec<Option<InteractionVotingResult>> = sig_lfs
+        .par_iter()
+        .zip(candidate_sets.par_iter())
+        .map(|(&marginal_lf, candidate_lfs)| {
+            if candidate_lfs.is_empty() {
+                completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(None);
+            }
+            let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
+            let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
+            let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
+            let voting =
+                select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
+            let selected_interactors: Vec<_> = voting
+                .selected
+                .iter()
+                .map(|&local_index| candidate_lfs[local_index])
+                .collect();
+            let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            write_progress(
+                progress_path,
+                &mk(Phase::KnockoffInteraction {
+                    marginal_lf: done,
+                    total_marginals,
+                }),
+            );
+            Ok(Some(InteractionVotingResult {
+                marginal_lf,
+                candidate_lfs: candidate_lfs.clone(),
+                corrected_y,
+                selected_interactors,
+                voting,
+            }))
+        })
+        .collect::<Result<Vec<_>, SlideCoreError>>()?;
+
+    // Sequential post-processing: flatten into interaction_pairs, interaction_columns
     let mut interaction_pairs = Vec::new();
     let mut interaction_columns = Vec::new();
     let mut voting_results = Vec::new();
 
-    for (mi, &marginal_lf) in sig_lfs.iter().enumerate() {
-        write_progress(
-            progress_path,
-            &mk(Phase::KnockoffInteraction {
-                marginal_lf: mi,
-                total_marginals,
-            }),
-        );
-        used_marginals.push(marginal_lf);
-        let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
-        let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
-
-        let candidate_lfs: Vec<_> = (0..ncols)
-            .filter(|index| !used_marginals.contains(index))
-            .collect();
-        if candidate_lfs.is_empty() {
-            continue;
-        }
-
-        let interaction_terms = build_interaction_terms(z, marginal_lf, &candidate_lfs);
-        let voting = select_short_freq(
-            &interaction_terms,
-            &corrected_y,
-            &config.to_knockoff_config(),
-        )?;
-        let selected_interactors: Vec<_> = voting
-            .selected
-            .iter()
-            .map(|&local_index| candidate_lfs[local_index])
-            .collect();
-
-        for &interactor in &selected_interactors {
-            interaction_pairs.push((marginal_lf, interactor));
+    for result in results.into_iter().flatten() {
+        for &interactor in &result.selected_interactors {
+            interaction_pairs.push((result.marginal_lf, interactor));
             interaction_columns.push(
-                (&z.as_ndarray().column(marginal_lf) * &z.as_ndarray().column(interactor))
-                    .to_owned(),
+                (&z.as_ndarray().column(result.marginal_lf)
+                    * &z.as_ndarray().column(interactor))
+                .to_owned(),
             );
         }
-
-        voting_results.push(InteractionVotingResult {
-            marginal_lf,
-            candidate_lfs,
-            corrected_y,
-            selected_interactors,
-            voting,
-        });
+        voting_results.push(result);
     }
 
     Ok(InteractionLfSelection {
