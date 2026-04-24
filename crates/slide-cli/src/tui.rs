@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -182,10 +182,9 @@ struct App {
     data: Option<DashboardData>,
     selected_run: usize,
     selected_factor: usize,
-    last_reload: Option<SystemTime>,
     last_error: Option<String>,
     progress: Option<ProgressReport>,
-    progress_mtime: Option<SystemTime>,
+    last_poll: Instant,
     love_sub_view: LoveSubView,
     selection_sub_view: SelectionSubView,
     config_summary: Option<Vec<String>>,
@@ -193,12 +192,10 @@ struct App {
 
 impl App {
     fn load(args: TuiArgs) -> Result<Self> {
-        let (data, last_reload) = if args.checkpoint.exists() {
-            let data = DashboardData::load(&args)?;
-            let mtime = latest_mtime(&args)?;
-            (Some(data), Some(mtime))
+        let data = if args.checkpoint.exists() {
+            Some(DashboardData::load(&args)?)
         } else {
-            (None, None)
+            None
         };
         let config_summary = args.config.as_ref().and_then(|path| {
             let yaml = fs::read_to_string(path).ok()?;
@@ -256,10 +253,9 @@ impl App {
             selected_run: 0,
             selected_factor: 0,
             data,
-            last_reload,
             last_error: None,
             progress: None,
-            progress_mtime: None,
+            last_poll: Instant::now(),
             love_sub_view: LoveSubView::Diagnostics,
             selection_sub_view: SelectionSubView::Marginal,
             config_summary,
@@ -267,6 +263,9 @@ impl App {
     }
 
     fn reload(&mut self) -> Result<()> {
+        if !self.args.checkpoint.exists() {
+            return Ok(());
+        }
         match DashboardData::load(&self.args) {
             Ok(data) => {
                 if self.data.is_some() {
@@ -281,53 +280,40 @@ impl App {
                     self.selected_factor = 0;
                 }
                 self.data = Some(data);
-                self.last_reload = Some(latest_mtime(&self.args)?);
                 self.last_error = None;
-                Ok(())
             }
             Err(error) => {
                 self.last_error = Some(error.to_string());
-                Err(error)
             }
         }
+        Ok(())
     }
 
     fn maybe_reload(&mut self) -> Result<()> {
         if self.args.no_follow {
             return Ok(());
         }
-        // Always poll progress (it can exist before the checkpoint file).
-        self.maybe_reload_progress();
-        if !self.args.checkpoint.exists() {
+        let poll_interval = Duration::from_millis(self.args.poll_ms);
+        if self.last_poll.elapsed() < poll_interval {
             return Ok(());
         }
-        match (latest_mtime(&self.args), self.last_reload) {
-            (Ok(newest), Some(last)) if newest > last => {
-                let _ = self.reload();
-            }
-            (Ok(_), None) => {
-                let _ = self.reload();
-            }
-            _ => {}
+        self.last_poll = Instant::now();
+        // Always poll progress (it can exist before the checkpoint file).
+        self.maybe_reload_progress();
+        if self.args.checkpoint.exists() {
+            let _ = self.reload();
         }
         Ok(())
     }
 
     fn maybe_reload_progress(&mut self) {
         let progress_path = self.args.checkpoint.with_extension("progress.json");
-        let Ok(meta) = fs::metadata(&progress_path) else {
-            self.progress = None;
-            return;
-        };
-        let Ok(mtime) = meta.modified() else { return };
-        if self.progress_mtime == Some(mtime) {
-            return;
-        }
         if let Ok(contents) = fs::read_to_string(&progress_path) {
             if let Ok(report) = serde_json::from_str::<ProgressReport>(&contents) {
                 self.progress = Some(report);
-                self.progress_mtime = Some(mtime);
             }
+        } else {
+            self.progress = None;
         }
     }
 
@@ -2058,23 +2044,6 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     let contents = fs::read_to_string(path)?;
     Ok(serde_yaml::from_str(&contents)?)
-}
-
-fn latest_mtime(args: &TuiArgs) -> Result<SystemTime> {
-    let mut latest = fs::metadata(&args.checkpoint)?.modified()?;
-    if let Some(path) = &args.result {
-        let modified = fs::metadata(path)?.modified()?;
-        if modified > latest {
-            latest = modified;
-        }
-    }
-    if let Some(path) = &args.config {
-        let modified = fs::metadata(path)?.modified()?;
-        if modified > latest {
-            latest = modified;
-        }
-    }
-    Ok(latest)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
