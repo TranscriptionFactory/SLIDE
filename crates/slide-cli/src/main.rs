@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+mod run;
 mod tui;
 
 use std::path::PathBuf;
@@ -17,6 +18,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Execute the SLIDE optimization pipeline.
+    Run(run::RunArgs),
     /// Launch the SLIDE monitoring TUI.
     Tui(TuiArgs),
 }
@@ -51,6 +54,7 @@ pub struct TuiArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Run(args) => run::run(args),
         Command::Tui(args) => tui::run(args),
     }
 }
