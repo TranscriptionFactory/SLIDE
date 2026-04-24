@@ -53,8 +53,17 @@ struct RunConfig {
 }
 
 pub fn run(args: RunArgs) -> Result<()> {
-    let yaml = std::fs::read_to_string(&args.config)
-        .with_context(|| format!("failed to read config file: {}", args.config.display()))?;
+    run_pipeline(&args.config, &args.checkpoint)?;
+    Ok(())
+}
+
+/// Execute the SLIDE optimization pipeline.
+///
+/// Separated from [`run`] so the `monitor` command can spawn this on a
+/// background thread while the TUI runs on the main thread.
+pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> Result<()> {
+    let yaml = std::fs::read_to_string(config)
+        .with_context(|| format!("failed to read config file: {}", config.display()))?;
     let cfg: RunConfig = serde_yaml::from_str(&yaml)
         .with_context(|| "failed to parse YAML config")?;
 
@@ -97,11 +106,11 @@ pub fn run(args: RunArgs) -> Result<()> {
         cfg.lambda.len(),
         cfg.delta.len() * cfg.lambda.len(),
     );
-    let progress_path = args.checkpoint.with_extension("progress.json");
-    eprintln!("Checkpoint: {}", args.checkpoint.display());
+    let progress_path = checkpoint.with_extension("progress.json");
+    eprintln!("Checkpoint: {}", checkpoint.display());
 
     let result = optimize_slide_with_checkpoint_progress(
-        &args.checkpoint,
+        checkpoint,
         &x,
         &y,
         &cfg.x_path,
@@ -116,16 +125,16 @@ pub fn run(args: RunArgs) -> Result<()> {
     let _ = std::fs::remove_file(&progress_path);
 
     let best = &result.best;
-    println!("=== SLIDE Optimization Complete ===");
-    println!("Best score:  {:.6}", best.score);
-    println!("Best delta:  {}", best.delta);
-    println!("Best lambda: {}", best.lambda);
-    println!(
+    eprintln!("=== SLIDE Optimization Complete ===");
+    eprintln!("Best score:  {:.6}", best.score);
+    eprintln!("Best delta:  {}", best.delta);
+    eprintln!("Best lambda: {}", best.lambda);
+    eprintln!(
         "Selected LFs: {} marginal, {} interactions",
         best.marginal.sig_lfs.len(),
         best.interactions.sig_interacts.len(),
     );
-    println!("Checkpoint written to: {}", args.checkpoint.display());
+    eprintln!("Checkpoint written to: {}", checkpoint.display());
 
     Ok(())
 }

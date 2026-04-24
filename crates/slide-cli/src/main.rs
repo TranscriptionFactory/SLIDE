@@ -22,6 +22,8 @@ enum Command {
     Run(run::RunArgs),
     /// Launch the SLIDE monitoring TUI.
     Tui(TuiArgs),
+    /// Run the SLIDE pipeline and monitor it in the TUI simultaneously.
+    Monitor(MonitorArgs),
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -51,10 +53,50 @@ pub struct TuiArgs {
     no_follow: bool,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct MonitorArgs {
+    /// YAML configuration file describing the SLIDE run.
+    #[arg(long)]
+    config: PathBuf,
+
+    /// Path where checkpoint JSON is written.
+    #[arg(long)]
+    checkpoint: PathBuf,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run::run(args),
         Command::Tui(args) => tui::run(args),
+        Command::Monitor(args) => monitor(args),
     }
+}
+
+fn monitor(args: MonitorArgs) -> Result<()> {
+    let config = args.config.clone();
+    let checkpoint = args.checkpoint.clone();
+
+    // Spawn the pipeline on a background thread
+    let handle = std::thread::spawn(move || run::run_pipeline(&config, &checkpoint));
+
+    // Build TuiArgs from the monitor args and run the TUI on the main thread
+    let tui_args = TuiArgs {
+        checkpoint: args.checkpoint,
+        config: Some(args.config),
+        result: None,
+        x: None,
+        poll_ms: 1_000,
+        no_follow: false,
+    };
+    let tui_result = tui::run(tui_args);
+
+    // After TUI exits (user pressed 'q'), wait for the pipeline thread
+    match handle.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => eprintln!("Pipeline error: {err:#}"),
+        Err(_) => eprintln!("Pipeline thread panicked"),
+    }
+
+    tui_result
 }
