@@ -147,6 +147,38 @@ pub struct OptimizeSlideCheckpoint {
     pub evaluations: Vec<SlideRunResult>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Phase {
+    Love,
+    ZMap,
+    KnockoffMarginal,
+    KnockoffInteraction {
+        marginal_lf: usize,
+        total_marginals: usize,
+    },
+    Scoring,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProgressReport {
+    pub grid_index: usize,
+    pub total_grid: usize,
+    pub delta: Scalar,
+    pub lambda: Scalar,
+    pub phase: Phase,
+}
+
+fn write_progress(path: Option<&Path>, report: &ProgressReport) {
+    let Some(path) = path else { return };
+    let tmp = path.with_extension("progress.json.tmp");
+    let Ok(bytes) = serde_json::to_vec_pretty(report) else {
+        return;
+    };
+    if std::fs::write(&tmp, bytes).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SlideCoreError {
     #[error(transparent)]
@@ -394,6 +426,92 @@ pub fn find_interaction_lfs(
     })
 }
 
+fn find_interaction_lfs_with_progress(
+    z: &Matrix,
+    y: &Vector,
+    sig_lfs: &[usize],
+    config: &MarginalLfSelectionConfig,
+    progress_path: Option<&Path>,
+    mk: &dyn Fn(Phase) -> ProgressReport,
+) -> Result<InteractionLfSelection, SlideCoreError> {
+    if y.len() != z.nrows() {
+        return Err(SlideCoreError::ResponseLengthMismatch {
+            expected: z.nrows(),
+            actual: y.len(),
+        });
+    }
+
+    let ncols = z.ncols();
+    for &marginal_lf in sig_lfs {
+        if marginal_lf >= ncols {
+            return Err(SlideCoreError::MarginalLfOutOfBounds {
+                index: marginal_lf,
+                ncols,
+            });
+        }
+    }
+
+    let total_marginals = sig_lfs.len();
+    let mut used_marginals = Vec::with_capacity(sig_lfs.len());
+    let mut interaction_pairs = Vec::new();
+    let mut interaction_columns = Vec::new();
+    let mut voting_results = Vec::new();
+
+    for (mi, &marginal_lf) in sig_lfs.iter().enumerate() {
+        write_progress(
+            progress_path,
+            &mk(Phase::KnockoffInteraction {
+                marginal_lf: mi,
+                total_marginals,
+            }),
+        );
+        used_marginals.push(marginal_lf);
+        let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
+        let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
+
+        let candidate_lfs: Vec<_> = (0..ncols)
+            .filter(|index| !used_marginals.contains(index))
+            .collect();
+        if candidate_lfs.is_empty() {
+            continue;
+        }
+
+        let interaction_terms = build_interaction_terms(z, marginal_lf, &candidate_lfs);
+        let voting = select_short_freq(
+            &interaction_terms,
+            &corrected_y,
+            &config.to_knockoff_config(),
+        )?;
+        let selected_interactors: Vec<_> = voting
+            .selected
+            .iter()
+            .map(|&local_index| candidate_lfs[local_index])
+            .collect();
+
+        for &interactor in &selected_interactors {
+            interaction_pairs.push((marginal_lf, interactor));
+            interaction_columns.push(
+                (&z.as_ndarray().column(marginal_lf) * &z.as_ndarray().column(interactor))
+                    .to_owned(),
+            );
+        }
+
+        voting_results.push(InteractionVotingResult {
+            marginal_lf,
+            candidate_lfs,
+            corrected_y,
+            selected_interactors,
+            voting,
+        });
+    }
+
+    Ok(InteractionLfSelection {
+        sig_interacts: interaction_pairs,
+        interaction_terms: columns_to_matrix(z.nrows(), interaction_columns),
+        voting: voting_results,
+    })
+}
+
 pub fn optimize_slide(
     x: &Matrix,
     y: &Vector,
@@ -417,15 +535,20 @@ pub fn optimize_slide_resume(
     validate_checkpoint_inputs(&checkpoint)?;
     let standardized = standardize(&checkpoint.x);
     let grid = grid_pairs(&checkpoint.delta_grid, &checkpoint.lambda_grid);
+    let total_grid = grid.len();
     validate_checkpoint_evaluations(&checkpoint.evaluations, &grid)?;
 
-    for &(delta, lambda) in grid.iter().skip(checkpoint.evaluations.len()) {
+    for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
+    {
         checkpoint.evaluations.push(run_slide_evaluation(
             &standardized.matrix,
             &checkpoint.y,
             delta,
             lambda,
             &checkpoint.config,
+            None,
+            grid_index,
+            total_grid,
         )?);
     }
 
@@ -439,6 +562,18 @@ pub fn optimize_slide_with_checkpoint(
     delta_grid: &[Scalar],
     lambda_grid: &[Scalar],
     config: &OptimizeSlideConfig,
+) -> Result<OptimizeSlideResult, SlideCoreError> {
+    optimize_slide_with_checkpoint_progress(path, x, y, delta_grid, lambda_grid, config, None)
+}
+
+pub fn optimize_slide_with_checkpoint_progress(
+    path: impl AsRef<Path>,
+    x: &Matrix,
+    y: &Vector,
+    delta_grid: &[Scalar],
+    lambda_grid: &[Scalar],
+    config: &OptimizeSlideConfig,
+    progress_path: Option<&Path>,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
     let path = path.as_ref();
     let mut checkpoint = if path.exists() {
@@ -466,15 +601,20 @@ pub fn optimize_slide_with_checkpoint(
     validate_checkpoint_inputs(&checkpoint)?;
     let standardized = standardize(&checkpoint.x);
     let grid = grid_pairs(&checkpoint.delta_grid, &checkpoint.lambda_grid);
+    let total_grid = grid.len();
     validate_checkpoint_evaluations(&checkpoint.evaluations, &grid)?;
 
-    for &(delta, lambda) in grid.iter().skip(checkpoint.evaluations.len()) {
+    for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
+    {
         checkpoint.evaluations.push(run_slide_evaluation(
             &standardized.matrix,
             &checkpoint.y,
             delta,
             lambda,
             &checkpoint.config,
+            progress_path,
+            grid_index,
+            total_grid,
         )?);
         save_optimize_slide_checkpoint(path, &checkpoint)?;
     }
@@ -577,21 +717,45 @@ fn run_slide_evaluation(
     delta: Scalar,
     lambda: Scalar,
     config: &OptimizeSlideConfig,
+    progress_path: Option<&Path>,
+    grid_index: usize,
+    total_grid: usize,
 ) -> Result<SlideRunResult, SlideCoreError> {
+    let mk = |phase: Phase| ProgressReport {
+        grid_index,
+        total_grid,
+        delta,
+        lambda,
+        phase,
+    };
+
+    write_progress(progress_path, &mk(Phase::Love));
     let mut love_config = config.love.clone();
     love_config.delta = Some(Vector::from_ndarray(Array1::from_vec(vec![delta])));
     love_config.lbd = Vector::from_ndarray(Array1::from_vec(vec![lambda]));
 
     let love_result = love(standardized_x, &love_config)?;
+
+    write_progress(progress_path, &mk(Phase::ZMap));
     let z = compute_z_map(
         standardized_x,
         &love_result.a,
         &love_result.gamma,
         &love_result.c,
     )?;
+
+    write_progress(progress_path, &mk(Phase::KnockoffMarginal));
     let marginal = find_standalone_lfs(&z, y, &config.knockoff)?;
+
     let interactions = if config.do_interacts && !marginal.sig_lfs.is_empty() {
-        find_interaction_lfs(&z, y, &marginal.sig_lfs, &config.knockoff)?
+        find_interaction_lfs_with_progress(
+            &z,
+            y,
+            &marginal.sig_lfs,
+            &config.knockoff,
+            progress_path,
+            &mk,
+        )?
     } else {
         InteractionLfSelection {
             sig_interacts: Vec::new(),
@@ -600,6 +764,7 @@ fn run_slide_evaluation(
         }
     };
 
+    write_progress(progress_path, &mk(Phase::Scoring));
     let score = score_selected_model(
         &z,
         &interactions.interaction_terms,

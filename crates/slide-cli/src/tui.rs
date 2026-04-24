@@ -17,7 +17,10 @@ use ratatui::prelude::{Alignment, Color, Line, Modifier, Style, Stylize};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap};
 use ratatui::{DefaultTerminal, Frame};
-use slide_core::{OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideResult, SlideRunResult};
+use slide_core::{
+    OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideResult, Phase, ProgressReport,
+    SlideRunResult,
+};
 use slide_data_io::{read_feature_matrix, Delimiter, MatrixReadOptions};
 use slide_types::{Matrix, Scalar, Vector};
 
@@ -96,6 +99,8 @@ struct App {
     selected_factor: usize,
     last_reload: Option<SystemTime>,
     last_error: Option<String>,
+    progress: Option<ProgressReport>,
+    progress_mtime: Option<SystemTime>,
 }
 
 impl App {
@@ -115,6 +120,8 @@ impl App {
             data,
             last_reload,
             last_error: None,
+            progress: None,
+            progress_mtime: None,
         })
     }
 
@@ -156,12 +163,30 @@ impl App {
                 let _ = self.reload();
             }
             (Ok(_), None) => {
-                // File appeared for the first time
                 let _ = self.reload();
             }
             _ => {}
         }
+        self.maybe_reload_progress();
         Ok(())
+    }
+
+    fn maybe_reload_progress(&mut self) {
+        let progress_path = self.args.checkpoint.with_extension("progress.json");
+        let Ok(meta) = fs::metadata(&progress_path) else {
+            self.progress = None;
+            return;
+        };
+        let Ok(mtime) = meta.modified() else { return };
+        if self.progress_mtime == Some(mtime) {
+            return;
+        }
+        if let Ok(contents) = fs::read_to_string(&progress_path) {
+            if let Ok(report) = serde_json::from_str::<ProgressReport>(&contents) {
+                self.progress = Some(report);
+                self.progress_mtime = Some(mtime);
+            }
+        }
     }
 
     fn next_tab(&mut self) {
@@ -294,7 +319,7 @@ impl App {
         let left = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(7),
+                Constraint::Length(8),
                 Constraint::Min(10),
                 Constraint::Length(8),
             ])
@@ -384,12 +409,30 @@ impl App {
     fn summary_widget(&self) -> Paragraph<'static> {
         let completed = self.data().runs.len();
         let total = self.data().total_grid_points;
-        let progress = if total == 0 {
+        let progress_pct = if total == 0 {
             0.0
         } else {
             completed as f64 / total as f64
         };
         let best = self.data().best_run.as_ref();
+
+        let running_line = if completed < total {
+            if let Some(ref prog) = self.progress {
+                format!(
+                    "running: eval {}/{} (d={:.2}, l={:.2}) phase: {}",
+                    prog.grid_index + 1,
+                    prog.total_grid,
+                    prog.delta,
+                    prog.lambda,
+                    format_phase(&prog.phase),
+                )
+            } else {
+                "running: waiting for progress...".to_owned()
+            }
+        } else {
+            "status: complete".to_owned()
+        };
+
         let lines = vec![
             Line::from(format!(
                 "checkpoint: {}",
@@ -397,10 +440,11 @@ impl App {
             )),
             Line::from(format!(
                 "progress: {completed}/{total} ({:.1}%) | follow: {} | poll: {}ms",
-                progress * 100.0,
+                progress_pct * 100.0,
                 if self.args.no_follow { "off" } else { "on" },
                 self.args.poll_ms
             )),
+            Line::from(running_line),
             Line::from(format!(
                 "best: {}",
                 best.map_or_else(
@@ -420,7 +464,7 @@ impl App {
             Line::from(
                 self.last_error
                     .as_ref()
-                    .map_or_else(|| "status: ok".to_owned(), |err| format!("status: {err}")),
+                    .map_or_else(|| "".to_owned(), |err| format!("error: {err}")),
             ),
         ];
         Paragraph::new(Text::from(lines))
@@ -605,7 +649,19 @@ impl App {
                     .run_lookup
                     .get(&(ScalarKey::new(*delta), ScalarKey::new(*lambda)))
                     .map_or_else(
-                        || Cell::from("·".to_owned()).style(Style::default().fg(Color::DarkGray)),
+                        || {
+                            let is_running = self.progress.as_ref().is_some_and(|p| {
+                                ScalarKey::new(p.delta) == ScalarKey::new(*delta)
+                                    && ScalarKey::new(p.lambda) == ScalarKey::new(*lambda)
+                            });
+                            if is_running {
+                                Cell::from("...".to_owned())
+                                    .style(Style::default().fg(Color::Yellow))
+                            } else {
+                                Cell::from("·".to_owned())
+                                    .style(Style::default().fg(Color::DarkGray))
+                            }
+                        },
                         |&index| {
                             let run = &self.data().runs[index];
                             let value = match metric {
@@ -1261,5 +1317,18 @@ fn yaml_value_string(value: &serde_yaml::Value) -> String {
         ),
         serde_yaml::Value::Mapping(_) => "{...}".to_owned(),
         serde_yaml::Value::Tagged(tagged) => yaml_value_string(&tagged.value),
+    }
+}
+
+fn format_phase(phase: &Phase) -> String {
+    match phase {
+        Phase::Love => "LOVE".to_owned(),
+        Phase::ZMap => "Z-map".to_owned(),
+        Phase::KnockoffMarginal => "knockoff (marginal)".to_owned(),
+        Phase::KnockoffInteraction {
+            marginal_lf,
+            total_marginals,
+        } => format!("knockoff (interaction {}/{})", marginal_lf + 1, total_marginals),
+        Phase::Scoring => "scoring".to_owned(),
     }
 }

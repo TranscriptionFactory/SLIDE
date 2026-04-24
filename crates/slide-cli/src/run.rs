@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
 use slide_core::{
-    optimize_slide_with_checkpoint, OptimizeResponseType, OptimizeSlideConfig,
+    optimize_slide_with_checkpoint_progress, OptimizeResponseType, OptimizeSlideConfig,
 };
 use slide_data_io::{read_feature_matrix, read_response_vector, MatrixReadOptions, ResponseReadOptions};
 use slide_types::Scalar;
@@ -97,17 +97,21 @@ pub fn run(args: RunArgs) -> Result<()> {
         cfg.lambda.len(),
         cfg.delta.len() * cfg.lambda.len(),
     );
+    let progress_path = args.checkpoint.with_extension("progress.json");
     eprintln!("Checkpoint: {}", args.checkpoint.display());
 
-    let result = optimize_slide_with_checkpoint(
+    let result = optimize_slide_with_checkpoint_progress(
         &args.checkpoint,
         &x,
         &y,
         &cfg.delta,
         &cfg.lambda,
         &opt_config,
+        Some(&progress_path),
     )
     .with_context(|| "SLIDE optimization failed")?;
+
+    let _ = std::fs::remove_file(&progress_path);
 
     let best = &result.best;
     println!("=== SLIDE Optimization Complete ===");
