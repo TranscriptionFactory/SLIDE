@@ -21,7 +21,7 @@ use slide_core::{
     OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideResult, Phase, ProgressReport,
     SlideRunResult,
 };
-use slide_data_io::{read_feature_matrix, Delimiter, MatrixReadOptions};
+use slide_data_io::{read_feature_matrix, read_response_vector, Delimiter, MatrixReadOptions, ResponseReadOptions};
 use slide_types::{Matrix, Scalar, Vector};
 
 use crate::TuiArgs;
@@ -1054,12 +1054,30 @@ impl DashboardData {
         } else {
             checkpoint.evaluations.clone()
         };
-        let feature_names = load_feature_names(args.x.as_deref(), checkpoint.x.ncols())?;
+        // Load matrices from data reference paths (or CLI override)
+        let x_path = args
+            .x
+            .as_deref()
+            .or_else(|| checkpoint.x_ref.as_ref().map(|r| r.path.as_path()))
+            .ok_or_else(|| anyhow!("no feature matrix path: supply --x or use a checkpoint with data references"))?;
+        let y_path = checkpoint
+            .y_ref
+            .as_ref()
+            .map(|r| r.path.as_path())
+            .ok_or_else(|| anyhow!("no response vector path in checkpoint: supply a checkpoint with data references"))?;
+
+        let loaded_x = read_feature_matrix(x_path, &MatrixReadOptions::default())
+            .with_context(|| format!("failed to read feature matrix from {}", x_path.display()))?;
+        let x = loaded_x.matrix;
+        let y = read_response_vector(y_path, &ResponseReadOptions::default())
+            .with_context(|| format!("failed to read response vector from {}", y_path.display()))?;
+
+        let feature_names = load_feature_names(Some(x_path), x.ncols())?;
         let response_type = checkpoint.config.response_type;
-        let standardized_x = slide_data_io::standardize(&checkpoint.x).matrix;
+        let standardized_x = slide_data_io::standardize(&x).matrix;
         let factor_rankings = runs
             .iter()
-            .map(|run| compute_factor_rankings(run, &standardized_x, &checkpoint.y, &feature_names, response_type))
+            .map(|run| compute_factor_rankings(run, &standardized_x, &y, &feature_names, response_type))
             .collect::<Result<Vec<_>>>()?;
         let config_lines = build_config_lines(&checkpoint, args.config.as_deref())?;
         let group_correlations = runs

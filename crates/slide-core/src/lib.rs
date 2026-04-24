@@ -10,9 +10,11 @@ use slide_knockoff::{
     VotingResult,
 };
 use slide_love::{compute_z_map, love, LoveConfig, LoveError, LoveResult, ZMatrixError};
+use sha2::{Digest, Sha256};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use std::fs::File;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 const LOGISTIC_PROBABILITY_EPSILON: Scalar = 1.0e-8;
@@ -138,9 +140,24 @@ pub struct OptimizeSlideResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DataReference {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub nrows: usize,
+    pub ncols: usize,
+}
+
+pub fn hash_file(path: &Path) -> Result<String, io::Error> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OptimizeSlideCheckpoint {
-    pub x: Matrix,
-    pub y: Vector,
+    pub x_ref: Option<DataReference>,
+    pub y_ref: Option<DataReference>,
     pub delta_grid: Vec<Scalar>,
     pub lambda_grid: Vec<Scalar>,
     pub config: OptimizeSlideConfig,
@@ -519,21 +536,27 @@ pub fn optimize_slide(
     lambda_grid: &[Scalar],
     config: &OptimizeSlideConfig,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
-    optimize_slide_resume(OptimizeSlideCheckpoint {
-        x: x.clone(),
-        y: y.clone(),
-        delta_grid: delta_grid.to_vec(),
-        lambda_grid: lambda_grid.to_vec(),
-        config: config.clone(),
-        evaluations: Vec::new(),
-    })
+    optimize_slide_resume(
+        OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: delta_grid.to_vec(),
+            lambda_grid: lambda_grid.to_vec(),
+            config: config.clone(),
+            evaluations: Vec::new(),
+        },
+        x,
+        y,
+    )
 }
 
 pub fn optimize_slide_resume(
     mut checkpoint: OptimizeSlideCheckpoint,
+    x: &Matrix,
+    y: &Vector,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
-    validate_checkpoint_inputs(&checkpoint)?;
-    let standardized = standardize(&checkpoint.x);
+    validate_checkpoint_inputs(&checkpoint, x, y)?;
+    let standardized = standardize(x);
     let grid = grid_pairs(&checkpoint.delta_grid, &checkpoint.lambda_grid);
     let total_grid = grid.len();
     validate_checkpoint_evaluations(&checkpoint.evaluations, &grid)?;
@@ -542,7 +565,7 @@ pub fn optimize_slide_resume(
     {
         checkpoint.evaluations.push(run_slide_evaluation(
             &standardized.matrix,
-            &checkpoint.y,
+            y,
             delta,
             lambda,
             &checkpoint.config,
@@ -559,29 +582,69 @@ pub fn optimize_slide_with_checkpoint(
     path: impl AsRef<Path>,
     x: &Matrix,
     y: &Vector,
+    x_path: &Path,
+    y_path: &Path,
     delta_grid: &[Scalar],
     lambda_grid: &[Scalar],
     config: &OptimizeSlideConfig,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
-    optimize_slide_with_checkpoint_progress(path, x, y, delta_grid, lambda_grid, config, None)
+    optimize_slide_with_checkpoint_progress(
+        path, x, y, x_path, y_path, delta_grid, lambda_grid, config, None,
+    )
 }
 
 pub fn optimize_slide_with_checkpoint_progress(
     path: impl AsRef<Path>,
     x: &Matrix,
     y: &Vector,
+    x_path: &Path,
+    y_path: &Path,
     delta_grid: &[Scalar],
     lambda_grid: &[Scalar],
     config: &OptimizeSlideConfig,
     progress_path: Option<&Path>,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
     let path = path.as_ref();
+
+    let x_hash = hash_file(x_path)?;
+    let y_hash = hash_file(y_path)?;
+
+    let x_ref = DataReference {
+        path: x_path.to_path_buf(),
+        sha256: x_hash,
+        nrows: x.nrows(),
+        ncols: x.ncols(),
+    };
+    let y_ref = DataReference {
+        path: y_path.to_path_buf(),
+        sha256: y_hash,
+        nrows: y.len(),
+        ncols: 1,
+    };
+
     let mut checkpoint = if path.exists() {
-        load_optimize_slide_checkpoint(path)?
+        let loaded = load_optimize_slide_checkpoint(path)?;
+        if let Some(ref loaded_x) = loaded.x_ref {
+            if loaded_x.sha256 != x_ref.sha256 {
+                return Err(SlideCoreError::CheckpointInputMismatch);
+            }
+        }
+        if let Some(ref loaded_y) = loaded.y_ref {
+            if loaded_y.sha256 != y_ref.sha256 {
+                return Err(SlideCoreError::CheckpointInputMismatch);
+            }
+        }
+        if loaded.delta_grid != delta_grid
+            || loaded.lambda_grid != lambda_grid
+            || loaded.config != *config
+        {
+            return Err(SlideCoreError::CheckpointInputMismatch);
+        }
+        loaded
     } else {
         OptimizeSlideCheckpoint {
-            x: x.clone(),
-            y: y.clone(),
+            x_ref: Some(x_ref.clone()),
+            y_ref: Some(y_ref.clone()),
             delta_grid: delta_grid.to_vec(),
             lambda_grid: lambda_grid.to_vec(),
             config: config.clone(),
@@ -589,17 +652,16 @@ pub fn optimize_slide_with_checkpoint_progress(
         }
     };
 
-    if checkpoint.x != *x
-        || checkpoint.y != *y
-        || checkpoint.delta_grid != delta_grid
-        || checkpoint.lambda_grid != lambda_grid
-        || checkpoint.config != *config
-    {
-        return Err(SlideCoreError::CheckpointInputMismatch);
+    // Ensure refs are populated (in case loaded checkpoint had None)
+    if checkpoint.x_ref.is_none() {
+        checkpoint.x_ref = Some(x_ref);
+    }
+    if checkpoint.y_ref.is_none() {
+        checkpoint.y_ref = Some(y_ref);
     }
 
-    validate_checkpoint_inputs(&checkpoint)?;
-    let standardized = standardize(&checkpoint.x);
+    validate_checkpoint_inputs(&checkpoint, x, y)?;
+    let standardized = standardize(x);
     let grid = grid_pairs(&checkpoint.delta_grid, &checkpoint.lambda_grid);
     let total_grid = grid.len();
     validate_checkpoint_evaluations(&checkpoint.evaluations, &grid)?;
@@ -608,7 +670,7 @@ pub fn optimize_slide_with_checkpoint_progress(
     {
         checkpoint.evaluations.push(run_slide_evaluation(
             &standardized.matrix,
-            &checkpoint.y,
+            y,
             delta,
             lambda,
             &checkpoint.config,
@@ -642,17 +704,21 @@ pub fn load_optimize_slide_checkpoint(
     Ok(serde_json::from_reader(file)?)
 }
 
-fn validate_checkpoint_inputs(checkpoint: &OptimizeSlideCheckpoint) -> Result<(), SlideCoreError> {
+fn validate_checkpoint_inputs(
+    checkpoint: &OptimizeSlideCheckpoint,
+    x: &Matrix,
+    y: &Vector,
+) -> Result<(), SlideCoreError> {
     if checkpoint.delta_grid.is_empty() {
         return Err(SlideCoreError::EmptyDeltaGrid);
     }
     if checkpoint.lambda_grid.is_empty() {
         return Err(SlideCoreError::EmptyLambdaGrid);
     }
-    if checkpoint.y.len() != checkpoint.x.nrows() {
+    if y.len() != x.nrows() {
         return Err(SlideCoreError::FeatureResponseLengthMismatch {
-            expected: checkpoint.x.nrows(),
-            actual: checkpoint.y.len(),
+            expected: x.nrows(),
+            actual: y.len(),
         });
     }
     Ok(())
@@ -1028,7 +1094,7 @@ mod tests {
         auc_score, correct_y, find_interaction_lfs, find_standalone_lfs, grid_pairs,
         load_optimize_slide_checkpoint, optimize_slide, optimize_slide_resume,
         optimize_slide_with_checkpoint, pearson_correlation, save_optimize_slide_checkpoint,
-        score_selected_model, InteractionLfSelection, MarginalLfSelectionConfig,
+        score_selected_model, DataReference, InteractionLfSelection, MarginalLfSelectionConfig,
         OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideConfig, SlideCoreError,
     };
     use ndarray::{arr1, arr2};
@@ -1036,6 +1102,7 @@ mod tests {
     use slide_knockoff::{KnockoffError, KnockoffMethod};
     use slide_love::{LoveConfig, NonPureMethod};
     use slide_types::{Matrix, Vector};
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]
@@ -1271,15 +1338,28 @@ mod tests {
 
     #[test]
     fn optimize_slide_checkpoint_round_trips_through_json() {
+        let dir = tempdir().unwrap_or_else(|error| panic!("tempdir should succeed: {error}"));
+        let dummy_file = dir.path().join("dummy.csv");
+        std::fs::write(&dummy_file, "1,2\n3,4\n")
+            .unwrap_or_else(|error| panic!("write dummy file: {error}"));
         let checkpoint = OptimizeSlideCheckpoint {
-            x: Matrix::from_ndarray(arr2(&[[1.0, 2.0], [3.0, 4.0]])),
-            y: Vector::from_ndarray(arr1(&[0.0, 1.0])),
+            x_ref: Some(DataReference {
+                path: dummy_file.clone(),
+                sha256: "abc123".to_string(),
+                nrows: 2,
+                ncols: 2,
+            }),
+            y_ref: Some(DataReference {
+                path: dummy_file,
+                sha256: "def456".to_string(),
+                nrows: 2,
+                ncols: 1,
+            }),
             delta_grid: vec![0.05],
             lambda_grid: vec![0.1],
             config: OptimizeSlideConfig::default(),
             evaluations: Vec::new(),
         };
-        let dir = tempdir().unwrap_or_else(|error| panic!("tempdir should succeed: {error}"));
         let path = dir.path().join("checkpoint.json");
 
         save_optimize_slide_checkpoint(&path, &checkpoint)
@@ -1292,9 +1372,11 @@ mod tests {
 
     #[test]
     fn optimize_slide_resume_rejects_out_of_order_checkpoint_evaluations() {
+        let x = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [3.0, 4.0]]));
+        let y = Vector::from_ndarray(arr1(&[0.0, 1.0]));
         let checkpoint = OptimizeSlideCheckpoint {
-            x: Matrix::from_ndarray(arr2(&[[1.0, 2.0], [3.0, 4.0]])),
-            y: Vector::from_ndarray(arr1(&[0.0, 1.0])),
+            x_ref: None,
+            y_ref: None,
             delta_grid: vec![0.05, 0.10],
             lambda_grid: vec![0.1],
             config: OptimizeSlideConfig::default(),
@@ -1338,7 +1420,7 @@ mod tests {
             }],
         };
 
-        let error = optimize_slide_resume(checkpoint)
+        let error = optimize_slide_resume(checkpoint, &x, &y)
             .err()
             .unwrap_or_else(|| panic!("resume should reject mismatched evaluation order"));
 
@@ -1400,11 +1482,21 @@ mod tests {
             .unwrap_or_else(|error| panic!("plain optimize_slide should succeed: {error}"));
 
         let dir = tempdir().unwrap_or_else(|error| panic!("tempdir should succeed: {error}"));
+        // Write data files so hash_file can read them
+        let x_file = dir.path().join("x.csv");
+        let y_file = dir.path().join("y.csv");
+        std::fs::write(&x_file, "2.0,0.0,1.5,0.1\n1.8,0.2,1.2,0.2\n0.2,2.2,0.1,1.3\n0.0,2.0,0.2,1.1\n1.6,0.1,1.4,0.0\n0.1,1.8,0.0,1.2\n")
+            .unwrap_or_else(|error| panic!("write x file: {error}"));
+        std::fs::write(&y_file, "2.0\n1.8\n0.2\n0.0\n1.7\n0.1\n")
+            .unwrap_or_else(|error| panic!("write y file: {error}"));
+
         let checkpoint_path = dir.path().join("optimize-slide.json");
         let checkpointed = optimize_slide_with_checkpoint(
             &checkpoint_path,
             &x,
             &y,
+            &x_file,
+            &y_file,
             &delta_grid,
             &lambda_grid,
             &config,
@@ -1418,5 +1510,8 @@ mod tests {
             saved.evaluations.len(),
             grid_pairs(&delta_grid, &lambda_grid).len()
         );
+        // Verify checkpoint contains data references, not raw matrices
+        assert!(saved.x_ref.is_some());
+        assert!(saved.y_ref.is_some());
     }
 }

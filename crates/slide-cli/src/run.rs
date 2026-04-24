@@ -104,6 +104,8 @@ pub fn run(args: RunArgs) -> Result<()> {
         &args.checkpoint,
         &x,
         &y,
+        &cfg.x_path,
+        &cfg.y_path,
         &cfg.delta,
         &cfg.lambda,
         &opt_config,
