@@ -5,9 +5,9 @@ use ndarray::{Array1, Array2, Axis};
 use serde::{Deserialize, Serialize};
 use slide_data_io::{standardize, ResponseType as DataResponseType};
 use slide_glmnet::GlmnetFamily;
+pub use slide_knockoff::VotingResult;
 use slide_knockoff::{
     select_short_freq, KnockoffConfig, KnockoffError, KnockoffMethod, KnockoffStatistic,
-    VotingResult,
 };
 use slide_love::{compute_z_map, love, LoveConfig, LoveError, LoveResult, ZMatrixError};
 use sha2::{Digest, Sha256};

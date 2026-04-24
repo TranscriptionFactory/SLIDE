@@ -23,8 +23,9 @@ use ratatui::widgets::{
 };
 use ratatui::{DefaultTerminal, Frame};
 use slide_core::{
-    OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideResult, Phase, ProgressReport,
-    SlideRunResult,
+    InteractionLfSelection, LiveEvaluation, MarginalLfSelection, OptimizeResponseType,
+    OptimizeSlideCheckpoint, OptimizeSlideResult, Phase, ProgressReport, SlideRunResult,
+    VotingResult,
 };
 use slide_data_io::{read_feature_matrix, read_response_vector, Delimiter, MatrixReadOptions, ResponseReadOptions};
 use slide_types::{Matrix, Scalar, Vector};
@@ -188,6 +189,10 @@ struct App {
     love_sub_view: LoveSubView,
     selection_sub_view: SelectionSubView,
     config_summary: Option<Vec<String>>,
+    /// Synthetic run built from the live evaluation sidecar (LOVE-only).
+    live_run: Option<SlideRunResult>,
+    live_factor_rankings: Option<Vec<FactorRanking>>,
+    live_group_correlations: Option<Option<Array2<Scalar>>>,
 }
 
 impl App {
@@ -259,6 +264,9 @@ impl App {
             love_sub_view: LoveSubView::Diagnostics,
             selection_sub_view: SelectionSubView::Marginal,
             config_summary,
+            live_run: None,
+            live_factor_rankings: None,
+            live_group_correlations: None,
         })
     }
 
@@ -321,6 +329,70 @@ impl App {
         } else {
             self.progress = None;
         }
+
+        // Read live evaluation sidecar when no real runs exist yet.
+        let has_real_runs = self.data.as_ref().map_or(false, |d| !d.runs.is_empty());
+        if has_real_runs {
+            self.clear_live_state();
+            return;
+        }
+        let live_path = self.args.checkpoint.with_extension("live.json");
+        if let Ok(contents) = fs::read_to_string(&live_path) {
+            if let Ok(live) = serde_json::from_str::<LiveEvaluation>(&contents) {
+                self.build_live_preview(live);
+            }
+        }
+    }
+
+    fn clear_live_state(&mut self) {
+        self.live_run = None;
+        self.live_factor_rankings = None;
+        self.live_group_correlations = None;
+    }
+
+    fn build_live_preview(&mut self, live: LiveEvaluation) {
+        let Some(ref data) = self.data else { return };
+        let n = live.love.a.nrows();
+        let k = live.love.k;
+        let synthetic = SlideRunResult {
+            delta: live.delta,
+            lambda: live.lambda,
+            love: live.love,
+            z: Matrix::from_ndarray(Array2::zeros((n, k))),
+            marginal: MarginalLfSelection {
+                sig_lfs: Vec::new(),
+                voting: VotingResult {
+                    selection_counts: Vec::new(),
+                    selection_frequency: Vector::from_ndarray(Array1::zeros(0)),
+                    selected: Vec::new(),
+                    freq_selected: Vec::new(),
+                    threshold: 0.0,
+                    niter: 0,
+                    spec: 0.0,
+                    min_selections: 0,
+                    selected_list: Vec::new(),
+                    optimal_iter: None,
+                    stage_one_union: None,
+                },
+            },
+            interactions: InteractionLfSelection {
+                sig_interacts: Vec::new(),
+                interaction_terms: Matrix::from_ndarray(Array2::zeros((n, 0))),
+                voting: Vec::new(),
+            },
+            score: 0.0,
+        };
+        self.live_factor_rankings = compute_factor_rankings(
+            &synthetic,
+            &data.standardized_x,
+            &data.y,
+            &data.feature_names,
+            data.response_type,
+        )
+        .ok();
+        self.live_group_correlations =
+            Some(compute_group_correlation_matrix(&synthetic, &data.standardized_x));
+        self.live_run = Some(synthetic);
     }
 
     fn next_tab(&mut self) {
@@ -397,7 +469,33 @@ impl App {
     }
 
     fn current_run(&self) -> Option<&SlideRunResult> {
-        self.data.as_ref()?.runs.get(self.selected_run)
+        self.data
+            .as_ref()?
+            .runs
+            .get(self.selected_run)
+            .or(self.live_run.as_ref())
+    }
+
+    fn current_factor_rankings(&self) -> Option<&[FactorRanking]> {
+        self.data
+            .as_ref()?
+            .factor_rankings
+            .get(self.selected_run)
+            .map(|v| v.as_slice())
+            .or(self.live_factor_rankings.as_deref())
+    }
+
+    fn current_group_correlations(&self) -> Option<&Array2<Scalar>> {
+        self.data
+            .as_ref()?
+            .group_correlations
+            .get(self.selected_run)
+            .and_then(|opt| opt.as_ref())
+            .or_else(|| {
+                self.live_group_correlations
+                    .as_ref()
+                    .and_then(|opt| opt.as_ref())
+            })
     }
 
     fn render(&self, frame: &mut Frame) {
@@ -787,15 +885,11 @@ impl App {
             )),
             Line::from(format!(
                 "top |loading|: {:.3} | top assoc: {:.3}",
-                self.data()
-                    .factor_rankings
-                    .get(self.selected_run)
+                self.current_factor_rankings()
                     .and_then(|f| f.get(factor))
                     .and_then(|r| r.by_loading.first())
                     .map_or(0.0, |entry| entry.loading.abs()),
-                self.data()
-                    .factor_rankings
-                    .get(self.selected_run)
+                self.current_factor_rankings()
                     .and_then(|f| f.get(factor))
                     .and_then(|r| r.by_association.first())
                     .map_or(0.0, |entry| entry.association.abs()),
@@ -819,9 +913,7 @@ impl App {
         }
         let factor = self.selected_factor.min(run.love.k - 1);
         let rankings = self
-            .data()
-            .factor_rankings
-            .get(self.selected_run)
+            .current_factor_rankings()
             .and_then(|per_run| per_run.get(factor));
 
         let rows = rankings
@@ -1139,11 +1231,7 @@ impl App {
         if k == 0 {
             return empty_table(title);
         }
-        let gc = self
-            .data()
-            .group_correlations
-            .get(self.selected_run)
-            .and_then(|opt| opt.as_ref());
+        let gc = self.current_group_correlations();
         let Some(gc) = gc else {
             return empty_table(title);
         };
@@ -1684,6 +1772,9 @@ struct DashboardData {
     factor_response_corr: Vec<Vec<Scalar>>,
     /// Per-run block correlation matrix: (corr_matrix, group_boundary_indices).
     block_correlations: Vec<Option<(Array2<Scalar>, Vec<usize>)>>,
+    /// Cached for live preview computation.
+    standardized_x: Matrix,
+    y: Vector,
 }
 
 impl DashboardData {
@@ -1765,6 +1856,8 @@ impl DashboardData {
             group_correlations,
             factor_response_corr,
             block_correlations,
+            standardized_x,
+            y,
         })
     }
 }
