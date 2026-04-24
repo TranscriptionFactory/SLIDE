@@ -64,11 +64,13 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                     KeyCode::PageDown => app.next_factor(),
                     KeyCode::PageUp => app.prev_factor(),
                     KeyCode::Char('r') => app.reload()?,
-                    KeyCode::Char('v') => {
-                        if app.tab == Tab::Love {
-                            app.love_sub_view = app.love_sub_view.next();
+                    KeyCode::Char('v') => match app.tab {
+                        Tab::Love => app.love_sub_view = app.love_sub_view.next(),
+                        Tab::Selection => {
+                            app.selection_sub_view = app.selection_sub_view.next();
                         }
-                    }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 Event::Resize(_, _) => {}
@@ -87,11 +89,27 @@ enum Tab {
     Runs,
     Factors,
     Love,
+    Selection,
 }
 
 impl Tab {
-    fn titles() -> [Line<'static>; 3] {
-        ["Runs", "Factors", "LOVE"].map(Line::from)
+    fn titles() -> [Line<'static>; 4] {
+        ["Runs", "Factors", "LOVE", "Selection"].map(Line::from)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionSubView {
+    Marginal,
+    Interactions,
+}
+
+impl SelectionSubView {
+    fn next(self) -> Self {
+        match self {
+            Self::Marginal => Self::Interactions,
+            Self::Interactions => Self::Marginal,
+        }
     }
 }
 
@@ -135,6 +153,7 @@ struct App {
     progress: Option<ProgressReport>,
     progress_mtime: Option<SystemTime>,
     love_sub_view: LoveSubView,
+    selection_sub_view: SelectionSubView,
 }
 
 impl App {
@@ -157,6 +176,7 @@ impl App {
             progress: None,
             progress_mtime: None,
             love_sub_view: LoveSubView::Diagnostics,
+            selection_sub_view: SelectionSubView::Marginal,
         })
     }
 
@@ -228,15 +248,17 @@ impl App {
         self.tab = match self.tab {
             Tab::Runs => Tab::Factors,
             Tab::Factors => Tab::Love,
-            Tab::Love => Tab::Runs,
+            Tab::Love => Tab::Selection,
+            Tab::Selection => Tab::Runs,
         };
     }
 
     fn prev_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Runs => Tab::Love,
+            Tab::Runs => Tab::Selection,
             Tab::Factors => Tab::Runs,
             Tab::Love => Tab::Factors,
+            Tab::Selection => Tab::Love,
         };
     }
 
@@ -314,6 +336,7 @@ impl App {
                 Tab::Runs => 0,
                 Tab::Factors => 1,
                 Tab::Love => 2,
+                Tab::Selection => 3,
             })
             .block(Block::default().borders(Borders::ALL).title("SLIDE Monitor"))
             .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
@@ -332,6 +355,7 @@ impl App {
                 Tab::Runs => self.render_runs(frame, layout[1]),
                 Tab::Factors => self.render_factors(frame, layout[1]),
                 Tab::Love => self.render_love(frame, layout[1]),
+                Tab::Selection => self.render_selection(frame, layout[1]),
             }
         }
 
@@ -342,8 +366,8 @@ impl App {
             " | pgup/pgdn factor".dark_gray(),
             " | r reload".dark_gray(),
         ];
-        if self.tab == Tab::Love {
-            footer_spans.push(" | v heatmap".dark_gray());
+        if self.tab == Tab::Love || self.tab == Tab::Selection {
+            footer_spans.push(" | v sub-view".dark_gray());
         }
         let footer = Line::from(footer_spans);
         frame.render_widget(Paragraph::new(footer), layout[2]);
@@ -1003,6 +1027,175 @@ impl App {
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
     }
+
+    fn render_selection(&self, frame: &mut Frame, area: Rect) {
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        match self.selection_sub_view {
+            SelectionSubView::Marginal => {
+                frame.render_widget(self.selection_frequency_widget(), sections[0]);
+            }
+            SelectionSubView::Interactions => {
+                frame.render_widget(self.interaction_frequency_widget(), sections[0]);
+            }
+        }
+        frame.render_widget(self.factor_response_corr_widget(), sections[1]);
+    }
+
+    fn selection_frequency_widget(&self) -> Paragraph<'static> {
+        let title = "Knockoff Selection Frequency (marginal)";
+        let Some(run) = self.current_run() else {
+            return empty_widget(title);
+        };
+        let freq = run.marginal.voting.selection_frequency.as_ndarray();
+        let k = freq.len();
+        if k == 0 {
+            return empty_widget(title);
+        }
+        let selected = &run.marginal.voting.selected;
+        let threshold = run.marginal.voting.threshold;
+
+        let mut lines = vec![Line::from(format!(
+            "threshold: {:.0}% | {} selected | v: toggle marginal/interaction",
+            threshold * 100.0,
+            selected.len()
+        ))];
+
+        let max_bar_width = 30usize;
+        for i in 0..k {
+            let f = freq[i];
+            let pct = f * 100.0;
+            let bar_len = (f * max_bar_width as Scalar).round() as usize;
+            let bar: String = "\u{2588}".repeat(bar_len);
+            let is_selected = selected.contains(&i);
+            let color = if is_selected {
+                Color::Green
+            } else {
+                Color::Red
+            };
+            let label = format!("F{:<3} {:5.1}% ", i + 1, pct);
+            lines.push(Line::from(vec![
+                ratatui::text::Span::raw(label),
+                ratatui::text::Span::styled(bar, Style::default().fg(color)),
+            ]));
+        }
+
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title))
+    }
+
+    fn interaction_frequency_widget(&self) -> Paragraph<'static> {
+        let title = "Knockoff Selection Frequency (interactions)";
+        let Some(run) = self.current_run() else {
+            return empty_widget(title);
+        };
+        let interaction_voting = &run.interactions.voting;
+        if interaction_voting.is_empty() {
+            return empty_widget(title);
+        }
+
+        let mut lines = vec![Line::from(format!(
+            "{} marginal LFs with interaction voting | v: toggle marginal/interaction",
+            interaction_voting.len()
+        ))];
+
+        let max_bar_width = 25usize;
+        for iv in interaction_voting {
+            lines.push(Line::from(format!(
+                "── F{} interactions ──",
+                iv.marginal_lf + 1
+            )).style(Style::default().fg(Color::Yellow)));
+
+            let freq = iv.voting.selection_frequency.as_ndarray();
+            let selected = &iv.voting.selected;
+            for (j, &candidate) in iv.candidate_lfs.iter().enumerate() {
+                if j >= freq.len() {
+                    break;
+                }
+                let f = freq[j];
+                let pct = f * 100.0;
+                let bar_len = (f * max_bar_width as Scalar).round() as usize;
+                let bar: String = "\u{2588}".repeat(bar_len);
+                let is_selected = selected.contains(&j);
+                let color = if is_selected {
+                    Color::Green
+                } else {
+                    Color::Red
+                };
+                let label = format!("  F{:<3} {:5.1}% ", candidate + 1, pct);
+                lines.push(Line::from(vec![
+                    ratatui::text::Span::raw(label),
+                    ratatui::text::Span::styled(bar, Style::default().fg(color)),
+                ]));
+            }
+        }
+
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title))
+    }
+
+    fn factor_response_corr_widget(&self) -> Paragraph<'static> {
+        let title = if self.data().response_type == OptimizeResponseType::Binary {
+            "Factor-Response AUC"
+        } else {
+            "Factor-Response Correlation"
+        };
+        let Some(run) = self.current_run() else {
+            return empty_widget(title);
+        };
+        let corrs = self
+            .data()
+            .factor_response_corr
+            .get(self.selected_run);
+        let Some(corrs) = corrs else {
+            return empty_widget(title);
+        };
+        let k = run.love.k;
+        if k == 0 || corrs.is_empty() {
+            return empty_widget(title);
+        }
+
+        let max_bar_width = 20usize;
+        let max_abs = corrs.iter().map(|v| v.abs()).fold(0.0_f64, Scalar::max).max(0.01);
+        let is_binary = self.data().response_type == OptimizeResponseType::Binary;
+
+        let mut lines = Vec::with_capacity(k);
+        for i in 0..k.min(corrs.len()) {
+            let r = corrs[i];
+            let bar_len = ((r.abs() / max_abs) * max_bar_width as Scalar).round() as usize;
+            let (bar_char, color) = if is_binary {
+                // AUC is 0-1, use green for high, yellow for mid
+                let c = if r >= 0.7 {
+                    Color::Green
+                } else if r >= 0.55 {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                ("\u{2588}", c)
+            } else if r >= 0.0 {
+                ("\u{2588}", Color::Green)
+            } else {
+                ("\u{2588}", Color::Red)
+            };
+            let bar: String = bar_char.repeat(bar_len);
+            let label = if is_binary {
+                format!("F{:<3} AUC {:.3} ", i + 1, r)
+            } else {
+                format!("F{:<3} {:+.3}  ", i + 1, r)
+            };
+            lines.push(Line::from(vec![
+                ratatui::text::Span::raw(label),
+                ratatui::text::Span::styled(bar, Style::default().fg(color)),
+            ]));
+        }
+
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1043,6 +1236,8 @@ struct DashboardData {
     factor_rankings: Vec<Vec<FactorRanking>>,
     feature_names: Vec<String>,
     group_correlations: Vec<Option<Array2<Scalar>>>,
+    /// Per-run, per-factor correlation (Pearson) or AUC of z[:, f] vs y.
+    factor_response_corr: Vec<Vec<Scalar>>,
 }
 
 impl DashboardData {
@@ -1092,6 +1287,10 @@ impl DashboardData {
             .iter()
             .map(|run| compute_group_correlation_matrix(run, &standardized_x))
             .collect();
+        let factor_response_corr = runs
+            .iter()
+            .map(|run| compute_factor_response_corr(run, &y, response_type))
+            .collect();
         let best_run = runs
             .iter()
             .max_by(|left, right| left.score.total_cmp(&right.score))
@@ -1114,6 +1313,7 @@ impl DashboardData {
             factor_rankings,
             feature_names,
             group_correlations,
+            factor_response_corr,
         })
     }
 }
@@ -1641,6 +1841,27 @@ fn compute_group_correlation_matrix(
         }
     }
     Some(corr_matrix)
+}
+
+fn compute_factor_response_corr(
+    run: &SlideRunResult,
+    y: &Vector,
+    response_type: OptimizeResponseType,
+) -> Vec<Scalar> {
+    let z = run.z.as_ndarray();
+    let k = run.love.k;
+    let y_vals = y.as_ndarray().to_vec();
+    (0..k)
+        .map(|f| {
+            let col = z.column(f).to_owned().to_vec();
+            match response_type {
+                OptimizeResponseType::Continuous => {
+                    pearson_correlation(&col, &y_vals).unwrap_or(0.0)
+                }
+                OptimizeResponseType::Binary => auc_score(&y_vals, &col).unwrap_or(0.5),
+            }
+        })
+        .collect()
 }
 
 /// Build a visual phase timeline bar.
