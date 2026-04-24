@@ -91,3 +91,8 @@ comparison/output_comparison/
 runs
 code-dev.def
 start-code.sh
+.cargo*
+.tmp
+start-code*
+.rust-target
+.venv_utils
