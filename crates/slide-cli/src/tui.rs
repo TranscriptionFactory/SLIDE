@@ -471,18 +471,25 @@ impl App {
         let running_line = if completed < total {
             if let Some(ref prog) = self.progress {
                 format!(
-                    "running: eval {}/{} (d={:.2}, l={:.2}) phase: {}",
+                    "running: eval {}/{} (d={:.2}, l={:.2})",
                     prog.grid_index + 1,
                     prog.total_grid,
                     prog.delta,
                     prog.lambda,
-                    format_phase(&prog.phase),
                 )
             } else {
                 "running: waiting for progress...".to_owned()
             }
         } else {
             "status: complete".to_owned()
+        };
+
+        let phase_bar = if completed < total {
+            self.progress
+                .as_ref()
+                .map_or_else(Line::default, |prog| phase_timeline(&prog.phase))
+        } else {
+            Line::default()
         };
 
         let lines = vec![
@@ -497,6 +504,7 @@ impl App {
                 self.args.poll_ms
             )),
             Line::from(running_line),
+            phase_bar,
             Line::from(format!(
                 "best: {}",
                 best.map_or_else(
@@ -1635,15 +1643,58 @@ fn compute_group_correlation_matrix(
     Some(corr_matrix)
 }
 
-fn format_phase(phase: &Phase) -> String {
-    match phase {
-        Phase::Love => "LOVE".to_owned(),
-        Phase::ZMap => "Z-map".to_owned(),
-        Phase::KnockoffMarginal => "knockoff (marginal)".to_owned(),
-        Phase::KnockoffInteraction {
-            marginal_lf,
-            total_marginals,
-        } => format!("knockoff (interaction {}/{})", marginal_lf + 1, total_marginals),
-        Phase::Scoring => "scoring".to_owned(),
+/// Build a visual phase timeline bar.
+///
+/// Completed phases render as `████` in DarkGray, the current phase in Cyan+Bold,
+/// pending phases as `░░░░` in DarkGray.
+fn phase_timeline(current: &Phase) -> Line<'static> {
+    use ratatui::text::Span;
+
+    // Phase ordinals: Love=0, ZMap=1, KnockoffMarginal=2, KnockoffInteraction=3, Scoring=4
+    let current_ord = match current {
+        Phase::Love => 0,
+        Phase::ZMap => 1,
+        Phase::KnockoffMarginal => 2,
+        Phase::KnockoffInteraction { .. } => 3,
+        Phase::Scoring => 4,
+    };
+
+    let labels = [
+        "LOVE".to_owned(),
+        "ZMap".to_owned(),
+        "Knockoff".to_owned(),
+        match current {
+            Phase::KnockoffInteraction {
+                marginal_lf,
+                total_marginals,
+            } => format!("Interact ({}/{})", marginal_lf + 1, total_marginals),
+            _ => "Interact".to_owned(),
+        },
+        "Score".to_owned(),
+    ];
+
+    let mut spans = vec![Span::raw("[")];
+    for (i, label) in labels.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let (block, style) = if i < current_ord {
+            // completed
+            ("████", Style::default().fg(Color::DarkGray))
+        } else if i == current_ord {
+            // current
+            (
+                "████",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            // pending
+            ("░░░░", Style::default().fg(Color::DarkGray))
+        };
+        spans.push(Span::styled(format!("{label} {block}"), style));
     }
+    spans.push(Span::raw("]"));
+    Line::from(spans)
 }
