@@ -16,5 +16,6 @@ path = "src/lib.rs"
 [dependencies]
 ndarray.workspace = true
 rayon.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 slide-types = { path = "../slide-types" }

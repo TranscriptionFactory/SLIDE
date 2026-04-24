@@ -1,15 +1,16 @@
 use ndarray::Array2;
+use serde::{Deserialize, Serialize};
 use slide_types::{Matrix, Scalar, Vector};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MergeStrategy {
     Intersection,
     Union,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedPureGroup {
     pub pos: Vec<usize>,
     pub neg: Vec<usize>,

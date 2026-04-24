@@ -129,6 +129,12 @@ impl Matrix {
         &self.0
     }
 
+    /// Mutably borrow the underlying ndarray matrix.
+    #[must_use]
+    pub fn as_ndarray_mut(&mut self) -> &mut Array2<Scalar> {
+        &mut self.0
+    }
+
     /// Consume the wrapper and return the owned ndarray matrix.
     #[must_use]
     pub fn into_ndarray(self) -> Array2<Scalar> {

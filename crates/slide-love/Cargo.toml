@@ -20,5 +20,7 @@ nalgebra.workspace = true
 ndarray.workspace = true
 rayon.workspace = true
 rand.workspace = true
+serde.workspace = true
+statrs.workspace = true
 thiserror.workspace = true
 slide-types = { path = "../slide-types" }

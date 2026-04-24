@@ -14,6 +14,8 @@ unsafe_code = "forbid"
 path = "src/lib.rs"
 
 [dependencies]
+clarabel = { version = "0.11.1", features = ["sdp-openblas"] }
 nalgebra.workspace = true
+ndarray.workspace = true
 thiserror.workspace = true
 slide-types = { path = "../slide-types" }

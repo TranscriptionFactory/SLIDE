@@ -18,5 +18,8 @@ nalgebra.workspace = true
 ndarray.workspace = true
 rand.workspace = true
 rayon.workspace = true
+serde.workspace = true
 thiserror.workspace = true
+slide-glmnet = { path = "../slide-glmnet" }
+slide-sdp = { path = "../slide-sdp" }
 slide-types = { path = "../slide-types" }
