@@ -1,0 +1,79 @@
+{
+  "x": {
+    "v": 1,
+    "dim": [
+      2,
+      2
+    ],
+    "data": [
+      1.0,
+      2.0,
+      3.0,
+      4.0
+    ]
+  },
+  "y": {
+    "v": 1,
+    "dim": [
+      2
+    ],
+    "data": [
+      0.0,
+      1.0
+    ]
+  },
+  "delta_grid": [
+    0.05,
+    0.1
+  ],
+  "lambda_grid": [
+    0.1,
+    0.01
+  ],
+  "config": {
+    "do_interacts": true,
+    "response_type": "Continuous",
+    "love": {
+      "lbd": {
+        "v": 1,
+        "dim": [
+          1
+        ],
+        "data": [
+          0.5
+        ]
+      },
+      "mu": 0.5,
+      "est_non_pure_row": "HardThreshold",
+      "pure_homo": false,
+      "diagonal": false,
+      "delta": null,
+      "merge_strategy": "Intersection",
+      "rep_cv": 50,
+      "ndelta": 50,
+      "q": "L2",
+      "exact": false,
+      "max_pure": null,
+      "nfolds": 10,
+      "thresh_fdr": null
+    },
+    "knockoff": {
+      "fdr": 0.1,
+      "spec": 0.2,
+      "niter": 100,
+      "f_size": null,
+      "knockoff_method": {
+        "Asdp": {
+          "max_block_size": 100
+        }
+      },
+      "knockoff_offset": 0,
+      "statistic": "GlmnetLambdasMax",
+      "nlambda": 250,
+      "base_seed": 42,
+      "slide_selection": false,
+      "family": "Gaussian"
+    }
+  },
+  "evaluations": []
+}
