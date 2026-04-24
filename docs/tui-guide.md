@@ -8,7 +8,11 @@ diagnostics, and more.
 ---
 
 # Fast Example
-From the project root
+Clone the repository
+```bash
+git clone https://github.com/TranscriptionFactory/omni-SLIDE.git
+```
+From the project repository:
 ```bash
 cargo build --release && ./target/release/slide-cli monitor \
   --config tests/test_config_quick.yaml \
