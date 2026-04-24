@@ -193,7 +193,7 @@ struct App {
 impl App {
     fn load(args: TuiArgs) -> Result<Self> {
         let data = if args.checkpoint.exists() {
-            Some(DashboardData::load(&args)?)
+            DashboardData::load(&args).ok()
         } else {
             None
         };

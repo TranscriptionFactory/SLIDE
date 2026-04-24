@@ -692,8 +692,10 @@ pub fn save_optimize_slide_checkpoint(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file = File::create(path)?;
+    let tmp = path.with_extension("json.tmp");
+    let file = File::create(&tmp)?;
     serde_json::to_writer_pretty(file, checkpoint)?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
