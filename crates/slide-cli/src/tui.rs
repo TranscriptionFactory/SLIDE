@@ -119,6 +119,7 @@ enum LoveSubView {
     FactorCovariance,
     LoadingMatrix,
     GroupCorrelation,
+    BlockCorrelation,
 }
 
 impl LoveSubView {
@@ -127,7 +128,8 @@ impl LoveSubView {
             Self::Diagnostics => Self::FactorCovariance,
             Self::FactorCovariance => Self::LoadingMatrix,
             Self::LoadingMatrix => Self::GroupCorrelation,
-            Self::GroupCorrelation => Self::Diagnostics,
+            Self::GroupCorrelation => Self::BlockCorrelation,
+            Self::BlockCorrelation => Self::Diagnostics,
         }
     }
 
@@ -137,6 +139,7 @@ impl LoveSubView {
             Self::FactorCovariance => "Factor Covariance (C)",
             Self::LoadingMatrix => "Loading Matrix (A)",
             Self::GroupCorrelation => "Group Correlation",
+            Self::BlockCorrelation => "Block Correlation",
         }
     }
 }
@@ -478,6 +481,9 @@ impl App {
             }
             LoveSubView::GroupCorrelation => {
                 frame.render_widget(self.group_correlation_heatmap(), sections[2]);
+            }
+            LoveSubView::BlockCorrelation => {
+                frame.render_widget(self.block_correlation_heatmap(sections[2]), sections[2]);
             }
         }
     }
@@ -1028,6 +1034,86 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title(title))
     }
 
+    fn block_correlation_heatmap(&self, area: Rect) -> Paragraph<'static> {
+        let title = "Block Correlation";
+        let Some(bc) = self
+            .data()
+            .block_correlations
+            .get(self.selected_run)
+            .and_then(|opt| opt.as_ref())
+        else {
+            return empty_widget(title);
+        };
+        let (corr, boundaries) = bc;
+        let p = corr.nrows();
+        if p == 0 {
+            return empty_widget(title);
+        }
+        let k = boundaries.len();
+
+        // Available width/height inside borders
+        let width = (area.width as usize).saturating_sub(2);
+        let height = (area.height as usize).saturating_sub(2);
+        // Each row of text covers 2 pixel rows via half-block
+        let pixel_rows = height * 2;
+
+        // Subsample if matrix is larger than available space
+        let col_indices: Vec<usize> = if p > width {
+            (0..width).map(|i| i * p / width).collect()
+        } else {
+            (0..p).collect()
+        };
+        let row_indices: Vec<usize> = if p > pixel_rows {
+            (0..pixel_rows).map(|i| i * p / pixel_rows).collect()
+        } else {
+            (0..p).collect()
+        };
+
+        // Build boundary set for separator hints
+        let boundary_set: std::collections::HashSet<usize> =
+            boundaries.iter().copied().collect();
+
+        let mut lines = Vec::new();
+        let mut r = 0;
+        while r + 1 < row_indices.len() {
+            let top_row = row_indices[r];
+            let bot_row = row_indices[r + 1];
+
+            // Check if a group boundary falls between these two rows
+            let is_boundary = boundary_set.iter().any(|&b| {
+                (top_row < b && b <= bot_row) || (bot_row < b && b <= top_row + 1)
+            });
+
+            if is_boundary {
+                // Render a thin separator line
+                let sep: String = "\u{2500}".repeat(col_indices.len());
+                lines.push(Line::from(
+                    ratatui::text::Span::styled(sep, Style::default().fg(Color::DarkGray)),
+                ));
+            } else {
+                let spans: Vec<ratatui::text::Span> = col_indices
+                    .iter()
+                    .map(|&c| {
+                        let top_val = corr[(top_row, c)];
+                        let bot_val = corr[(bot_row, c)];
+                        let fg = diverging_color_rgb(top_val);
+                        let bg = diverging_color_rgb(bot_val);
+                        ratatui::text::Span::styled(
+                            "\u{2580}",
+                            Style::default().fg(fg).bg(bg),
+                        )
+                    })
+                    .collect();
+                lines.push(Line::from(spans));
+            }
+            r += 2;
+        }
+
+        let title_str = format!("Block Correlation ({p} pure vars, {k} groups)");
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title(title_str))
+    }
+
     fn render_selection(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::default()
             .direction(Direction::Vertical)
@@ -1238,6 +1324,8 @@ struct DashboardData {
     group_correlations: Vec<Option<Array2<Scalar>>>,
     /// Per-run, per-factor correlation (Pearson) or AUC of z[:, f] vs y.
     factor_response_corr: Vec<Vec<Scalar>>,
+    /// Per-run block correlation matrix: (corr_matrix, group_boundary_indices).
+    block_correlations: Vec<Option<(Array2<Scalar>, Vec<usize>)>>,
 }
 
 impl DashboardData {
@@ -1291,6 +1379,10 @@ impl DashboardData {
             .iter()
             .map(|run| compute_factor_response_corr(run, &y, response_type))
             .collect();
+        let block_correlations = runs
+            .iter()
+            .map(|run| compute_block_correlation(run, &standardized_x))
+            .collect();
         let best_run = runs
             .iter()
             .max_by(|left, right| left.score.total_cmp(&right.score))
@@ -1314,6 +1406,7 @@ impl DashboardData {
             feature_names,
             group_correlations,
             factor_response_corr,
+            block_correlations,
         })
     }
 }
@@ -1841,6 +1934,102 @@ fn compute_group_correlation_matrix(
         }
     }
     Some(corr_matrix)
+}
+
+fn compute_block_correlation(
+    run: &SlideRunResult,
+    standardized_x: &Matrix,
+) -> Option<(Array2<Scalar>, Vec<usize>)> {
+    let k = run.love.k;
+    if k == 0 {
+        return None;
+    }
+    let pure_ind = &run.love.pure_ind;
+    if pure_ind.len() != k {
+        return None;
+    }
+    let x = standardized_x.as_ndarray();
+
+    // Collect pure variable indices sorted by group
+    let mut reordered_vars = Vec::new();
+    let mut boundaries = Vec::new();
+    for group in pure_ind {
+        let mut indices: Vec<usize> = group
+            .pos
+            .iter()
+            .chain(group.neg.iter())
+            .copied()
+            .filter(|&v| v < x.ncols())
+            .collect();
+        indices.sort_unstable();
+        indices.dedup();
+        reordered_vars.extend_from_slice(&indices);
+        boundaries.push(reordered_vars.len());
+    }
+
+    let p = reordered_vars.len();
+    if p == 0 {
+        return None;
+    }
+
+    // Cap at 300 variables
+    let (vars, bounds) = if p > 300 {
+        let step = p as f64 / 300.0;
+        let subsampled: Vec<usize> = (0..300)
+            .map(|i| reordered_vars[(i as f64 * step) as usize])
+            .collect();
+        let new_bounds: Vec<usize> = boundaries
+            .iter()
+            .map(|&b| ((b as f64 / p as f64) * 300.0).round() as usize)
+            .collect();
+        (subsampled, new_bounds)
+    } else {
+        (reordered_vars, boundaries)
+    };
+
+    let p = vars.len();
+    let mut corr = Array2::zeros((p, p));
+    for i in 0..p {
+        corr[(i, i)] = 1.0;
+        let col_i = x.column(vars[i]);
+        let n = col_i.len() as Scalar;
+        let mean_i = col_i.sum() / n;
+        let ss_i: Scalar = col_i.iter().map(|&v| (v - mean_i).powi(2)).sum();
+        for j in (i + 1)..p {
+            let col_j = x.column(vars[j]);
+            let mean_j = col_j.sum() / n;
+            let ss_j: Scalar = col_j.iter().map(|&v| (v - mean_j).powi(2)).sum();
+            let num: Scalar = col_i
+                .iter()
+                .zip(col_j.iter())
+                .map(|(&a, &b)| (a - mean_i) * (b - mean_j))
+                .sum();
+            let denom = (ss_i * ss_j).sqrt();
+            let r = if denom > 0.0 { num / denom } else { 0.0 };
+            corr[(i, j)] = r;
+            corr[(j, i)] = r;
+        }
+    }
+
+    Some((corr, bounds))
+}
+
+fn diverging_color_rgb(value: Scalar) -> Color {
+    let t = value.clamp(-1.0, 1.0);
+    if t >= 0.0 {
+        // white → red
+        let r = 255;
+        let g = ((1.0 - t) * 255.0) as u8;
+        let b = ((1.0 - t) * 255.0) as u8;
+        Color::Rgb(r, g, b)
+    } else {
+        // white → blue
+        let a = -t;
+        let r = ((1.0 - a) * 255.0) as u8;
+        let g = ((1.0 - a) * 255.0) as u8;
+        let b = 255;
+        Color::Rgb(r, g, b)
+    }
 }
 
 fn compute_factor_response_corr(
