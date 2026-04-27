@@ -184,6 +184,18 @@ impl LoveSubView {
         }
     }
 
+    fn number(self) -> u8 {
+        match self {
+            Self::Diagnostics => 1,
+            Self::FactorCovariance => 2,
+            Self::LoadingMatrix => 3,
+            Self::GroupCorrelation => 4,
+            Self::BlockCorrelation => 5,
+            Self::GammaDistribution => 6,
+            Self::InteractionNetwork => 7,
+        }
+    }
+
     fn is_advanced(self) -> bool {
         matches!(self, Self::GammaDistribution | Self::InteractionNetwork)
     }
@@ -599,9 +611,9 @@ impl App {
             Tab::Factors => footer_spans.push(" | pgup/pgdn factor".dark_gray()),
             Tab::Love => {
                 if self.love_sub_view.is_advanced() {
-                    footer_spans.push(" | advanced view | 1-5 primary | v diagnostics".dark_gray());
+                    footer_spans.push(" | adv | 1-5 primary | v diag".dark_gray());
                 } else {
-                    footer_spans.push(" | v/1-5 sub-view | 6-7 advanced".dark_gray());
+                    footer_spans.push(" | v/1-5 view | 6-7 adv".dark_gray());
                 }
                 if self.love_sub_view == LoveSubView::LoadingMatrix {
                     footer_spans.push(" | m row mode".dark_gray());
@@ -1106,33 +1118,34 @@ impl App {
 
     fn love_metric_strip_widget(&self) -> Paragraph<'static> {
         let Some(run) = self.current_run() else {
-            return empty_widget("LOVE Summary");
+            return empty_widget("LOVE");
         };
         let pure_pct = 100.0 * run.love.pure_vec.len() as f64 / run.love.a.nrows().max(1) as f64;
         let gamma = run.love.gamma.as_ndarray();
         let gamma_median = median(gamma.to_vec());
         let gamma_max = gamma.iter().copied().fold(0.0, Scalar::max);
-        let view_kind = if self.love_sub_view.is_advanced() {
-            "advanced"
-        } else {
-            "primary"
-        };
-        let line = format!(
-            "view: {} ({view_kind}) | {} | delta {:.4} | lambda {:.4} | score {:.4} | k {} | pure {} ({:.1}%) | group mean {:.1} | gamma med/max {:.4}/{:.4}",
-            self.love_sub_view.label(),
-            love_view_scope(self.love_sub_view, run.love.k, self.selected_factor),
-            run.delta,
-            run.lambda,
-            run.score,
-            run.love.k,
-            run.love.pure_vec.len(),
-            pure_pct,
-            mean_group_size(run),
-            gamma_median,
-            gamma_max,
-        );
-        Paragraph::new(Text::from(vec![Line::from(line)]))
-            .block(Block::default().borders(Borders::ALL).title("LOVE Summary"))
+        let lines = vec![
+            Line::from(format!(
+                "view {}/7: {} | {}",
+                self.love_sub_view.number(),
+                self.love_sub_view.label(),
+                love_view_scope(self.love_sub_view, run.love.k, self.selected_factor),
+            )),
+            Line::from(format!(
+                "d/l {:.3}/{:.3} | score {:.3} | k{} | pure {}/{} {:.0}% | gamma {:.3}/{:.3}",
+                run.delta,
+                run.lambda,
+                run.score,
+                run.love.k,
+                run.love.pure_vec.len(),
+                run.love.a.nrows(),
+                pure_pct,
+                gamma_median,
+                gamma_max,
+            )),
+        ];
+        Paragraph::new(Text::from(lines))
+            .block(Block::default().borders(Borders::ALL).title("LOVE"))
             .wrap(Wrap { trim: true })
     }
 
@@ -1435,8 +1448,7 @@ impl App {
         let n_groups = boundaries.len();
         let boundary_set: std::collections::HashSet<usize> = boundaries.iter().copied().collect();
 
-        let title_str =
-            format!("Block Correlation | {p} pure vars shown | {n_groups} groups | max 300 vars");
+        let title_str = format!("Block Corr | {p} pure vars | {n_groups} groups | cap 300");
         let canvas = Canvas::default()
             .block(Block::default().borders(Borders::ALL).title(title_str))
             .marker(symbols::Marker::HalfBlock)
@@ -1544,7 +1556,7 @@ impl App {
     }
 
     fn gamma_distribution_widget(&self) -> BarChart<'static> {
-        let title = "Advanced: Gamma (Noise Variance)";
+        let title = "Gamma Noise";
         let Some(run) = self.current_run() else {
             return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
         };
@@ -1586,10 +1598,8 @@ impl App {
             })
             .collect();
 
-        let title_str = format!(
-            "Advanced: Gamma | top 30/{} features | bars scaled to max {:.4} | labels <=12 chars | median {:.4}",
-            n_features, max_gamma, med_gamma
-        );
+        let title_str =
+            format!("Gamma | top 30/{n_features} | max {max_gamma:.4} | med {med_gamma:.4}");
         BarChart::default()
             .data(BarGroup::default().bars(&bars))
             .block(Block::default().borders(Borders::ALL).title(title_str))
@@ -1600,7 +1610,7 @@ impl App {
     }
 
     fn interaction_network_widget(&self) -> Paragraph<'static> {
-        let title = "Advanced: Interaction Network";
+        let title = "Interaction Network";
         let Some(run) = self.current_run() else {
             return empty_widget(title);
         };
@@ -1610,9 +1620,7 @@ impl App {
 
         if sig_interacts.is_empty() {
             let lines = vec![
-                Line::from(format!(
-                    "k = {k} factors | 0 significant interactions | advanced view"
-                )),
+                Line::from(format!("k = {k} factors | 0 significant interactions")),
                 Line::from("No interaction edges to display."),
             ];
             return Paragraph::new(Text::from(lines))
@@ -1622,7 +1630,7 @@ impl App {
         if k <= 12 {
             // Circle layout rendered as text art
             let mut lines = vec![Line::from(format!(
-                "{} interactions among {} factors ({} marginal) | advanced view",
+                "{} interactions among {} factors ({} marginal)",
                 sig_interacts.len(),
                 k,
                 marginal_lfs.len(),
@@ -1660,7 +1668,7 @@ impl App {
         } else {
             // Adjacency list for large k
             let mut lines = vec![Line::from(format!(
-                "{} interactions among {} factors | advanced adjacency list",
+                "{} interactions among {} factors | adjacency list",
                 sig_interacts.len(),
                 k,
             ))];
@@ -1705,7 +1713,7 @@ impl App {
     }
 
     fn render_selection_frequency(&self, frame: &mut Frame, area: Rect) {
-        let title = "Knockoff Selection Frequency (marginal)";
+        let title = "Marginal Selection Frequency";
         let Some(run) = self.current_run() else {
             frame.render_widget(empty_widget(title), area);
             return;
@@ -1725,7 +1733,7 @@ impl App {
             .split(area);
 
         let header = Paragraph::new(format!(
-            "threshold: {:.0}% | {} selected | v: toggle marginal/interaction",
+            "threshold {:.0}% | selected {} | v toggles view",
             threshold * 100.0,
             selected.len()
         ))
@@ -1775,7 +1783,7 @@ impl App {
     }
 
     fn render_interaction_frequency(&self, frame: &mut Frame, area: Rect) {
-        let title = "Knockoff Selection Frequency (interactions)";
+        let title = "Interaction Selection Frequency";
         let Some(run) = self.current_run() else {
             frame.render_widget(empty_widget(title), area);
             return;
@@ -1792,7 +1800,7 @@ impl App {
             .split(area);
 
         let header = Paragraph::new(format!(
-            "{} marginal LFs with interaction voting | v: toggle marginal/interaction",
+            "{} marginal LFs with interaction voting | v toggles view",
             interaction_voting.len()
         ))
         .block(
@@ -2496,22 +2504,16 @@ fn matrix_title(
     compact: bool,
 ) -> String {
     let selected = selected_factor.min(total_cols.saturating_sub(1)) + 1;
-    let factor_window = if shown_cols == total_cols {
-        "all factors".to_owned()
-    } else {
-        format!("window around F{selected}")
+    let short_label = match label {
+        "Factor Covariance (C)" => "Covariance C",
+        "Group Correlation" => "Group Corr",
+        _ => label,
     };
-    let scale = if compact {
-        "compact symbols"
-    } else {
-        "numeric cells"
-    };
+    let scale = if compact { "symbols" } else { "values" };
     if shown_rows == total_rows && shown_cols == total_cols {
-        format!("{label} | F{selected} selected | {factor_window} | {scale}")
+        format!("{short_label} | F{selected} | all factors | {scale}")
     } else {
-        format!(
-            "{label} | F{selected} selected | {factor_window} | showing {shown_rows}/{total_rows} x {shown_cols}/{total_cols} | {scale}"
-        )
+        format!("{short_label} | F{selected} | {shown_rows}/{total_rows} x {shown_cols}/{total_cols} | {scale}")
     }
 }
 
@@ -2531,18 +2533,14 @@ fn loading_matrix_status_title(
         _ => "none".to_owned(),
     };
     let selected = selected_factor + 1;
-    let scale = if compact {
-        "compact symbols"
-    } else {
-        "numeric cells"
-    };
-    let truncation = if rows_truncated {
-        "rows truncated"
-    } else {
-        "all ranked rows shown"
-    };
+    let scale = if compact { "symbols" } else { "values" };
+    let truncation = if rows_truncated { "trunc" } else { "all" };
     format!(
-        "{label} | mode: {} | selected F{selected} | factors {factor_window} | rows {shown_rows}/{total_rows} ({truncation}) | {scale} | labels <=16 chars",
+        "{} | {} | F{selected} | cols {factor_window} | rows {shown_rows}/{total_rows} {truncation} | {scale}",
+        match label {
+            "Loading Matrix (A)" => "Loading A",
+            _ => label,
+        },
         mode.label()
     )
 }
@@ -2563,12 +2561,12 @@ fn love_view_scope(view: LoveSubView, k: usize, selected_factor: usize) -> Strin
                     (Some(first), Some(last)) => format!("F{}-F{}", first + 1, last + 1),
                     _ => "none".to_owned(),
                 };
-                format!("selected F{} | window {factor_window}", selected + 1)
+                format!("F{} | {factor_window}", selected + 1)
             }
         }
-        LoveSubView::BlockCorrelation => "pure-variable block correlation".to_owned(),
-        LoveSubView::GammaDistribution => "advanced | top gamma features".to_owned(),
-        LoveSubView::InteractionNetwork => "advanced | significant LF interactions".to_owned(),
+        LoveSubView::BlockCorrelation => "pure-variable blocks".to_owned(),
+        LoveSubView::GammaDistribution => "top gamma features".to_owned(),
+        LoveSubView::InteractionNetwork => "significant LF interactions".to_owned(),
     }
 }
 
