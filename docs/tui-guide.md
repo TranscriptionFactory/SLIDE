@@ -1,9 +1,9 @@
 # SLIDE TUI Guide
 
-The `slide-cli` binary includes a terminal dashboard (TUI) for monitoring SLIDE
-pipeline runs in real time. It reads checkpoint files written during optimization
-and renders live-updating views of LOVE results, knockoff selection, factor
-diagnostics, and more.
+The `slide-cli` binary includes a terminal dashboard (TUI) for monitoring
+SLIDE pipeline runs in real time. It reads checkpoint files written during
+optimization and renders live-updating views of LOVE factor creation, SLIDE
+knockoff selection, factor diagnostics, and more.
 
 ---
 
@@ -120,29 +120,20 @@ A quick-test config with fewer iterations for verifying the TUI is at
 
 The dashboard has four tabs. Use the keys below to navigate.
 
-### Runs tab
+### Overview tab
 
 Summary table of all evaluated `(delta, lambda)` pairs with their scores,
 number of selected factors, and a visual phase timeline bar showing where the
 pipeline is currently spending time:
 
 ```
-[LOVE ████  ZMap ░░░░  Knockoff ░░░░]
+[LOVE Factors ████  Z Scores ░░░░  SLIDE Marginal ░░░░  SLIDE Interactions ░░░░]
 ```
-
-### Factors tab
-
-Per-factor detail for the selected run:
-
-- Top features by loading weight
-- Factor score distributions rendered as sparkline histograms (`▁▂▃▅▆▇█`)
-
-Use `PgDn` / `PgUp` to cycle through factors.
 
 ### LOVE tab
 
-Five primary sub-views cycle with `v`. Advanced diagnostics remain available
-with direct keys `6` and `7`.
+LOVE factor creation outputs. Five primary sub-views cycle with `v`. Advanced
+diagnostics remain available with direct keys `6` and `7`.
 
 | Key | Sub-view | What it shows |
 |-----|----------|---------------|
@@ -162,14 +153,23 @@ features according to its active row mode and caps the displayed rows. Press
 `selected factor` modes. The title line reports the active mode, factor window,
 visible row count, and `PgDn` / `PgUp` factor-window navigation.
 
-### Selection tab
+### Factors tab
+
+Per-factor detail for the selected run:
+
+- Top features by loading weight
+- Factor score distributions rendered as sparkline histograms (`▁▂▃▅▆▇█`)
+
+Use `PgDn` / `PgUp` to cycle through factors.
+
+### SLIDE tab
 
 Two sub-views (toggle with `v`):
 
 | Sub-view | What it shows |
 |----------|---------------|
-| Marginal | Knockoff frequency bars for marginal (standalone) factors |
-| Interactions | Knockoff frequency bars for interaction terms |
+| Marginal | SLIDE knockoff frequency bars for marginal (standalone) LOVE factors |
+| Interactions | SLIDE knockoff frequency bars for interaction terms |
 
 Both sub-views also display factor-response correlation beneath the frequency
 bars.
@@ -186,7 +186,7 @@ bars.
 | `k` / `Up` | Previous run |
 | `PgDn` | Next factor |
 | `PgUp` | Previous factor |
-| `v` | Cycle primary sub-views (LOVE and Selection tabs) |
+| `v` | Cycle primary sub-views (LOVE and SLIDE tabs) |
 | `1`–`7` | Jump to LOVE sub-view directly (`6` and `7` are advanced) |
 | `r` | Force reload checkpoint from disk |
 | `q` | Quit |

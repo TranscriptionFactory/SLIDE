@@ -136,10 +136,10 @@ The terminal dashboard (`crates/slide-cli/src/tui.rs`) has four tabs:
 
 | Tab | What it shows |
 |-----|---------------|
-| **Runs** | Grid search overview: progress, phase timeline, score/factor grids |
-| **Factors** | Per-factor detail: top features by loading weight, score distributions |
+| **Overview** | Grid search overview: progress, phase timeline, score/factor grids |
 | **LOVE** | Seven sub-views: diagnostics, covariance matrix, loading heatmap, group correlation, block correlation, gamma distribution, interaction network |
-| **Selection** | Knockoff frequency bar charts for marginal + interaction selection |
+| **Factors** | Per-factor detail: top features by loading weight, score distributions |
+| **SLIDE** | Knockoff frequency bar charts for marginal factor and interaction selection |
 
 Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` for runs, `PgDn`/`PgUp` for factors, `v` or `1-7` for sub-views, `q` to quit. Full details in `docs/tui-guide.md`.
 

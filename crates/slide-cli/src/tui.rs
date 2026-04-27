@@ -79,7 +79,7 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                     KeyCode::Char('r') => app.reload()?,
                     KeyCode::Char('v') => match app.tab {
                         Tab::Love => app.love_sub_view = app.love_sub_view.next(),
-                        Tab::Selection => {
+                        Tab::Slide => {
                             app.selection_sub_view = app.selection_sub_view.next();
                         }
                         _ => {}
@@ -110,15 +110,15 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
-    Runs,
-    Factors,
+    Overview,
     Love,
-    Selection,
+    Factors,
+    Slide,
 }
 
 impl Tab {
     fn titles() -> [Line<'static>; 4] {
-        ["Runs", "Factors", "LOVE", "Selection"].map(Line::from)
+        ["Overview", "LOVE", "Factors", "SLIDE"].map(Line::from)
     }
 }
 
@@ -317,7 +317,7 @@ impl App {
         });
         Ok(Self {
             args,
-            tab: Tab::Runs,
+            tab: Tab::Overview,
             selected_run: 0,
             selected_factor: 0,
             data,
@@ -464,19 +464,19 @@ impl App {
 
     fn next_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Runs => Tab::Factors,
-            Tab::Factors => Tab::Love,
-            Tab::Love => Tab::Selection,
-            Tab::Selection => Tab::Runs,
+            Tab::Overview => Tab::Love,
+            Tab::Love => Tab::Factors,
+            Tab::Factors => Tab::Slide,
+            Tab::Slide => Tab::Overview,
         };
     }
 
     fn prev_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Runs => Tab::Selection,
-            Tab::Factors => Tab::Runs,
-            Tab::Love => Tab::Factors,
-            Tab::Selection => Tab::Love,
+            Tab::Overview => Tab::Slide,
+            Tab::Love => Tab::Overview,
+            Tab::Factors => Tab::Love,
+            Tab::Slide => Tab::Factors,
         };
     }
 
@@ -630,15 +630,15 @@ impl App {
 
         let titles = Tabs::new(Tab::titles())
             .select(match self.tab {
-                Tab::Runs => 0,
-                Tab::Factors => 1,
-                Tab::Love => 2,
-                Tab::Selection => 3,
+                Tab::Overview => 0,
+                Tab::Love => 1,
+                Tab::Factors => 2,
+                Tab::Slide => 3,
             })
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("SLIDE Monitor"),
+                    .title("LOVE -> SLIDE Monitor"),
             )
             .highlight_style(
                 Style::default()
@@ -651,10 +651,10 @@ impl App {
             self.render_waiting(frame, layout[1]);
         } else {
             match self.tab {
-                Tab::Runs => self.render_runs(frame, layout[1]),
-                Tab::Factors => self.render_factors(frame, layout[1]),
+                Tab::Overview => self.render_overview(frame, layout[1]),
                 Tab::Love => self.render_love(frame, layout[1]),
-                Tab::Selection => self.render_selection(frame, layout[1]),
+                Tab::Factors => self.render_factors(frame, layout[1]),
+                Tab::Slide => self.render_slide(frame, layout[1]),
             }
         }
 
@@ -677,8 +677,8 @@ impl App {
                     footer_spans.push(" | m row mode".dark_gray());
                 }
             }
-            Tab::Selection => footer_spans.push(" | v sub-view".dark_gray()),
-            Tab::Runs => {}
+            Tab::Slide => footer_spans.push(" | v sub-view".dark_gray()),
+            Tab::Overview => {}
         }
         if self.feature_search_editing {
             footer_spans.push(format!(" | find: {}", self.feature_search_input).yellow());
@@ -740,7 +740,7 @@ impl App {
         }
     }
 
-    fn render_runs(&self, frame: &mut Frame, area: Rect) {
+    fn render_overview(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1870,7 +1870,7 @@ impl App {
         }
     }
 
-    fn render_selection(&self, frame: &mut Frame, area: Rect) {
+    fn render_slide(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -1888,7 +1888,7 @@ impl App {
     }
 
     fn render_selection_frequency(&self, frame: &mut Frame, area: Rect) {
-        let title = "Marginal Selection Frequency";
+        let title = "SLIDE Marginal Factor Selection";
         let Some(run) = self.current_run() else {
             frame.render_widget(empty_widget(title), area);
             return;
@@ -1958,7 +1958,7 @@ impl App {
     }
 
     fn render_interaction_frequency(&self, frame: &mut Frame, area: Rect) {
-        let title = "Interaction Selection Frequency";
+        let title = "SLIDE Interaction Selection";
         let Some(run) = self.current_run() else {
             frame.render_widget(empty_widget(title), area);
             return;
@@ -3168,14 +3168,24 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
         Phase::Scoring => 4,
     };
 
-    let labels = ["LOVE", "ZMap", "Knockoff", "Interact", "Score"];
+    let labels = [
+        "LOVE Factors",
+        "Z Scores",
+        "SLIDE Marginal",
+        "SLIDE Interactions",
+        "Score",
+    ];
 
-    // For KnockoffInteraction, show progress info in the label
+    // For SLIDE interaction selection, show progress info in the label.
     let interact_label = match current {
         Phase::KnockoffInteraction {
             marginal_lf,
             total_marginals,
-        } => format!("Interact ({}/{})", marginal_lf + 1, total_marginals),
+        } => format!(
+            "SLIDE Interactions ({}/{})",
+            marginal_lf + 1,
+            total_marginals
+        ),
         _ => String::new(),
     };
 

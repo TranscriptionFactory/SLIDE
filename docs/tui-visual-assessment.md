@@ -10,22 +10,22 @@ ones that should be simplified, hidden, or removed.
 
 Keep the current top-level tabs:
 
-- `Runs`
-- `Factors`
+- `Overview`
 - `LOVE`
-- `Selection`
+- `Factors`
+- `SLIDE`
 
-This is a useful mental model: operational progress, per-factor inspection,
-LOVE diagnostics, and knockoff selection are distinct tasks. The structure is
-implemented around `App::render` in `crates/slide-cli/src/tui.rs`.
+This is a useful mental model: operational progress, LOVE factor creation,
+per-factor inspection, and SLIDE knockoff selection are distinct tasks. The
+structure is implemented around `App::render` in `crates/slide-cli/src/tui.rs`.
 
 Refinement: make the footer more context-aware. It currently always shows
 factor navigation even outside the Factors tab. Showing only relevant keys per
 tab would reduce visual noise.
 
-### Runs tab
+### Overview tab
 
-Keep the Runs tab as the primary monitoring surface. The current combination of
+Keep the Overview tab as the primary monitoring surface. The current combination of
 summary, completed evaluation table, score grid, and config identity is the
 strongest part of the TUI.
 
@@ -37,7 +37,7 @@ Useful elements:
 - Phase timeline: useful live status indicator.
 
 Refinement: reduce the always-visible config panel. It is valuable for
-provenance, but it currently consumes a large portion of the Runs tab. Prefer a
+provenance, but it currently consumes a large portion of the Overview tab. Prefer a
 collapsed identity block or a dedicated config/help view.
 
 ### Factors tab
@@ -57,13 +57,13 @@ more horizontal space than the overview and histogram. A better layout would
 give the two feature tables most of the width and keep overview/histogram
 compact.
 
-### Selection tab
+### SLIDE tab
 
 Keep the marginal selection frequency and factor-response chart.
 
 Useful elements:
 
-- Marginal knockoff frequency bars.
+- Marginal SLIDE knockoff frequency bars.
 - Factor-response correlation or AUC bars.
 - Interaction selection frequency when interactions are enabled.
 
@@ -99,7 +99,7 @@ Recommended direction:
 - Replace the four fixed summary panels with compact metric cards or one small
   grid.
 - Give the active LOVE subview most of the screen.
-- Consider merging redundant summary signals into the Runs tab.
+- Consider merging redundant summary signals into the Overview tab.
 
 ### Matrix heatmaps
 
@@ -165,7 +165,7 @@ run summary. It is lower-value than giving the active LOVE subview more room.
 Recommended direction:
 
 - Keep the best-per-delta logic if useful.
-- Surface it as an optional summary or integrate it into the Runs tab.
+- Surface it as an optional summary or integrate it into the Overview tab.
 
 ### Config / Identity panel
 
@@ -178,14 +178,14 @@ monitoring a run.
 
 Recommended direction:
 
-- Collapse to one or two identity lines in the Runs tab.
+- Collapse to one or two identity lines in the Overview tab.
 - Add a dedicated config/details view if full metadata is needed.
 
 ## Priority Recommendations
 
 1. Simplify the LOVE tab first. It has the most visual overload and the most
    duplicate information.
-2. Keep the Runs and Factors tabs as the core experience.
+2. Keep the Overview and Factors tabs as the core experience.
 3. Move Gamma Distribution and Interaction Network into advanced/debug views.
 4. Rework matrix views into scalable heatmaps or paged tables.
 5. Reduce persistent footer/config noise so the TUI feels more intentional.

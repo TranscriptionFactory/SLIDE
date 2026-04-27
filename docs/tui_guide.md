@@ -72,7 +72,7 @@ slide-cli submit --script job.sh --checkpoint ckpt.json --config config.yaml
 | `q`   | Quit                    |
 | `1-7` | Switch LOVE sub-view; `6-7` are advanced diagnostics |
 | `m`   | Cycle loading matrix row mode |
-| `Tab` | Cycle between panes     |
+| `Tab` | Cycle between Overview, LOVE, Factors, and SLIDE tabs |
 
 ## Large LOVE Matrices
 
