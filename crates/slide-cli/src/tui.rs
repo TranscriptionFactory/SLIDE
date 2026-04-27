@@ -757,7 +757,7 @@ impl App {
         frame.render_widget(self.love_metric_strip_widget(), sections[0]);
         match self.love_sub_view {
             LoveSubView::Diagnostics => {
-                frame.render_widget(self.love_detail_widget(), sections[1]);
+                self.render_love_diagnostics(frame, sections[1]);
             }
             LoveSubView::FactorCovariance => {
                 frame.render_widget(self.factor_covariance_heatmap(), sections[1]);
@@ -777,6 +777,24 @@ impl App {
             LoveSubView::InteractionNetwork => {
                 frame.render_widget(self.interaction_network_widget(), sections[1]);
             }
+        }
+    }
+
+    fn render_love_diagnostics(&self, frame: &mut Frame, area: Rect) {
+        if area.width >= 100 {
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                .split(area);
+            frame.render_widget(self.love_detail_widget(), panes[0]);
+            frame.render_widget(self.interaction_network_widget(), panes[1]);
+        } else {
+            let panes = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(6), Constraint::Min(4)])
+                .split(area);
+            frame.render_widget(self.love_detail_widget(), panes[0]);
+            frame.render_widget(self.interaction_network_widget(), panes[1]);
         }
     }
 
@@ -1164,25 +1182,25 @@ impl App {
         let min_group = group_sizes.iter().copied().min().unwrap_or(0);
         let mut lines = vec![
             Line::from(format!(
-                "selected run: delta {:.4}, lambda {:.4}, score {:.4}",
+                "run: d {:.4} | l {:.4} | score {:.4}",
                 run.delta, run.lambda, run.score
             )),
             Line::from(format!(
-                "k = {} | pure vars = {} / {} ({:.1}%)",
+                "k {} | pure {}/{} ({:.1}%)",
                 run.love.k,
                 run.love.pure_vec.len(),
                 run.love.a.nrows(),
                 100.0 * run.love.pure_vec.len() as f64 / run.love.a.nrows().max(1) as f64
             )),
             Line::from(format!(
-                "group size range: {}..{} | mean {:.2} | singletons {}",
+                "groups {}..{} | mean {:.2} | singletons {}",
                 min_group,
                 max_group,
                 mean_group_size(run),
                 singleton_groups
             )),
             Line::from(format!(
-                "opt_delta {:.4} | gamma median {:.4} | gamma max {:.4}",
+                "opt_delta {:.4} | gamma med/max {:.4}/{:.4}",
                 run.love.opt_delta,
                 median(run.love.gamma.as_ndarray().to_vec()),
                 run.love
