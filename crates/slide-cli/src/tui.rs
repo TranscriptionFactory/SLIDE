@@ -183,6 +183,10 @@ impl LoveSubView {
             Self::InteractionNetwork => "Interaction Network",
         }
     }
+
+    fn is_advanced(self) -> bool {
+        matches!(self, Self::GammaDistribution | Self::InteractionNetwork)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -594,7 +598,11 @@ impl App {
         match self.tab {
             Tab::Factors => footer_spans.push(" | pgup/pgdn factor".dark_gray()),
             Tab::Love => {
-                footer_spans.push(" | v/1-5 sub-view | 6-7 advanced".dark_gray());
+                if self.love_sub_view.is_advanced() {
+                    footer_spans.push(" | advanced view | 1-5 primary | v diagnostics".dark_gray());
+                } else {
+                    footer_spans.push(" | v/1-5 sub-view | 6-7 advanced".dark_gray());
+                }
                 if self.love_sub_view == LoveSubView::LoadingMatrix {
                     footer_spans.push(" | m row mode".dark_gray());
                 }
@@ -1104,9 +1112,15 @@ impl App {
         let gamma = run.love.gamma.as_ndarray();
         let gamma_median = median(gamma.to_vec());
         let gamma_max = gamma.iter().copied().fold(0.0, Scalar::max);
+        let view_kind = if self.love_sub_view.is_advanced() {
+            "advanced"
+        } else {
+            "primary"
+        };
         let line = format!(
-            "view: {} | delta {:.4} | lambda {:.4} | score {:.4} | k {} | pure {} ({:.1}%) | group mean {:.1} | gamma med/max {:.4}/{:.4}",
+            "view: {} ({view_kind}) | {} | delta {:.4} | lambda {:.4} | score {:.4} | k {} | pure {} ({:.1}%) | group mean {:.1} | gamma med/max {:.4}/{:.4}",
             self.love_sub_view.label(),
+            love_view_scope(self.love_sub_view, run.love.k, self.selected_factor),
             run.delta,
             run.lambda,
             run.score,
@@ -1225,7 +1239,15 @@ impl App {
         if truncated {
             widths.push(Constraint::Length(8));
         }
-        let title = matrix_title(title, k, k, factors.len(), factors.len());
+        let title = matrix_title(
+            title,
+            k,
+            k,
+            factors.len(),
+            factors.len(),
+            self.selected_factor,
+            compact,
+        );
         Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -1316,6 +1338,9 @@ impl App {
             &factors,
             var_indices.len(),
             nfeatures,
+            factor,
+            compact,
+            rows_truncated,
         );
         Table::new(rows, widths)
             .header(
@@ -1376,7 +1401,15 @@ impl App {
         if truncated {
             widths.push(Constraint::Length(8));
         }
-        let title = matrix_title(title, k, k, factors.len(), factors.len());
+        let title = matrix_title(
+            title,
+            k,
+            k,
+            factors.len(),
+            factors.len(),
+            self.selected_factor,
+            compact,
+        );
         Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -1402,7 +1435,8 @@ impl App {
         let n_groups = boundaries.len();
         let boundary_set: std::collections::HashSet<usize> = boundaries.iter().copied().collect();
 
-        let title_str = format!("Block Correlation ({p} pure vars, {n_groups} groups)");
+        let title_str =
+            format!("Block Correlation | {p} pure vars shown | {n_groups} groups | max 300 vars");
         let canvas = Canvas::default()
             .block(Block::default().borders(Borders::ALL).title(title_str))
             .marker(symbols::Marker::HalfBlock)
@@ -1510,7 +1544,7 @@ impl App {
     }
 
     fn gamma_distribution_widget(&self) -> BarChart<'static> {
-        let title = "Gamma (Noise Variance)";
+        let title = "Advanced: Gamma (Noise Variance)";
         let Some(run) = self.current_run() else {
             return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
         };
@@ -1553,8 +1587,8 @@ impl App {
             .collect();
 
         let title_str = format!(
-            "Gamma: top 30 / {} features (median={:.4}, max={:.4})",
-            n_features, med_gamma, max_gamma
+            "Advanced: Gamma | top 30/{} features | bars scaled to max {:.4} | labels <=12 chars | median {:.4}",
+            n_features, max_gamma, med_gamma
         );
         BarChart::default()
             .data(BarGroup::default().bars(&bars))
@@ -1566,7 +1600,7 @@ impl App {
     }
 
     fn interaction_network_widget(&self) -> Paragraph<'static> {
-        let title = "Interaction Network";
+        let title = "Advanced: Interaction Network";
         let Some(run) = self.current_run() else {
             return empty_widget(title);
         };
@@ -1576,7 +1610,9 @@ impl App {
 
         if sig_interacts.is_empty() {
             let lines = vec![
-                Line::from(format!("k = {k} factors, 0 significant interactions")),
+                Line::from(format!(
+                    "k = {k} factors | 0 significant interactions | advanced view"
+                )),
                 Line::from("No interaction edges to display."),
             ];
             return Paragraph::new(Text::from(lines))
@@ -1586,7 +1622,7 @@ impl App {
         if k <= 12 {
             // Circle layout rendered as text art
             let mut lines = vec![Line::from(format!(
-                "{} interactions among {} factors ({} marginal)",
+                "{} interactions among {} factors ({} marginal) | advanced view",
                 sig_interacts.len(),
                 k,
                 marginal_lfs.len(),
@@ -1624,7 +1660,7 @@ impl App {
         } else {
             // Adjacency list for large k
             let mut lines = vec![Line::from(format!(
-                "{} interactions among {} factors",
+                "{} interactions among {} factors | advanced adjacency list",
                 sig_interacts.len(),
                 k,
             ))];
@@ -2456,11 +2492,26 @@ fn matrix_title(
     total_cols: usize,
     shown_rows: usize,
     shown_cols: usize,
+    selected_factor: usize,
+    compact: bool,
 ) -> String {
-    if shown_rows == total_rows && shown_cols == total_cols {
-        label.to_owned()
+    let selected = selected_factor.min(total_cols.saturating_sub(1)) + 1;
+    let factor_window = if shown_cols == total_cols {
+        "all factors".to_owned()
     } else {
-        format!("{label} (showing {shown_rows}/{total_rows} x {shown_cols}/{total_cols})")
+        format!("window around F{selected}")
+    };
+    let scale = if compact {
+        "compact symbols"
+    } else {
+        "numeric cells"
+    };
+    if shown_rows == total_rows && shown_cols == total_cols {
+        format!("{label} | F{selected} selected | {factor_window} | {scale}")
+    } else {
+        format!(
+            "{label} | F{selected} selected | {factor_window} | showing {shown_rows}/{total_rows} x {shown_cols}/{total_cols} | {scale}"
+        )
     }
 }
 
@@ -2470,16 +2521,55 @@ fn loading_matrix_status_title(
     factors: &[usize],
     shown_rows: usize,
     total_rows: usize,
+    selected_factor: usize,
+    compact: bool,
+    rows_truncated: bool,
 ) -> String {
     let factor_window = match (factors.first(), factors.last()) {
         (Some(first), Some(last)) if first == last => format!("F{}", first + 1),
         (Some(first), Some(last)) => format!("F{}-F{}", first + 1, last + 1),
         _ => "none".to_owned(),
     };
+    let selected = selected_factor + 1;
+    let scale = if compact {
+        "compact symbols"
+    } else {
+        "numeric cells"
+    };
+    let truncation = if rows_truncated {
+        "rows truncated"
+    } else {
+        "all ranked rows shown"
+    };
     format!(
-        "{label} | mode: {} | factors {factor_window} | rows {shown_rows}/{total_rows} | PgUp/PgDn shift factor",
+        "{label} | mode: {} | selected F{selected} | factors {factor_window} | rows {shown_rows}/{total_rows} ({truncation}) | {scale} | labels <=16 chars",
         mode.label()
     )
+}
+
+fn love_view_scope(view: LoveSubView, k: usize, selected_factor: usize) -> String {
+    match view {
+        LoveSubView::Diagnostics => "run diagnostics".to_owned(),
+        LoveSubView::FactorCovariance
+        | LoveSubView::LoadingMatrix
+        | LoveSubView::GroupCorrelation => {
+            if k == 0 {
+                "no factors".to_owned()
+            } else {
+                let selected = selected_factor.min(k - 1);
+                let factors = visible_factor_indices(k, selected);
+                let factor_window = match (factors.first(), factors.last()) {
+                    (Some(first), Some(last)) if first == last => format!("F{}", first + 1),
+                    (Some(first), Some(last)) => format!("F{}-F{}", first + 1, last + 1),
+                    _ => "none".to_owned(),
+                };
+                format!("selected F{} | window {factor_window}", selected + 1)
+            }
+        }
+        LoveSubView::BlockCorrelation => "pure-variable block correlation".to_owned(),
+        LoveSubView::GammaDistribution => "advanced | top gamma features".to_owned(),
+        LoveSubView::InteractionNetwork => "advanced | significant LF interactions".to_owned(),
+    }
 }
 
 fn truncate_label(label: &str, max_chars: usize) -> String {
@@ -2870,5 +2960,72 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
             .gauge_style(style)
             .use_unicode(true);
         frame.render_widget(gauge, cols[i]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LoadingRowMode, LoveSubView};
+
+    #[test]
+    fn love_v_cycle_stays_on_primary_views() {
+        let mut view = LoveSubView::Diagnostics;
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            seen.push(view);
+            view = view.next();
+        }
+
+        assert_eq!(
+            seen,
+            vec![
+                LoveSubView::Diagnostics,
+                LoveSubView::FactorCovariance,
+                LoveSubView::LoadingMatrix,
+                LoveSubView::GroupCorrelation,
+                LoveSubView::BlockCorrelation,
+            ]
+        );
+        assert_eq!(view, LoveSubView::Diagnostics);
+        assert!(!seen.contains(&LoveSubView::GammaDistribution));
+        assert!(!seen.contains(&LoveSubView::InteractionNetwork));
+    }
+
+    #[test]
+    fn love_advanced_views_are_direct_key_only() {
+        assert_eq!(
+            LoveSubView::from_number(6),
+            Some(LoveSubView::GammaDistribution)
+        );
+        assert_eq!(
+            LoveSubView::from_number(7),
+            Some(LoveSubView::InteractionNetwork)
+        );
+        assert_eq!(
+            LoveSubView::GammaDistribution.next(),
+            LoveSubView::Diagnostics
+        );
+        assert_eq!(
+            LoveSubView::InteractionNetwork.next(),
+            LoveSubView::Diagnostics
+        );
+        assert!(LoveSubView::GammaDistribution.is_advanced());
+        assert!(LoveSubView::InteractionNetwork.is_advanced());
+    }
+
+    #[test]
+    fn loading_row_mode_cycle_is_unchanged() {
+        assert_eq!(
+            LoadingRowMode::TopWindow.next(),
+            LoadingRowMode::PureVariables
+        );
+        assert_eq!(
+            LoadingRowMode::PureVariables.next(),
+            LoadingRowMode::SelectedFactor
+        );
+        assert_eq!(
+            LoadingRowMode::SelectedFactor.next(),
+            LoadingRowMode::TopWindow
+        );
     }
 }
