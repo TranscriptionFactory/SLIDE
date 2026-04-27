@@ -4,6 +4,7 @@
 use ndarray::{Array1, Array2, Axis};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use slide_data_io::{standardize, ResponseType as DataResponseType};
 use slide_glmnet::GlmnetFamily;
 pub use slide_knockoff::VotingResult;
@@ -11,7 +12,6 @@ use slide_knockoff::{
     select_short_freq, KnockoffConfig, KnockoffError, KnockoffMethod, KnockoffStatistic,
 };
 use slide_love::{compute_z_map, love, LoveConfig, LoveError, LoveResult, ZMatrixError};
-use sha2::{Digest, Sha256};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use std::collections::HashSet;
 use std::fs::File;
@@ -436,8 +436,7 @@ pub fn find_interaction_lfs(
             let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
             let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
             let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
-            let voting =
-                select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
+            let voting = select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
             let selected_interactors: Vec<_> = voting
                 .selected
                 .iter()
@@ -462,9 +461,8 @@ pub fn find_interaction_lfs(
         for &interactor in &result.selected_interactors {
             interaction_pairs.push((result.marginal_lf, interactor));
             interaction_columns.push(
-                (&z.as_ndarray().column(result.marginal_lf)
-                    * &z.as_ndarray().column(interactor))
-                .to_owned(),
+                (&z.as_ndarray().column(result.marginal_lf) * &z.as_ndarray().column(interactor))
+                    .to_owned(),
             );
         }
         voting_results.push(result);
@@ -538,8 +536,7 @@ fn find_interaction_lfs_with_progress(
             let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
             let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
             let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
-            let voting =
-                select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
+            let voting = select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
             let selected_interactors: Vec<_> = voting
                 .selected
                 .iter()
@@ -572,9 +569,8 @@ fn find_interaction_lfs_with_progress(
         for &interactor in &result.selected_interactors {
             interaction_pairs.push((result.marginal_lf, interactor));
             interaction_columns.push(
-                (&z.as_ndarray().column(result.marginal_lf)
-                    * &z.as_ndarray().column(interactor))
-                .to_owned(),
+                (&z.as_ndarray().column(result.marginal_lf) * &z.as_ndarray().column(interactor))
+                    .to_owned(),
             );
         }
         voting_results.push(result);
@@ -648,7 +644,15 @@ pub fn optimize_slide_with_checkpoint(
     config: &OptimizeSlideConfig,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
     optimize_slide_with_checkpoint_progress(
-        path, x, y, x_path, y_path, delta_grid, lambda_grid, config, None,
+        path,
+        x,
+        y,
+        x_path,
+        y_path,
+        delta_grid,
+        lambda_grid,
+        config,
+        None,
     )
 }
 
@@ -876,12 +880,15 @@ fn run_slide_evaluation(
     let love_result = love(standardized_x, &love_config)?;
 
     // Write live sidecar so the TUI can display LOVE results immediately.
-    write_live_evaluation(live_path, &LiveEvaluation {
-        grid_index,
-        delta,
-        lambda,
-        love: love_result.clone(),
-    });
+    write_live_evaluation(
+        live_path,
+        &LiveEvaluation {
+            grid_index,
+            delta,
+            lambda,
+            love: love_result.clone(),
+        },
+    );
 
     write_progress(progress_path, &mk(Phase::ZMap));
     let z = compute_z_map(

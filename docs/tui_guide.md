@@ -70,5 +70,17 @@ slide-cli submit --script job.sh --checkpoint ckpt.json --config config.yaml
 | Key   | Action                  |
 | ----- | ----------------------- |
 | `q`   | Quit                    |
-| `1-7` | Switch to sub-view      |
+| `1-7` | Switch LOVE sub-view; `6-7` are advanced diagnostics |
+| `m`   | Cycle loading matrix row mode |
 | `Tab` | Cycle between panes     |
+
+## Large LOVE Matrices
+
+The covariance, loading, and group-correlation LOVE views are scaled for large
+runs instead of rendering every cell. When `k` is large, covariance and
+group-correlation views show a compact window around the selected factor. The
+loading matrix can rank rows by strongest loading in the visible factor window,
+show pure variables for the selected factor/window first, or rank by the single
+selected factor. Press `m` in the loading matrix view to cycle row modes. The
+title line reports the active mode, factor window, visible row count, and
+`PgDn` / `PgUp` factor-window navigation.

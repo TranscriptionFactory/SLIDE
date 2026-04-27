@@ -141,17 +141,26 @@ Use `PgDn` / `PgUp` to cycle through factors.
 
 ### LOVE tab
 
-Seven sub-views (cycle with `v` or jump with `1`–`7`):
+Five primary sub-views cycle with `v`. Advanced diagnostics remain available
+with direct keys `6` and `7`.
 
 | Key | Sub-view | What it shows |
 |-----|----------|---------------|
 | `1` | Diagnostics | LOVE convergence metrics, iteration count, parameters |
-| `2` | Factor Covariance (C) | Heatmap of the factor covariance matrix |
-| `3` | Loading Matrix (A) | Heatmap of the loading/assignment matrix |
-| `4` | Group Correlation | Within-group correlation heatmap |
+| `2` | Factor Covariance (C) | Heatmap of the factor covariance matrix; large `k` uses a compact window around the selected factor |
+| `3` | Loading Matrix (A) | Ranked loading heatmap with row modes for top-window, pure-variable-first, or selected-factor ranking |
+| `4` | Group Correlation | Within-group correlation heatmap; large `k` uses a compact window around the selected factor |
 | `5` | Block Correlation | Block-structure correlation heatmap (half-block `▀` rendering, blue-white-red, capped at 300 vars) |
-| `6` | Gamma (Noise Variance) | Gamma distribution of noise variance estimates |
-| `7` | Interaction Network | Adjacency matrix of factor interactions |
+| `6` | Gamma (Noise Variance) | Advanced: gamma distribution of noise variance estimates |
+| `7` | Interaction Network | Advanced: adjacency-style view of factor interactions |
+
+For large LOVE outputs, the matrix-style views prioritize scanability over
+showing every cell. Covariance and group-correlation matrices show a centered
+window around the currently selected factor, while the loading matrix ranks
+features according to its active row mode and caps the displayed rows. Press
+`m` in the loading matrix view to cycle `top-window`, `pure variables`, and
+`selected factor` modes. The title line reports the active mode, factor window,
+visible row count, and `PgDn` / `PgUp` factor-window navigation.
 
 ### Selection tab
 
@@ -177,8 +186,8 @@ bars.
 | `k` / `Up` | Previous run |
 | `PgDn` | Next factor |
 | `PgUp` | Previous factor |
-| `v` | Cycle sub-views (LOVE and Selection tabs) |
-| `1`–`7` | Jump to LOVE sub-view directly |
+| `v` | Cycle primary sub-views (LOVE and Selection tabs) |
+| `1`–`7` | Jump to LOVE sub-view directly (`6` and `7` are advanced) |
 | `r` | Force reload checkpoint from disk |
 | `q` | Quit |
 

@@ -12,8 +12,8 @@ lambda:
 
 spec: 0.1
 fdr: 0.1
-SLIDE_iter: 10
-thresh_fdr: 0.2
+SLIDE_iter: 100
+thresh_fdr: 0.1
 y_factor: true
 do_interacts: true
 pure_homo: true

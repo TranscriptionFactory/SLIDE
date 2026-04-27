@@ -14,8 +14,8 @@ use ndarray::{Array1, Array2};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Alignment, Color, Line, Modifier, Style, Stylize};
-use ratatui::text::Text;
 use ratatui::symbols;
+use ratatui::text::Text;
 use ratatui::widgets::canvas::Canvas;
 use ratatui::widgets::{
     Bar, BarChart, BarGroup, Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table, Tabs,
@@ -27,12 +27,17 @@ use slide_core::{
     OptimizeSlideCheckpoint, OptimizeSlideResult, Phase, ProgressReport, SlideRunResult,
     VotingResult,
 };
-use slide_data_io::{read_feature_matrix, read_response_vector, Delimiter, MatrixReadOptions, ResponseReadOptions};
+use slide_data_io::{
+    read_feature_matrix, read_response_vector, Delimiter, MatrixReadOptions, ResponseReadOptions,
+};
 use slide_types::{Matrix, Scalar, Vector};
 
 use crate::TuiArgs;
 
 const TOP_FEATURE_COUNT: usize = 10;
+const NUMERIC_MATRIX_FACTOR_LIMIT: usize = 8;
+const MATRIX_FACTOR_WINDOW: usize = 12;
+const LOADING_MATRIX_ROW_LIMIT: usize = 24;
 
 pub fn run(args: TuiArgs) -> Result<()> {
     let mut terminal = setup_terminal()?;
@@ -77,10 +82,14 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                         }
                         _ => {}
                     },
+                    KeyCode::Char('m')
+                        if app.tab == Tab::Love
+                            && app.love_sub_view == LoveSubView::LoadingMatrix =>
+                    {
+                        app.loading_row_mode = app.loading_row_mode.next();
+                    }
                     KeyCode::Char(c @ '1'..='7') if app.tab == Tab::Love => {
-                        if let Some(view) =
-                            LoveSubView::from_number(c as u8 - b'0')
-                        {
+                        if let Some(view) = LoveSubView::from_number(c as u8 - b'0') {
                             app.love_sub_view = view;
                         }
                     }
@@ -144,8 +153,8 @@ impl LoveSubView {
             Self::FactorCovariance => Self::LoadingMatrix,
             Self::LoadingMatrix => Self::GroupCorrelation,
             Self::GroupCorrelation => Self::BlockCorrelation,
-            Self::BlockCorrelation => Self::GammaDistribution,
-            Self::GammaDistribution => Self::InteractionNetwork,
+            Self::BlockCorrelation => Self::Diagnostics,
+            Self::GammaDistribution => Self::Diagnostics,
             Self::InteractionNetwork => Self::Diagnostics,
         }
     }
@@ -176,6 +185,31 @@ impl LoveSubView {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoadingRowMode {
+    TopWindow,
+    PureVariables,
+    SelectedFactor,
+}
+
+impl LoadingRowMode {
+    fn next(self) -> Self {
+        match self {
+            Self::TopWindow => Self::PureVariables,
+            Self::PureVariables => Self::SelectedFactor,
+            Self::SelectedFactor => Self::TopWindow,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::TopWindow => "top-window",
+            Self::PureVariables => "pure variables",
+            Self::SelectedFactor => "selected factor",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct App {
     args: TuiArgs,
@@ -187,6 +221,7 @@ struct App {
     progress: Option<ProgressReport>,
     last_poll: Instant,
     love_sub_view: LoveSubView,
+    loading_row_mode: LoadingRowMode,
     selection_sub_view: SelectionSubView,
     config_summary: Option<Vec<String>>,
     /// Synthetic run built from the live evaluation sidecar (LOVE-only).
@@ -218,11 +253,19 @@ impl App {
                 ),
                 format!(
                     "  delta:  [{}]",
-                    cfg.delta.iter().map(|v| format!("{v:.4}")).collect::<Vec<_>>().join(", ")
+                    cfg.delta
+                        .iter()
+                        .map(|v| format!("{v:.4}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 format!(
                     "  lambda: [{}]",
-                    cfg.lambda.iter().map(|v| format!("{v:.4}")).collect::<Vec<_>>().join(", ")
+                    cfg.lambda
+                        .iter()
+                        .map(|v| format!("{v:.4}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             ];
             let mut params = Vec::new();
@@ -262,6 +305,7 @@ impl App {
             progress: None,
             last_poll: Instant::now(),
             love_sub_view: LoveSubView::Diagnostics,
+            loading_row_mode: LoadingRowMode::TopWindow,
             selection_sub_view: SelectionSubView::Marginal,
             config_summary,
             live_run: None,
@@ -277,12 +321,11 @@ impl App {
         match DashboardData::load(&self.args) {
             Ok(data) => {
                 if self.data.is_some() {
-                    self.selected_run = self
-                        .selected_run
-                        .min(data.runs.len().saturating_sub(1));
-                    self.selected_factor = self
-                        .selected_factor
-                        .min(self.current_run().map_or(0, |run| run.love.k.saturating_sub(1)));
+                    self.selected_run = self.selected_run.min(data.runs.len().saturating_sub(1));
+                    self.selected_factor = self.selected_factor.min(
+                        self.current_run()
+                            .map_or(0, |run| run.love.k.saturating_sub(1)),
+                    );
                 } else {
                     self.selected_run = 0;
                     self.selected_factor = 0;
@@ -390,8 +433,10 @@ impl App {
             data.response_type,
         )
         .ok();
-        self.live_group_correlations =
-            Some(compute_group_correlation_matrix(&synthetic, &data.standardized_x));
+        self.live_group_correlations = Some(compute_group_correlation_matrix(
+            &synthetic,
+            &data.standardized_x,
+        ));
         self.live_run = Some(synthetic);
     }
 
@@ -417,9 +462,10 @@ impl App {
         let Some(ref data) = self.data else { return };
         if !data.runs.is_empty() {
             self.selected_run = (self.selected_run + 1) % data.runs.len();
-            self.selected_factor = self
-                .selected_factor
-                .min(self.current_run().map_or(0, |run| run.love.k.saturating_sub(1)));
+            self.selected_factor = self.selected_factor.min(
+                self.current_run()
+                    .map_or(0, |run| run.love.k.saturating_sub(1)),
+            );
         }
     }
 
@@ -431,9 +477,10 @@ impl App {
             } else {
                 self.selected_run - 1
             };
-            self.selected_factor = self
-                .selected_factor
-                .min(self.current_run().map_or(0, |run| run.love.k.saturating_sub(1)));
+            self.selected_factor = self.selected_factor.min(
+                self.current_run()
+                    .map_or(0, |run| run.love.k.saturating_sub(1)),
+            );
         }
     }
 
@@ -515,8 +562,16 @@ impl App {
                 Tab::Love => 2,
                 Tab::Selection => 3,
             })
-            .block(Block::default().borders(Borders::ALL).title("SLIDE Monitor"))
-            .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("SLIDE Monitor"),
+            )
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
         frame.render_widget(titles, layout[0]);
 
         if self.data.is_none() {
@@ -534,13 +589,18 @@ impl App {
             "q quit".into(),
             " | tab switch".dark_gray(),
             " | j/k run".dark_gray(),
-            " | pgup/pgdn factor".dark_gray(),
             " | r reload".dark_gray(),
         ];
-        if self.tab == Tab::Love {
-            footer_spans.push(" | v/1-7 sub-view".dark_gray());
-        } else if self.tab == Tab::Selection {
-            footer_spans.push(" | v sub-view".dark_gray());
+        match self.tab {
+            Tab::Factors => footer_spans.push(" | pgup/pgdn factor".dark_gray()),
+            Tab::Love => {
+                footer_spans.push(" | v/1-5 sub-view | 6-7 advanced".dark_gray());
+                if self.love_sub_view == LoveSubView::LoadingMatrix {
+                    footer_spans.push(" | m row mode".dark_gray());
+                }
+            }
+            Tab::Selection => footer_spans.push(" | v sub-view".dark_gray()),
+            Tab::Runs => {}
         }
         let footer = Line::from(footer_spans);
         frame.render_widget(Paragraph::new(footer), layout[2]);
@@ -559,7 +619,9 @@ impl App {
 
         let mut lines: Vec<Line<'_>> = Vec::new();
 
-        lines.push(Line::from("Checkpoint: ".to_owned() + &self.args.checkpoint.display().to_string()));
+        lines.push(Line::from(
+            "Checkpoint: ".to_owned() + &self.args.checkpoint.display().to_string(),
+        ));
         lines.push(Line::default());
 
         if let Some(ref summary) = self.config_summary {
@@ -597,23 +659,22 @@ impl App {
 
     fn render_runs(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
-            .split(area);
-
-        let left = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(8),
                 Constraint::Min(10),
                 Constraint::Length(8),
+                Constraint::Length(3),
             ])
-            .split(sections[0]);
+            .split(area);
 
-        self.render_summary(frame, left[0]);
-        frame.render_widget(self.run_table(), left[1]);
-        frame.render_widget(self.grid_widget("Score Grid", GridMetric::Score), left[2]);
-        frame.render_widget(self.config_widget(), sections[1]);
+        self.render_summary(frame, sections[0]);
+        frame.render_widget(self.run_table(), sections[1]);
+        frame.render_widget(
+            self.grid_widget("Score Grid", GridMetric::Score),
+            sections[2],
+        );
+        frame.render_widget(self.config_identity_widget(), sections[3]);
     }
 
     fn render_factors(&self, frame: &mut Frame, area: Rect) {
@@ -640,77 +701,61 @@ impl App {
             "no runs available".to_owned()
         };
         frame.render_widget(
-            Paragraph::new(header_text)
-                .block(Block::default().borders(Borders::ALL).title("Factor Browser")),
+            Paragraph::new(header_text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Factor Browser"),
+            ),
             sections[0],
         );
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
+                Constraint::Percentage(18),
+                Constraint::Percentage(32),
+                Constraint::Percentage(32),
+                Constraint::Percentage(18),
             ])
             .split(sections[1]);
 
         frame.render_widget(self.factor_overview_widget(), body[0]);
         frame.render_widget(self.factor_feature_table(FactorMetric::Loading), body[1]);
-        frame.render_widget(self.factor_feature_table(FactorMetric::Association), body[2]);
+        frame.render_widget(
+            self.factor_feature_table(FactorMetric::Association),
+            body[2],
+        );
         self.render_factor_histogram(frame, body[3]);
     }
 
     fn render_love(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(8),
-                Constraint::Length(8),
-                Constraint::Min(10),
-            ])
+            .constraints([Constraint::Length(4), Constraint::Min(10)])
             .split(area);
 
-        let upper = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(sections[0]);
-        let middle = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(sections[1]);
-
-        frame.render_widget(self.grid_widget("Factor Count (k)", GridMetric::FactorCount), upper[0]);
-        frame.render_widget(
-            self.grid_widget("Pure Coverage", GridMetric::PureCoverage),
-            upper[1],
-        );
-        frame.render_widget(
-            self.grid_widget("Mean Group Size", GridMetric::MeanGroupSize),
-            middle[0],
-        );
-        frame.render_widget(self.delta_profile_widget(), middle[1]);
+        frame.render_widget(self.love_metric_strip_widget(), sections[0]);
         match self.love_sub_view {
             LoveSubView::Diagnostics => {
-                frame.render_widget(self.love_detail_widget(), sections[2]);
+                frame.render_widget(self.love_detail_widget(), sections[1]);
             }
             LoveSubView::FactorCovariance => {
-                frame.render_widget(self.factor_covariance_heatmap(), sections[2]);
+                frame.render_widget(self.factor_covariance_heatmap(), sections[1]);
             }
             LoveSubView::LoadingMatrix => {
-                frame.render_widget(self.loading_matrix_heatmap(), sections[2]);
+                frame.render_widget(self.loading_matrix_heatmap(), sections[1]);
             }
             LoveSubView::GroupCorrelation => {
-                frame.render_widget(self.group_correlation_heatmap(), sections[2]);
+                frame.render_widget(self.group_correlation_heatmap(), sections[1]);
             }
             LoveSubView::BlockCorrelation => {
-                self.render_block_correlation_heatmap(frame, sections[2]);
+                self.render_block_correlation_heatmap(frame, sections[1]);
             }
             LoveSubView::GammaDistribution => {
-                frame.render_widget(self.gamma_distribution_widget(), sections[2]);
+                frame.render_widget(self.gamma_distribution_widget(), sections[1]);
             }
             LoveSubView::InteractionNetwork => {
-                frame.render_widget(self.interaction_network_widget(), sections[2]);
+                frame.render_widget(self.interaction_network_widget(), sections[1]);
             }
         }
     }
@@ -797,23 +842,42 @@ impl App {
         }
     }
 
-    fn config_widget(&self) -> Paragraph<'static> {
-        let lines = self
+    fn config_identity_widget(&self) -> Paragraph<'static> {
+        let config = self
             .data()
             .config_lines
             .iter()
-            .map(|line| Line::from(line.clone()))
-            .collect::<Vec<_>>();
-        Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("Config / Identity"))
+            .find(|line| line.starts_with("Config:"))
+            .cloned()
+            .unwrap_or_else(|| "Config: unavailable".to_owned());
+        let grid = self
+            .data()
+            .config_lines
+            .iter()
+            .find(|line| line.starts_with("Grid:"))
+            .cloned()
+            .unwrap_or_else(|| format!("Grid: {} evaluations", self.data().total_grid_points));
+        Paragraph::new(Text::from(vec![Line::from(format!("{config} | {grid}"))]))
+            .block(Block::default().borders(Borders::ALL).title("Identity"))
             .wrap(Wrap { trim: true })
     }
 
     fn run_table(&self) -> Table<'static> {
         let header = Row::new([
-            "sel", "delta", "lambda", "score", "k", "pure", "sig", "interacts",
+            "sel",
+            "delta",
+            "lambda",
+            "score",
+            "k",
+            "pure",
+            "sig",
+            "interacts",
         ])
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
 
         let rows = self.data().runs.iter().enumerate().map(|(index, run)| {
             let selected = if index == self.selected_run { ">" } else { "" };
@@ -843,7 +907,11 @@ impl App {
             ],
         )
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Completed Evaluations"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Completed Evaluations"),
+        )
     }
 
     fn factor_overview_widget(&self) -> Paragraph<'static> {
@@ -865,7 +933,9 @@ impl App {
         );
         let lines = vec![
             Line::from(format!("factor index: {}", factor + 1)),
-            Line::from(format!("pure group size: {pure_group_size} ({signed_pure})")),
+            Line::from(format!(
+                "pure group size: {pure_group_size} ({signed_pure})"
+            )),
             Line::from(format!(
                 "selected as marginal: {}",
                 run.marginal.sig_lfs.contains(&factor)
@@ -896,7 +966,11 @@ impl App {
             )),
         ];
         Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("Factor Overview"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Factor Overview"),
+            )
             .wrap(Wrap { trim: true })
     }
 
@@ -944,8 +1018,11 @@ impl App {
             ],
         )
         .header(
-            Row::new(["#", "feature", "loading", "assoc"])
-                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Row::new(["#", "feature", "loading", "assoc"]).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
         )
         .block(Block::default().borders(Borders::ALL).title(title))
     }
@@ -985,11 +1062,6 @@ impl App {
                             let run = &self.data().runs[index];
                             let value = match metric {
                                 GridMetric::Score => run.score,
-                                GridMetric::FactorCount => run.love.k as Scalar,
-                                GridMetric::PureCoverage => {
-                                    run.love.pure_vec.len() as Scalar / run.love.a.nrows().max(1) as Scalar
-                                }
-                                GridMetric::MeanGroupSize => mean_group_size(run),
                             };
                             let color = if index == self.selected_run {
                                 Color::Cyan
@@ -997,13 +1069,13 @@ impl App {
                                 color_for_metric(metric, value)
                             };
                             Cell::from(format_metric(metric, value)).style(
-                                Style::default()
-                                    .fg(color)
-                                    .add_modifier(if index == self.selected_run {
+                                Style::default().fg(color).add_modifier(
+                                    if index == self.selected_run {
                                         Modifier::BOLD
                                     } else {
                                         Modifier::empty()
-                                    }),
+                                    },
+                                ),
                             )
                         },
                     );
@@ -1013,47 +1085,40 @@ impl App {
         }
 
         let mut widths = vec![Constraint::Length(14)];
-        widths.extend(self.data().lambda_values.iter().map(|_| Constraint::Length(8)));
+        widths.extend(
+            self.data()
+                .lambda_values
+                .iter()
+                .map(|_| Constraint::Length(8)),
+        );
         Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
     }
 
-    fn delta_profile_widget(&self) -> Paragraph<'static> {
-        let Some(best) = self.data().best_run.as_ref() else {
-            return empty_widget("Delta Profile");
+    fn love_metric_strip_widget(&self) -> Paragraph<'static> {
+        let Some(run) = self.current_run() else {
+            return empty_widget("LOVE Summary");
         };
-        let mut lines = Vec::new();
-        for delta in &self.data().delta_values {
-            let mut matching = self
-                .data()
-                .runs
-                .iter()
-                .filter(|run| ScalarKey::new(run.delta) == ScalarKey::new(*delta))
-                .collect::<Vec<_>>();
-            matching.sort_by(|left, right| right.score.total_cmp(&left.score));
-            let line = matching.first().map_or_else(
-                || format!("delta {:.4}: no completed lambda values", delta),
-                |run| {
-                    format!(
-                        "delta {:.4}: best score {:.4}, k {}, pure {}, mean group {:.1}{}",
-                        delta,
-                        run.score,
-                        run.love.k,
-                        run.love.pure_vec.len(),
-                        mean_group_size(run),
-                        if ScalarKey::new(run.delta) == ScalarKey::new(best.delta) {
-                            "  <- selected"
-                        } else {
-                            ""
-                        }
-                    )
-                },
-            );
-            lines.push(Line::from(line));
-        }
-        Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("Delta Profile"))
+        let pure_pct = 100.0 * run.love.pure_vec.len() as f64 / run.love.a.nrows().max(1) as f64;
+        let gamma = run.love.gamma.as_ndarray();
+        let gamma_median = median(gamma.to_vec());
+        let gamma_max = gamma.iter().copied().fold(0.0, Scalar::max);
+        let line = format!(
+            "view: {} | delta {:.4} | lambda {:.4} | score {:.4} | k {} | pure {} ({:.1}%) | group mean {:.1} | gamma med/max {:.4}/{:.4}",
+            self.love_sub_view.label(),
+            run.delta,
+            run.lambda,
+            run.score,
+            run.love.k,
+            run.love.pure_vec.len(),
+            pure_pct,
+            mean_group_size(run),
+            gamma_median,
+            gamma_max,
+        );
+        Paragraph::new(Text::from(vec![Line::from(line)]))
+            .block(Block::default().borders(Borders::ALL).title("LOVE Summary"))
             .wrap(Wrap { trim: true })
     }
 
@@ -1070,7 +1135,7 @@ impl App {
         let singleton_groups = group_sizes.iter().filter(|&&size| size <= 1).count();
         let max_group = group_sizes.iter().copied().max().unwrap_or(0);
         let min_group = group_sizes.iter().copied().min().unwrap_or(0);
-        let lines = vec![
+        let mut lines = vec![
             Line::from(format!(
                 "selected run: delta {:.4}, lambda {:.4}, score {:.4}",
                 run.delta, run.lambda, run.score
@@ -1093,19 +1158,25 @@ impl App {
                 "opt_delta {:.4} | gamma median {:.4} | gamma max {:.4}",
                 run.love.opt_delta,
                 median(run.love.gamma.as_ndarray().to_vec()),
-                run.love.gamma.as_ndarray().iter().copied().fold(0.0, Scalar::max)
+                run.love
+                    .gamma
+                    .as_ndarray()
+                    .iter()
+                    .copied()
+                    .fold(0.0, Scalar::max)
             )),
-            Line::from(
-                "heuristic: high k with many tiny pure groups usually indicates overclustering; compare score gain against group fragmentation."
-                    .to_owned(),
-            ),
-            Line::from(
-                "heuristic: if larger deltas sharply shrink pure coverage while score barely improves, delta is probably too aggressive."
-                    .to_owned(),
-            ),
         ];
+        if singleton_groups > run.love.k / 2 && run.love.k > 2 {
+            lines.push(Line::from(
+                "warning: many singleton pure groups; compare score gain against fragmentation.",
+            ));
+        }
         Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("LOVE Diagnostics"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("LOVE Diagnostics"),
+            )
             .wrap(Wrap { trim: true })
     }
 
@@ -1119,25 +1190,42 @@ impl App {
             return empty_table(title);
         }
         let c = run.love.c.as_ndarray();
+        let factors = visible_factor_indices(k, self.selected_factor);
+        let compact = k > NUMERIC_MATRIX_FACTOR_LIMIT;
+        let truncated = factors.len() < k;
         let mut header = vec![Cell::from("")];
-        for f in 0..k {
+        for &f in &factors {
             header.push(Cell::from(format!("F{}", f + 1)));
         }
-        let rows: Vec<Row> = (0..k)
-            .map(|i| {
+        if truncated {
+            header.push(Cell::from("..."));
+        }
+        let mut rows: Vec<Row> = factors
+            .iter()
+            .map(|&i| {
                 let mut cells = vec![Cell::from(format!("F{}", i + 1))];
-                for j in 0..k {
+                for &j in &factors {
                     let v = c[(i, j)];
-                    cells.push(
-                        Cell::from(format!("{v:.2}"))
-                            .style(Style::default().fg(diverging_color_rgb(v))),
-                    );
+                    cells.push(matrix_value_cell(v, compact));
+                }
+                if truncated {
+                    cells.push(Cell::from("...").style(Style::default().fg(Color::DarkGray)));
                 }
                 Row::new(cells)
             })
             .collect();
+        if truncated {
+            let mut cells = vec![Cell::from("...")];
+            cells.extend((0..factors.len()).map(|_| Cell::from("...")));
+            cells.push(Cell::from(format!("{} more", k - factors.len())));
+            rows.push(Row::new(cells).style(Style::default().fg(Color::DarkGray)));
+        }
         let mut widths = vec![Constraint::Length(4)];
-        widths.extend((0..k).map(|_| Constraint::Length(7)));
+        widths.extend((0..factors.len()).map(|_| Constraint::Length(matrix_cell_width(compact))));
+        if truncated {
+            widths.push(Constraint::Length(8));
+        }
+        let title = matrix_title(title, k, k, factors.len(), factors.len());
         Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -1154,21 +1242,15 @@ impl App {
         }
         let a = run.love.a.as_ndarray();
         let nfeatures = a.nrows();
+        let factors = visible_factor_indices(k, self.selected_factor);
+        let compact = k > NUMERIC_MATRIX_FACTOR_LIMIT;
+        let factors_truncated = factors.len() < k;
 
-        // Collect top 8 variable indices per factor
-        let mut selected_vars = std::collections::BTreeSet::new();
-        for factor in 0..k {
-            let mut indices: Vec<usize> = (0..nfeatures).collect();
-            indices.sort_by(|&i, &j| {
-                a[(j, factor)]
-                    .abs()
-                    .total_cmp(&a[(i, factor)].abs())
-            });
-            for &idx in indices.iter().take(8) {
-                selected_vars.insert(idx);
-            }
-        }
-        let var_indices: Vec<usize> = selected_vars.into_iter().collect();
+        let factor = self.selected_factor.min(k - 1);
+        let row_selection = loading_matrix_rows(run, &factors, factor, self.loading_row_mode);
+        let total_candidate_rows = row_selection.total_candidates;
+        let var_indices = row_selection.indices;
+        let rows_truncated = total_candidate_rows > var_indices.len();
 
         // Check pure membership per variable
         let pure_set: std::collections::HashSet<usize> = run
@@ -1179,45 +1261,69 @@ impl App {
             .collect();
 
         let mut header = vec![Cell::from("var".to_owned())];
-        for f in 0..k {
+        for &f in &factors {
             header.push(Cell::from(format!("F{}", f + 1)));
+        }
+        if factors_truncated {
+            header.push(Cell::from("..."));
         }
         header.push(Cell::from("pure?".to_owned()));
 
         let feature_names = &self.data().feature_names;
-        let rows: Vec<Row> = var_indices
+        let mut rows: Vec<Row> = var_indices
             .iter()
             .map(|&vi| {
                 let name = feature_names
                     .get(vi)
                     .cloned()
                     .unwrap_or_else(|| format!("f{}", vi + 1));
-                let truncated: String = name.chars().take(16).collect();
+                let truncated = truncate_label(&name, 16);
                 let mut cells = vec![Cell::from(truncated)];
-                for f in 0..k {
+                for &f in &factors {
                     let v = a[(vi, f)];
-                    let text = if v.abs() < 0.01 {
-                        ".".to_owned()
-                    } else {
-                        format!("{v:.2}")
-                    };
-                    cells.push(
-                        Cell::from(text).style(Style::default().fg(diverging_color_rgb(v))),
-                    );
+                    cells.push(matrix_value_cell(v, compact));
+                }
+                if factors_truncated {
+                    cells.push(Cell::from("...").style(Style::default().fg(Color::DarkGray)));
                 }
                 let is_pure = if pure_set.contains(&vi) { "Y" } else { "" };
                 cells.push(Cell::from(is_pure.to_owned()));
                 Row::new(cells)
             })
             .collect();
+        if rows_truncated {
+            let mut cells = vec![Cell::from(format!(
+                "... {} more",
+                total_candidate_rows - var_indices.len()
+            ))];
+            cells.extend((0..factors.len()).map(|_| Cell::from("...")));
+            if factors_truncated {
+                cells.push(Cell::from("..."));
+            }
+            cells.push(Cell::from(""));
+            rows.push(Row::new(cells).style(Style::default().fg(Color::DarkGray)));
+        }
 
         let mut widths = vec![Constraint::Length(17)];
-        widths.extend((0..k).map(|_| Constraint::Length(7)));
+        widths.extend((0..factors.len()).map(|_| Constraint::Length(matrix_cell_width(compact))));
+        if factors_truncated {
+            widths.push(Constraint::Length(4));
+        }
         widths.push(Constraint::Length(5));
+        let title = loading_matrix_status_title(
+            title,
+            self.loading_row_mode,
+            &factors,
+            var_indices.len(),
+            nfeatures,
+        );
         Table::new(rows, widths)
             .header(
-                Row::new(header)
-                    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Row::new(header).style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
             )
             .block(Block::default().borders(Borders::ALL).title(title))
     }
@@ -1235,25 +1341,42 @@ impl App {
         let Some(gc) = gc else {
             return empty_table(title);
         };
+        let factors = visible_factor_indices(k, self.selected_factor);
+        let compact = k > NUMERIC_MATRIX_FACTOR_LIMIT;
+        let truncated = factors.len() < k;
         let mut header = vec![Cell::from("")];
-        for f in 0..k {
+        for &f in &factors {
             header.push(Cell::from(format!("F{}", f + 1)));
         }
-        let rows: Vec<Row> = (0..k)
-            .map(|i| {
+        if truncated {
+            header.push(Cell::from("..."));
+        }
+        let mut rows: Vec<Row> = factors
+            .iter()
+            .map(|&i| {
                 let mut cells = vec![Cell::from(format!("F{}", i + 1))];
-                for j in 0..k {
+                for &j in &factors {
                     let v = gc[(i, j)];
-                    cells.push(
-                        Cell::from(format!("{v:.2}"))
-                            .style(Style::default().fg(diverging_color_rgb(v))),
-                    );
+                    cells.push(matrix_value_cell(v, compact));
+                }
+                if truncated {
+                    cells.push(Cell::from("...").style(Style::default().fg(Color::DarkGray)));
                 }
                 Row::new(cells)
             })
             .collect();
+        if truncated {
+            let mut cells = vec![Cell::from("...")];
+            cells.extend((0..factors.len()).map(|_| Cell::from("...")));
+            cells.push(Cell::from(format!("{} more", k - factors.len())));
+            rows.push(Row::new(cells).style(Style::default().fg(Color::DarkGray)));
+        }
         let mut widths = vec![Constraint::Length(4)];
-        widths.extend((0..k).map(|_| Constraint::Length(7)));
+        widths.extend((0..factors.len()).map(|_| Constraint::Length(matrix_cell_width(compact))));
+        if truncated {
+            widths.push(Constraint::Length(8));
+        }
+        let title = matrix_title(title, k, k, factors.len(), factors.len());
         Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(Color::Yellow)))
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -1277,8 +1400,7 @@ impl App {
             return;
         }
         let n_groups = boundaries.len();
-        let boundary_set: std::collections::HashSet<usize> =
-            boundaries.iter().copied().collect();
+        let boundary_set: std::collections::HashSet<usize> = boundaries.iter().copied().collect();
 
         let title_str = format!("Block Correlation ({p} pure vars, {n_groups} groups)");
         let canvas = Canvas::default()
@@ -1344,10 +1466,7 @@ impl App {
         let std = (col.iter().map(|v| (v - mean).powi(2)).sum::<Scalar>() / n as Scalar).sqrt();
 
         let min_val = col.iter().copied().fold(Scalar::INFINITY, Scalar::min);
-        let max_val = col
-            .iter()
-            .copied()
-            .fold(Scalar::NEG_INFINITY, Scalar::max);
+        let max_val = col.iter().copied().fold(Scalar::NEG_INFINITY, Scalar::max);
         let range = (max_val - min_val).max(1.0e-10);
         let nbins = 20usize;
         let mut bins = vec![0u64; nbins];
@@ -1370,10 +1489,15 @@ impl App {
             .constraints([Constraint::Length(2), Constraint::Min(1)])
             .split(area);
 
-        let stats = Paragraph::new(Text::from(vec![
-            Line::from(format!("range: [{:.2}, {:.2}]  max bin: {max_count}", min_val, max_val)),
-        ]))
-        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT).title(title_str));
+        let stats = Paragraph::new(Text::from(vec![Line::from(format!(
+            "range: [{:.2}, {:.2}]  max bin: {max_count}",
+            min_val, max_val
+        ))]))
+        .block(
+            Block::default()
+                .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+                .title(title_str),
+        );
         frame.render_widget(stats, parts[0]);
 
         let sparkline = Sparkline::default()
@@ -1388,13 +1512,11 @@ impl App {
     fn gamma_distribution_widget(&self) -> BarChart<'static> {
         let title = "Gamma (Noise Variance)";
         let Some(run) = self.current_run() else {
-            return BarChart::default()
-                .block(Block::default().borders(Borders::ALL).title(title));
+            return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
         };
         let gamma = run.love.gamma.as_ndarray();
         if gamma.is_empty() {
-            return BarChart::default()
-                .block(Block::default().borders(Borders::ALL).title(title));
+            return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
         }
 
         let feature_names = &self.data().feature_names;
@@ -1492,9 +1614,10 @@ impl App {
             }
 
             lines.push(Line::from(""));
-            lines.push(Line::from(
-                "* = marginal LF".to_owned(),
-            ).style(Style::default().fg(Color::DarkGray)));
+            lines.push(
+                Line::from("* = marginal LF".to_owned())
+                    .style(Style::default().fg(Color::DarkGray)),
+            );
 
             Paragraph::new(Text::from(lines))
                 .block(Block::default().borders(Borders::ALL).title(title))
@@ -1570,15 +1693,33 @@ impl App {
             threshold * 100.0,
             selected.len()
         ))
-        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT).title(title));
+        .block(
+            Block::default()
+                .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+                .title(title),
+        );
         frame.render_widget(header, parts[0]);
 
-        let bars: Vec<Bar<'static>> = (0..k)
-            .map(|i| {
-                let f = freq[i];
+        let mut indexed = (0..k)
+            .map(|i| (i, freq[i], selected.contains(&i)))
+            .collect::<Vec<_>>();
+        indexed.sort_by(|left, right| {
+            right
+                .2
+                .cmp(&left.2)
+                .then_with(|| right.1.total_cmp(&left.1))
+                .then_with(|| left.0.cmp(&right.0))
+        });
+
+        let bars: Vec<Bar<'static>> = indexed
+            .into_iter()
+            .map(|(i, f, is_selected)| {
                 let pct = f * 100.0;
-                let is_selected = selected.contains(&i);
-                let color = if is_selected { Color::Green } else { Color::Red };
+                let color = if is_selected {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                };
                 Bar::default()
                     .value((f * 1000.0) as u64)
                     .label(Line::from(format!("F{}", i + 1)))
@@ -1618,7 +1759,11 @@ impl App {
             "{} marginal LFs with interaction voting | v: toggle marginal/interaction",
             interaction_voting.len()
         ))
-        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT).title(title));
+        .block(
+            Block::default()
+                .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+                .title(title),
+        );
         frame.render_widget(header, parts[0]);
 
         let groups: Vec<BarGroup<'static>> = interaction_voting
@@ -1626,16 +1771,29 @@ impl App {
             .map(|iv| {
                 let freq = iv.voting.selection_frequency.as_ndarray();
                 let selected = &iv.voting.selected;
-                let bars: Vec<Bar<'static>> = iv
+                let mut bars = iv
                     .candidate_lfs
                     .iter()
                     .enumerate()
                     .filter(|(j, _)| *j < freq.len())
-                    .map(|(j, &candidate)| {
-                        let f = freq[j];
+                    .map(|(j, &candidate)| (j, candidate, freq[j], selected.contains(&j)))
+                    .collect::<Vec<_>>();
+                bars.sort_by(|left, right| {
+                    right
+                        .3
+                        .cmp(&left.3)
+                        .then_with(|| right.2.total_cmp(&left.2))
+                        .then_with(|| left.1.cmp(&right.1))
+                });
+                let bars: Vec<Bar<'static>> = bars
+                    .into_iter()
+                    .map(|(_j, candidate, f, is_selected)| {
                         let pct = f * 100.0;
-                        let is_selected = selected.contains(&j);
-                        let color = if is_selected { Color::Green } else { Color::Red };
+                        let color = if is_selected {
+                            Color::Green
+                        } else {
+                            Color::DarkGray
+                        };
                         Bar::default()
                             .value((f * 1000.0) as u64)
                             .label(Line::from(format!("F{}", candidate + 1)))
@@ -1668,17 +1826,12 @@ impl App {
         } else {
             "Factor-Response Correlation"
         };
-        let empty = || {
-            BarChart::default()
-                .block(Block::default().borders(Borders::ALL).title(title))
-        };
+        let empty =
+            || BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
         let Some(run) = self.current_run() else {
             return empty();
         };
-        let corrs = self
-            .data()
-            .factor_response_corr
-            .get(self.selected_run);
+        let corrs = self.data().factor_response_corr.get(self.selected_run);
         let Some(corrs) = corrs else {
             return empty();
         };
@@ -1687,7 +1840,11 @@ impl App {
             return empty();
         }
 
-        let max_abs = corrs.iter().map(|v| v.abs()).fold(0.0_f64, Scalar::max).max(0.01);
+        let max_abs = corrs
+            .iter()
+            .map(|v| v.abs())
+            .fold(0.0_f64, Scalar::max)
+            .max(0.01);
         let is_binary = self.data().response_type == OptimizeResponseType::Binary;
         let scale = 1000.0 / max_abs;
 
@@ -1739,9 +1896,11 @@ enum FactorMetric {
 #[derive(Clone, Copy)]
 enum GridMetric {
     Score,
-    FactorCount,
-    PureCoverage,
-    MeanGroupSize,
+}
+
+struct LoadingRowSelection {
+    indices: Vec<usize>,
+    total_candidates: usize,
 }
 
 fn empty_widget(title: &'static str) -> Paragraph<'static> {
@@ -1799,7 +1958,11 @@ impl DashboardData {
             .x
             .as_deref()
             .or_else(|| checkpoint.x_ref.as_ref().map(|r| r.path.as_path()))
-            .ok_or_else(|| anyhow!("no feature matrix path: supply --x or use a checkpoint with data references"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "no feature matrix path: supply --x or use a checkpoint with data references"
+                )
+            })?;
         let y_path = checkpoint
             .y_ref
             .as_ref()
@@ -1817,7 +1980,9 @@ impl DashboardData {
         let standardized_x = slide_data_io::standardize(&x).matrix;
         let factor_rankings = runs
             .iter()
-            .map(|run| compute_factor_rankings(run, &standardized_x, &y, &feature_names, response_type))
+            .map(|run| {
+                compute_factor_rankings(run, &standardized_x, &y, &feature_names, response_type)
+            })
             .collect::<Result<Vec<_>>>()?;
         let config_lines = build_config_lines(&checkpoint, args.config.as_deref())?;
         let group_correlations = runs
@@ -1840,7 +2005,10 @@ impl DashboardData {
         let lambda_values = dedupe_sorted(&checkpoint.lambda_grid);
         let mut run_lookup = BTreeMap::new();
         for (index, run) in runs.iter().enumerate() {
-            run_lookup.insert((ScalarKey::new(run.delta), ScalarKey::new(run.lambda)), index);
+            run_lookup.insert(
+                (ScalarKey::new(run.delta), ScalarKey::new(run.lambda)),
+                index,
+            );
         }
         Ok(Self {
             total_grid_points: checkpoint.delta_grid.len() * checkpoint.lambda_grid.len(),
@@ -2034,7 +2202,9 @@ fn compute_feature_response_scores(
         .map(|feature_index| {
             let column = x.as_ndarray().column(feature_index).to_owned();
             match response_type {
-                OptimizeResponseType::Continuous => pearson_correlation(&column.to_vec(), &y_values),
+                OptimizeResponseType::Continuous => {
+                    pearson_correlation(&column.to_vec(), &y_values)
+                }
                 OptimizeResponseType::Binary => auc_score(&y_values, &column.to_vec()),
             }
         })
@@ -2172,41 +2342,163 @@ fn color_for_metric(metric: GridMetric, value: Scalar) -> Color {
                 Color::LightRed
             }
         }
-        GridMetric::FactorCount => {
-            if value <= 3.0 {
-                Color::Green
-            } else if value <= 8.0 {
-                Color::Yellow
-            } else {
-                Color::LightRed
-            }
-        }
-        GridMetric::PureCoverage => {
-            if value >= 0.5 {
-                Color::Green
-            } else if value >= 0.25 {
-                Color::Yellow
-            } else {
-                Color::LightRed
-            }
-        }
-        GridMetric::MeanGroupSize => {
-            if value >= 3.0 {
-                Color::Green
-            } else if value >= 2.0 {
-                Color::Yellow
-            } else {
-                Color::LightRed
-            }
-        }
     }
 }
 
 fn format_metric(metric: GridMetric, value: Scalar) -> String {
     match metric {
-        GridMetric::FactorCount => format!("{value:.0}"),
-        _ => format!("{value:.2}"),
+        GridMetric::Score => format!("{value:.2}"),
     }
+}
+
+fn visible_factor_indices(k: usize, selected_factor: usize) -> Vec<usize> {
+    if k <= MATRIX_FACTOR_WINDOW {
+        return (0..k).collect();
+    }
+    let selected = selected_factor.min(k.saturating_sub(1));
+    let half_window = MATRIX_FACTOR_WINDOW / 2;
+    let mut start = selected.saturating_sub(half_window);
+    start = start.min(k - MATRIX_FACTOR_WINDOW);
+    (start..start + MATRIX_FACTOR_WINDOW).collect()
+}
+
+fn loading_matrix_rows(
+    run: &SlideRunResult,
+    visible_factors: &[usize],
+    selected_factor: usize,
+    mode: LoadingRowMode,
+) -> LoadingRowSelection {
+    let a = run.love.a.as_ndarray();
+    let nfeatures = a.nrows();
+    let mut scored_vars = match mode {
+        LoadingRowMode::TopWindow => (0..nfeatures)
+            .map(|feature| {
+                let score = visible_factors
+                    .iter()
+                    .map(|&factor| a[(feature, factor)].abs())
+                    .fold(0.0, Scalar::max);
+                (feature, 0usize, score)
+            })
+            .collect::<Vec<_>>(),
+        LoadingRowMode::SelectedFactor => (0..nfeatures)
+            .map(|feature| (feature, 0usize, a[(feature, selected_factor)].abs()))
+            .collect::<Vec<_>>(),
+        LoadingRowMode::PureVariables => {
+            let mut pure_owner = vec![None; nfeatures];
+            for (factor, group) in run.love.pure_ind.iter().enumerate() {
+                for feature in group.pos.iter().chain(group.neg.iter()).copied() {
+                    if feature < nfeatures {
+                        pure_owner[feature] = Some(factor);
+                    }
+                }
+            }
+            (0..nfeatures)
+                .map(|feature| {
+                    let priority = match pure_owner[feature] {
+                        Some(owner) if owner == selected_factor => 0,
+                        Some(owner) if visible_factors.contains(&owner) => 1,
+                        Some(_) => 2,
+                        None => 3,
+                    };
+                    let score = visible_factors
+                        .iter()
+                        .map(|&factor| a[(feature, factor)].abs())
+                        .fold(0.0, Scalar::max);
+                    (feature, priority, score)
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+
+    scored_vars.sort_by(|left, right| {
+        left.1
+            .cmp(&right.1)
+            .then_with(|| right.2.total_cmp(&left.2))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    scored_vars.truncate(LOADING_MATRIX_ROW_LIMIT);
+
+    LoadingRowSelection {
+        indices: scored_vars
+            .into_iter()
+            .map(|(feature, _priority, _score)| feature)
+            .collect(),
+        total_candidates: nfeatures,
+    }
+}
+
+fn matrix_cell_width(compact: bool) -> u16 {
+    if compact {
+        3
+    } else {
+        7
+    }
+}
+
+fn matrix_value_cell(value: Scalar, compact: bool) -> Cell<'static> {
+    let color = diverging_color_rgb(value);
+    if compact {
+        let label = if value.abs() < 0.05 { "." } else { "█" };
+        Cell::from(label).style(Style::default().fg(color))
+    } else {
+        let label = if value.abs() < 0.01 {
+            ".".to_owned()
+        } else {
+            format!("{value:.2}")
+        };
+        Cell::from(label).style(Style::default().fg(color))
+    }
+}
+
+fn matrix_title(
+    label: &'static str,
+    total_rows: usize,
+    total_cols: usize,
+    shown_rows: usize,
+    shown_cols: usize,
+) -> String {
+    if shown_rows == total_rows && shown_cols == total_cols {
+        label.to_owned()
+    } else {
+        format!("{label} (showing {shown_rows}/{total_rows} x {shown_cols}/{total_cols})")
+    }
+}
+
+fn loading_matrix_status_title(
+    label: &'static str,
+    mode: LoadingRowMode,
+    factors: &[usize],
+    shown_rows: usize,
+    total_rows: usize,
+) -> String {
+    let factor_window = match (factors.first(), factors.last()) {
+        (Some(first), Some(last)) if first == last => format!("F{}", first + 1),
+        (Some(first), Some(last)) => format!("F{}-F{}", first + 1, last + 1),
+        _ => "none".to_owned(),
+    };
+    format!(
+        "{label} | mode: {} | factors {factor_window} | rows {shown_rows}/{total_rows} | PgUp/PgDn shift factor",
+        mode.label()
+    )
+}
+
+fn truncate_label(label: &str, max_chars: usize) -> String {
+    let mut chars = label.chars();
+    let mut truncated = String::new();
+    for _ in 0..max_chars {
+        let Some(ch) = chars.next() else {
+            return label.to_owned();
+        };
+        truncated.push(ch);
+    }
+    if chars.next().is_some() {
+        if max_chars > 2 {
+            truncated.pop();
+            truncated.pop();
+        }
+        truncated.push_str("..");
+    }
+    truncated
 }
 
 fn mean_group_size(run: &SlideRunResult) -> Scalar {
@@ -2342,7 +2634,6 @@ impl Shape for CanvasVLine {
         }
     }
 }
-
 
 fn compute_group_correlation_matrix(
     run: &SlideRunResult,
@@ -2540,13 +2831,7 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
         Phase::Scoring => 4,
     };
 
-    let labels = [
-        "LOVE",
-        "ZMap",
-        "Knockoff",
-        "Interact",
-        "Score",
-    ];
+    let labels = ["LOVE", "ZMap", "Knockoff", "Interact", "Score"];
 
     // For KnockoffInteraction, show progress info in the label
     let interact_label = match current {
@@ -2574,7 +2859,10 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
         } else if i == current_ord {
             (1.0, Style::default().fg(Color::Cyan).bg(Color::DarkGray))
         } else {
-            (0.0, Style::default().fg(Color::DarkGray).bg(Color::DarkGray))
+            (
+                0.0,
+                Style::default().fg(Color::DarkGray).bg(Color::DarkGray),
+            )
         };
         let gauge = Gauge::default()
             .label(display_label.to_owned())

@@ -8,7 +8,9 @@ use serde::Deserialize;
 use slide_core::{
     optimize_slide_with_checkpoint_progress, OptimizeResponseType, OptimizeSlideConfig,
 };
-use slide_data_io::{read_feature_matrix, read_response_vector, MatrixReadOptions, ResponseReadOptions};
+use slide_data_io::{
+    read_feature_matrix, read_response_vector, MatrixReadOptions, ResponseReadOptions,
+};
 use slide_types::Scalar;
 
 #[derive(Debug, Parser, Clone)]
@@ -69,8 +71,8 @@ pub fn run(args: RunArgs) -> Result<()> {
 pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> Result<()> {
     let yaml = std::fs::read_to_string(config)
         .with_context(|| format!("failed to read config file: {}", config.display()))?;
-    let cfg: RunConfig = serde_yaml::from_str(&yaml)
-        .with_context(|| "failed to parse YAML config")?;
+    let cfg: RunConfig =
+        serde_yaml::from_str(&yaml).with_context(|| "failed to parse YAML config")?;
 
     eprintln!("Loading feature matrix from {}", cfg.x_path.display());
     let loaded = read_feature_matrix(&cfg.x_path, &MatrixReadOptions::default())

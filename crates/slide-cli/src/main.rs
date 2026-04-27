@@ -10,7 +10,10 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "slide-cli", about = "Terminal tools for the Rust SLIDE workspace")]
+#[command(
+    name = "slide-cli",
+    about = "Terminal tools for the Rust SLIDE workspace"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
