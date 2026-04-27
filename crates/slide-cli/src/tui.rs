@@ -67,7 +67,9 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    _ if app.feature_search_editing => app.handle_feature_search_key(key.code),
                     KeyCode::Char('q') => break,
+                    KeyCode::Char('/') => app.start_feature_search(),
                     KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => app.next_tab(),
                     KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => app.prev_tab(),
                     KeyCode::Down | KeyCode::Char('j') => app.next_run(),
@@ -239,6 +241,8 @@ struct App {
     love_sub_view: LoveSubView,
     loading_row_mode: LoadingRowMode,
     selection_sub_view: SelectionSubView,
+    feature_search_input: String,
+    feature_search_editing: bool,
     config_summary: Option<Vec<String>>,
     /// Synthetic run built from the live evaluation sidecar (LOVE-only).
     live_run: Option<SlideRunResult>,
@@ -323,6 +327,8 @@ impl App {
             love_sub_view: LoveSubView::Diagnostics,
             loading_row_mode: LoadingRowMode::TopWindow,
             selection_sub_view: SelectionSubView::Marginal,
+            feature_search_input: String::new(),
+            feature_search_editing: false,
             config_summary,
             live_run: None,
             live_factor_rankings: None,
@@ -520,6 +526,57 @@ impl App {
         }
     }
 
+    fn start_feature_search(&mut self) {
+        self.feature_search_editing = true;
+    }
+
+    fn handle_feature_search_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Enter => {
+                self.feature_search_editing = false;
+            }
+            KeyCode::Esc => {
+                self.feature_search_input.clear();
+                self.feature_search_editing = false;
+            }
+            KeyCode::Backspace => {
+                self.feature_search_input.pop();
+            }
+            KeyCode::Char(c) => {
+                if !c.is_control() {
+                    self.feature_search_input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn feature_search_query(&self) -> Option<&str> {
+        let query = self.feature_search_input.trim();
+        if query.is_empty() {
+            None
+        } else {
+            Some(query)
+        }
+    }
+
+    fn feature_search_matches(&self, limit: usize) -> Vec<usize> {
+        let Some(query) = self.feature_search_query() else {
+            return Vec::new();
+        };
+        let Some(data) = self.data.as_ref() else {
+            return Vec::new();
+        };
+        let query = query.to_ascii_lowercase();
+        data.feature_names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| name.to_ascii_lowercase().contains(&query))
+            .map(|(index, _)| index)
+            .take(limit)
+            .collect()
+    }
+
     /// Returns a reference to the loaded dashboard data.
     ///
     /// # Panics
@@ -606,6 +663,7 @@ impl App {
             " | tab switch".dark_gray(),
             " | j/k run".dark_gray(),
             " | r reload".dark_gray(),
+            " | / feat".dark_gray(),
         ];
         match self.tab {
             Tab::Factors => footer_spans.push(" | pgup/pgdn factor".dark_gray()),
@@ -621,6 +679,11 @@ impl App {
             }
             Tab::Selection => footer_spans.push(" | v sub-view".dark_gray()),
             Tab::Runs => {}
+        }
+        if self.feature_search_editing {
+            footer_spans.push(format!(" | find: {}", self.feature_search_input).yellow());
+        } else if let Some(query) = self.feature_search_query() {
+            footer_spans.push(format!(" | feat: {query}").yellow());
         }
         let footer = Line::from(footer_spans);
         frame.render_widget(Paragraph::new(footer), layout[2]);
@@ -731,12 +794,23 @@ impl App {
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(18),
-                Constraint::Percentage(32),
-                Constraint::Percentage(32),
-                Constraint::Percentage(18),
-            ])
+            .constraints(
+                if self.feature_search_query().is_some() || self.feature_search_editing {
+                    [
+                        Constraint::Percentage(32),
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(18),
+                    ]
+                } else {
+                    [
+                        Constraint::Percentage(18),
+                        Constraint::Percentage(32),
+                        Constraint::Percentage(32),
+                        Constraint::Percentage(18),
+                    ]
+                },
+            )
             .split(sections[1]);
 
         frame.render_widget(self.factor_overview_widget(), body[0]);
@@ -953,6 +1027,9 @@ impl App {
     }
 
     fn factor_overview_widget(&self) -> Paragraph<'static> {
+        if self.feature_search_query().is_some() || self.feature_search_editing {
+            return self.feature_search_widget();
+        }
         let Some(run) = self.current_run() else {
             return empty_widget("Factor Overview");
         };
@@ -1008,6 +1085,70 @@ impl App {
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Factor Overview"),
+            )
+            .wrap(Wrap { trim: true })
+    }
+
+    fn feature_search_widget(&self) -> Paragraph<'static> {
+        let Some(run) = self.current_run() else {
+            return empty_widget("Feature Search");
+        };
+        let query = self.feature_search_input.trim();
+        let mut lines = vec![Line::from(format!(
+            "/ feature search: {}{}",
+            query,
+            if self.feature_search_editing { "_" } else { "" }
+        ))];
+        if query.is_empty() {
+            lines.push(Line::from("type a feature name; Enter keeps, Esc clears"));
+            return Paragraph::new(Text::from(lines))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Feature Search"),
+                )
+                .wrap(Wrap { trim: true });
+        }
+
+        let matches = self.feature_search_matches(6);
+        if matches.is_empty() {
+            lines.push(Line::from("no feature names matched"));
+        } else {
+            let a = run.love.a.as_ndarray();
+            let pure_owner = pure_factor_owner(run, a.nrows());
+            for feature in matches {
+                let name = self
+                    .data()
+                    .feature_names
+                    .get(feature)
+                    .cloned()
+                    .unwrap_or_else(|| format!("f{}", feature + 1));
+                let memberships = feature_factor_memberships(run, feature, 5);
+                let lf_text = if memberships.is_empty() {
+                    "no |A| > 0.01".to_owned()
+                } else {
+                    memberships
+                        .iter()
+                        .map(|(factor, loading)| format!("F{}:{loading:.2}", factor + 1))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                let pure_text = pure_owner[feature]
+                    .map_or(String::new(), |factor| format!(" | pure F{}", factor + 1));
+                lines.push(Line::from(format!(
+                    "{} | {}{}",
+                    truncate_label(&name, 20),
+                    lf_text,
+                    pure_text
+                )));
+            }
+        }
+
+        Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Feature Search"),
             )
             .wrap(Wrap { trim: true })
     }
@@ -1295,14 +1436,20 @@ impl App {
         }
         let a = run.love.a.as_ndarray();
         let nfeatures = a.nrows();
-        let factors = visible_factor_indices(k, self.selected_factor);
+        let factor = self.selected_factor.min(k - 1);
+        let search_matches = self.feature_search_matches(LOADING_MATRIX_ROW_LIMIT);
+        let factor_focus = feature_search_focus_factor(run, &search_matches).unwrap_or(factor);
+        let factors = visible_factor_indices(k, factor_focus);
         let compact = k > NUMERIC_MATRIX_FACTOR_LIMIT;
         let factors_truncated = factors.len() < k;
 
-        let factor = self.selected_factor.min(k - 1);
         let row_selection = loading_matrix_rows(run, &factors, factor, self.loading_row_mode);
         let total_candidate_rows = row_selection.total_candidates;
-        let var_indices = row_selection.indices;
+        let var_indices = merge_pinned_rows(
+            row_selection.indices,
+            &search_matches,
+            LOADING_MATRIX_ROW_LIMIT,
+        );
         let rows_truncated = total_candidate_rows > var_indices.len();
 
         // Check pure membership per variable
@@ -1323,6 +1470,10 @@ impl App {
         header.push(Cell::from("pure?".to_owned()));
 
         let feature_names = &self.data().feature_names;
+        let search_match_set = search_matches
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
         let mut rows: Vec<Row> = var_indices
             .iter()
             .map(|&vi| {
@@ -1341,7 +1492,12 @@ impl App {
                 }
                 let is_pure = if pure_set.contains(&vi) { "Y" } else { "" };
                 cells.push(Cell::from(is_pure.to_owned()));
-                Row::new(cells)
+                let row = Row::new(cells);
+                if search_match_set.contains(&vi) {
+                    row.style(Style::default().fg(Color::Cyan))
+                } else {
+                    row
+                }
             })
             .collect();
         if rows_truncated {
@@ -1369,9 +1525,10 @@ impl App {
             &factors,
             var_indices.len(),
             nfeatures,
-            factor,
+            factor_focus,
             compact,
             rows_truncated,
+            self.feature_search_query(),
         );
         Table::new(rows, widths)
             .header(
@@ -2489,6 +2646,76 @@ fn loading_matrix_rows(
     }
 }
 
+fn merge_pinned_rows(mut rows: Vec<usize>, pinned: &[usize], limit: usize) -> Vec<usize> {
+    if pinned.is_empty() {
+        return rows;
+    }
+    let mut merged = Vec::with_capacity(limit);
+    for &feature in pinned {
+        if !merged.contains(&feature) {
+            merged.push(feature);
+        }
+    }
+    for feature in rows.drain(..) {
+        if merged.len() >= limit {
+            break;
+        }
+        if !merged.contains(&feature) {
+            merged.push(feature);
+        }
+    }
+    merged.truncate(limit);
+    merged
+}
+
+fn feature_search_focus_factor(run: &SlideRunResult, features: &[usize]) -> Option<usize> {
+    let a = run.love.a.as_ndarray();
+    features
+        .iter()
+        .filter(|&&feature| feature < a.nrows())
+        .flat_map(|&feature| {
+            (0..run.love.k).map(move |factor| (factor, a[(feature, factor)].abs()))
+        })
+        .max_by(|left, right| left.1.total_cmp(&right.1))
+        .and_then(|(factor, value)| if value > 0.0 { Some(factor) } else { None })
+}
+
+fn feature_factor_memberships(
+    run: &SlideRunResult,
+    feature: usize,
+    limit: usize,
+) -> Vec<(usize, Scalar)> {
+    let a = run.love.a.as_ndarray();
+    if feature >= a.nrows() {
+        return Vec::new();
+    }
+    let mut memberships = (0..run.love.k)
+        .map(|factor| (factor, a[(feature, factor)]))
+        .filter(|(_, loading)| loading.abs() > 1.0e-2)
+        .collect::<Vec<_>>();
+    memberships.sort_by(|left, right| {
+        right
+            .1
+            .abs()
+            .total_cmp(&left.1.abs())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    memberships.truncate(limit);
+    memberships
+}
+
+fn pure_factor_owner(run: &SlideRunResult, nfeatures: usize) -> Vec<Option<usize>> {
+    let mut pure_owner = vec![None; nfeatures];
+    for (factor, group) in run.love.pure_ind.iter().enumerate() {
+        for feature in group.pos.iter().chain(group.neg.iter()).copied() {
+            if feature < nfeatures {
+                pure_owner[feature] = Some(factor);
+            }
+        }
+    }
+    pure_owner
+}
+
 fn matrix_cell_width(compact: bool) -> u16 {
     if compact {
         3
@@ -2544,6 +2771,7 @@ fn loading_matrix_status_title(
     selected_factor: usize,
     compact: bool,
     rows_truncated: bool,
+    feature_search: Option<&str>,
 ) -> String {
     let factor_window = match (factors.first(), factors.last()) {
         (Some(first), Some(last)) if first == last => format!("F{}", first + 1),
@@ -2553,6 +2781,9 @@ fn loading_matrix_status_title(
     let selected = selected_factor + 1;
     let scale = if compact { "symbols" } else { "values" };
     let truncation = if rows_truncated { "trunc" } else { "all" };
+    let search = feature_search.map_or(String::new(), |query| {
+        format!(" | search {}", truncate_label(query, 12))
+    });
     format!(
         "{} | {} | F{selected} | cols {factor_window} | rows {shown_rows}/{total_rows} {truncation} | {scale}",
         match label {
@@ -2560,7 +2791,7 @@ fn loading_matrix_status_title(
             _ => label,
         },
         mode.label()
-    )
+    ) + &search
 }
 
 fn love_view_scope(view: LoveSubView, k: usize, selected_factor: usize) -> String {
