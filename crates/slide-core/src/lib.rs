@@ -274,6 +274,8 @@ pub enum SlideCoreError {
     #[error("checkpoint contents do not match the requested OptimizeSLIDE inputs")]
     CheckpointInputMismatch,
     #[error(transparent)]
+    FinalCv(#[from] slide_cv::CvError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),
@@ -284,7 +286,7 @@ impl PartialEq for SlideCoreError {
         use SlideCoreError::{
             CheckpointEvaluationMismatch, CheckpointInputMismatch, CheckpointTooManyEvaluations,
             DegenerateBinaryScore, DegenerateContinuousScore, DegenerateMarginal, EmptyDeltaGrid,
-            EmptyLambdaGrid, EmptySelectedFeatureSet, FeatureResponseLengthMismatch,
+            EmptyLambdaGrid, EmptySelectedFeatureSet, FeatureResponseLengthMismatch, FinalCv,
             InvalidBinaryResponse, MarginalLfOutOfBounds, NoSuccessfulEvaluations,
             ResponseLengthMismatch,
         };
@@ -372,6 +374,7 @@ impl PartialEq for SlideCoreError {
                     && left_expected_delta == right_expected_delta
                     && left_expected_lambda == right_expected_lambda
             }
+            (FinalCv(left), FinalCv(right)) => left == right,
             (Self::Io(_), Self::Io(_)) | (Self::SerdeJson(_), Self::SerdeJson(_)) => false,
             _ => false,
         }
@@ -850,6 +853,16 @@ fn finalize_checkpoint(
     })
 }
 
+pub fn run_final_slide_cv_for_best(
+    mut result: OptimizeSlideResult,
+    y: &Vector,
+    config: &slide_cv::FinalCvConfig,
+) -> Result<OptimizeSlideResult, SlideCoreError> {
+    let final_cv = slide_cv::run_final_slide_cv(&result.best.z, y, config)?;
+    result.final_cv = Some(final_cv);
+    Ok(result)
+}
+
 fn grid_pairs(delta_grid: &[Scalar], lambda_grid: &[Scalar]) -> Vec<(Scalar, Scalar)> {
     let mut grid = Vec::with_capacity(delta_grid.len() * lambda_grid.len());
     for &delta in delta_grid {
@@ -1188,16 +1201,66 @@ mod tests {
     use super::{
         auc_score, correct_y, find_interaction_lfs, find_standalone_lfs, grid_pairs,
         load_optimize_slide_checkpoint, optimize_slide, optimize_slide_resume,
-        optimize_slide_with_checkpoint, pearson_correlation, save_optimize_slide_checkpoint,
-        score_selected_model, DataReference, InteractionLfSelection, MarginalLfSelectionConfig,
-        OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideConfig, SlideCoreError,
+        optimize_slide_with_checkpoint, pearson_correlation, run_final_slide_cv_for_best,
+        save_optimize_slide_checkpoint, score_selected_model, DataReference,
+        InteractionLfSelection, MarginalLfSelection, MarginalLfSelectionConfig,
+        OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideConfig, OptimizeSlideResult,
+        SlideCoreError, SlideRunResult,
     };
-    use ndarray::{arr1, arr2};
+    use ndarray::{arr1, arr2, Array2};
+    use slide_cv::FinalCvConfig;
     use slide_glmnet::GlmnetFamily;
-    use slide_knockoff::{KnockoffError, KnockoffMethod};
-    use slide_love::{LoveConfig, NonPureMethod};
+    use slide_knockoff::{KnockoffConfig, KnockoffError, KnockoffMethod};
+    use slide_love::{LoveConfig, LoveResult, NonPureMethod};
     use slide_types::{Matrix, Vector};
     use tempfile::tempdir;
+
+    fn empty_voting(ncols: usize) -> super::VotingResult {
+        super::VotingResult {
+            selection_counts: vec![0; ncols],
+            selection_frequency: Vector::from_ndarray(arr1(&vec![0.0; ncols])),
+            selected: Vec::new(),
+            freq_selected: Vec::new(),
+            threshold: 0.0,
+            niter: 0,
+            spec: 0.0,
+            min_selections: 0,
+            selected_list: Vec::new(),
+            optimal_iter: None,
+            stage_one_union: None,
+        }
+    }
+
+    fn dummy_slide_run(z: Matrix, score: f64) -> SlideRunResult {
+        let nrows = z.nrows();
+        let ncols = z.ncols();
+        SlideRunResult {
+            delta: 0.05,
+            lambda: 0.1,
+            love: LoveResult {
+                k: 0,
+                pure_vec: Vec::new(),
+                pure_ind: Vec::new(),
+                group: Vec::new(),
+                a: Matrix::from_ndarray(Array2::zeros((ncols, ncols))),
+                c: Matrix::from_ndarray(Array2::zeros((0, 0))),
+                omega: None,
+                gamma: Vector::from_ndarray(arr1(&vec![0.0; ncols])),
+                opt_delta: 0.05,
+            },
+            z,
+            marginal: MarginalLfSelection {
+                sig_lfs: Vec::new(),
+                voting: empty_voting(ncols),
+            },
+            interactions: InteractionLfSelection {
+                sig_interacts: Vec::new(),
+                interaction_terms: Matrix::from_ndarray(Array2::zeros((nrows, 0))),
+                voting: Vec::new(),
+            },
+            score,
+        }
+    }
 
     #[test]
     fn find_standalone_lfs_returns_selected_latent_factors() {
@@ -1486,6 +1549,51 @@ mod tests {
             .unwrap_or_else(|error| panic!("checkpoint without final_cv should load: {error}"));
 
         assert_eq!(loaded.final_cv, None);
+    }
+
+    #[test]
+    fn run_final_slide_cv_for_best_attaches_optional_result() {
+        let z = Matrix::from_ndarray(arr2(&[
+            [0.0, 1.0],
+            [0.2, 0.8],
+            [0.4, 0.6],
+            [0.6, 0.4],
+            [0.8, 0.2],
+            [1.0, 0.0],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
+        let best = dummy_slide_run(z, 1.0);
+        let result = OptimizeSlideResult {
+            best: best.clone(),
+            evaluations: vec![best],
+            final_cv: None,
+        };
+        let config = FinalCvConfig {
+            repeats: 1,
+            folds: 3,
+            base_seed: 13,
+            include_interactions: false,
+            knockoff: KnockoffConfig {
+                f_size: Some(1),
+                niter: 4,
+                spec: 0.25,
+                nlambda: 20,
+                knockoff_method: KnockoffMethod::Equi,
+                family: GlmnetFamily::Binomial,
+                ..KnockoffConfig::default()
+            },
+            ..FinalCvConfig::default()
+        };
+
+        let result = run_final_slide_cv_for_best(result, &y, &config)
+            .unwrap_or_else(|error| panic!("final CV wrapper should succeed: {error}"));
+        let final_cv = result
+            .final_cv
+            .unwrap_or_else(|| panic!("final CV result should be attached"));
+
+        assert_eq!(final_cv.folds.len(), 3);
+        assert!(final_cv.mean.is_some());
+        assert_eq!(result.evaluations.len(), 1);
     }
 
     #[test]

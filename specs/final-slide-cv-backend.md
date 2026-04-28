@@ -178,11 +178,16 @@ After backend data exists, add the `Performance` tab:
   fold-score aggregation.
 - `slide-core` `OptimizeSlideResult` and `OptimizeSlideCheckpoint` now carry
   `final_cv: Option<FinalCvResult>` with serde defaults so older checkpoints
-  that omit `final_cv` still load. Config plumbing, execution, progress, and
-  CLI/TUI rendering are still pending.
+  that omit `final_cv` still load. `slide-core` also exposes
+  `run_final_slide_cv_for_best`, a minimal wrapper that calls
+  `slide_cv::run_final_slide_cv` on the selected run's precomputed `Z` and
+  attaches the result to `OptimizeSlideResult`. Config plumbing, checkpoint
+  execution/progress, and CLI/TUI rendering are still pending.
 - Verification note: `cargo test -p slide-score`, `cargo test -p slide-cv`,
   `cargo test -p slide-knockoff`, `cargo test -p slide-sdp --lib`, and
-  `cargo test -p slide-core --lib` pass. The previous `slide-cv` compile
+  `cargo test -p slide-core --lib` pass. The core library suite now includes a
+  final-CV wrapper test that attaches optional final-CV output without changing
+  existing evaluations. The previous `slide-cv` compile
   blocker was resolved by replacing Clarabel's `sdp-openblas` feature with
   plain `sdp` plus direct `blas-src`/`lapack-src` OpenBLAS providers, avoiding
   Clarabel's Linux-only `openblas-src/static` optional dependency.
