@@ -167,6 +167,22 @@ After backend data exists, add the `Performance` tab:
 - Confirm no selected factors does not crash prediction.
 - Confirm checkpoint JSON remains backward-compatible when `final_cv` is absent.
 
+## Implementation Progress
+
+- `slide-score` now owns reusable selected-model scoring helpers for marginal
+  LFs plus interaction pairs, including linear/logistic prediction, AUC, and
+  Pearson correlation.
+- `slide-cv` now owns serializable final-CV config/result/prediction types,
+  deterministic repeated k-fold splitting, fold-local Z standardization,
+  marginal/interaction selection on precomputed Z, prediction rows, and
+  fold-score aggregation.
+- Backend plumbing into `slide-core` checkpoints and CLI/TUI rendering is still
+  pending.
+- Verification note: `cargo test -p slide-score` passes. `cargo test -p
+  slide-cv` currently fails before compiling `slide-cv` because
+  `slide-knockoff` pulls Clarabel's static OpenBLAS feature and this
+  environment only has the dynamic OpenBLAS library.
+
 ## Open Decisions
 
 - Whether the default continuous metric should be Pearson correlation, Spearman

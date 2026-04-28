@@ -15,6 +15,10 @@ path = "src/lib.rs"
 
 [dependencies]
 ndarray.workspace = true
+rand.workspace = true
 rayon.workspace = true
+serde.workspace = true
 thiserror.workspace = true
+slide-knockoff = { path = "../slide-knockoff" }
+slide-score = { path = "../slide-score" }
 slide-types = { path = "../slide-types" }

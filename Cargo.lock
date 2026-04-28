@@ -1662,7 +1662,11 @@ name = "slide-cv"
 version = "0.1.0"
 dependencies = [
  "ndarray",
+ "rand",
  "rayon",
+ "serde",
+ "slide-knockoff",
+ "slide-score",
  "slide-types",
  "thiserror 2.0.18",
 ]
