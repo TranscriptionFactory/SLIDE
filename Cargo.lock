@@ -1728,6 +1728,7 @@ name = "slide-score"
 version = "0.1.0"
 dependencies = [
  "ndarray",
+ "serde",
  "slide-types",
  "thiserror 2.0.18",
 ]
