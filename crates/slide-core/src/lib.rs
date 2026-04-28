@@ -89,6 +89,8 @@ pub struct OptimizeSlideConfig {
     pub response_type: OptimizeResponseType,
     pub love: LoveConfig,
     pub knockoff: MarginalLfSelectionConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_cv: Option<slide_cv::FinalCvConfig>,
 }
 
 impl Default for OptimizeSlideConfig {
@@ -98,6 +100,7 @@ impl Default for OptimizeSlideConfig {
             response_type: OptimizeResponseType::Continuous,
             love: LoveConfig::default(),
             knockoff: MarginalLfSelectionConfig::default(),
+            final_cv: None,
         }
     }
 }
@@ -638,6 +641,7 @@ pub fn optimize_slide_resume(
         )?);
     }
 
+    maybe_run_final_cv(&mut checkpoint, y)?;
     finalize_checkpoint(checkpoint)
 }
 
@@ -764,6 +768,10 @@ pub fn optimize_slide_with_checkpoint_progress(
         }
     }
 
+    if maybe_run_final_cv(&mut checkpoint, y)? {
+        save_optimize_slide_checkpoint(path, &checkpoint)?;
+    }
+
     finalize_checkpoint(checkpoint)
 }
 
@@ -851,6 +859,27 @@ fn finalize_checkpoint(
         evaluations: checkpoint.evaluations,
         final_cv: checkpoint.final_cv,
     })
+}
+
+fn maybe_run_final_cv(
+    checkpoint: &mut OptimizeSlideCheckpoint,
+    y: &Vector,
+) -> Result<bool, SlideCoreError> {
+    if checkpoint.final_cv.is_some() {
+        return Ok(false);
+    }
+
+    let Some(config) = checkpoint.config.final_cv.as_ref() else {
+        return Ok(false);
+    };
+
+    let best = checkpoint
+        .evaluations
+        .iter()
+        .max_by(|left, right| left.score.total_cmp(&right.score))
+        .ok_or(SlideCoreError::NoSuccessfulEvaluations)?;
+    checkpoint.final_cv = Some(slide_cv::run_final_slide_cv(&best.z, y, config)?);
+    Ok(true)
 }
 
 pub fn run_final_slide_cv_for_best(
@@ -1481,6 +1510,7 @@ mod tests {
                 family: GlmnetFamily::Gaussian,
                 ..MarginalLfSelectionConfig::default()
             },
+            final_cv: None,
         };
 
         let result = optimize_slide(&x, &y, &[0.05], &[0.1], &config)
@@ -1552,6 +1582,30 @@ mod tests {
     }
 
     #[test]
+    fn optimize_slide_checkpoint_defaults_missing_final_cv_config_to_none() {
+        let checkpoint = OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: vec![0.05],
+            lambda_grid: vec![0.1],
+            config: OptimizeSlideConfig::default(),
+            evaluations: Vec::new(),
+            final_cv: None,
+        };
+        let mut json = serde_json::to_value(&checkpoint)
+            .unwrap_or_else(|error| panic!("checkpoint serialization should succeed: {error}"));
+        json.get_mut("config")
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap_or_else(|| panic!("checkpoint config json should be an object"))
+            .remove("final_cv");
+
+        let loaded: OptimizeSlideCheckpoint = serde_json::from_value(json)
+            .unwrap_or_else(|error| panic!("checkpoint with legacy config should load: {error}"));
+
+        assert_eq!(loaded.config.final_cv, None);
+    }
+
+    #[test]
     fn run_final_slide_cv_for_best_attaches_optional_result() {
         let z = Matrix::from_ndarray(arr2(&[
             [0.0, 1.0],
@@ -1594,6 +1648,149 @@ mod tests {
         assert_eq!(final_cv.folds.len(), 3);
         assert!(final_cv.mean.is_some());
         assert_eq!(result.evaluations.len(), 1);
+    }
+
+    #[test]
+    fn optimize_slide_resume_runs_configured_final_cv_after_best_selection() {
+        let z_low = Matrix::from_ndarray(arr2(&[
+            [1.0, 0.0],
+            [0.8, 0.2],
+            [0.6, 0.4],
+            [0.4, 0.6],
+            [0.2, 0.8],
+            [0.0, 1.0],
+        ]));
+        let z_best = Matrix::from_ndarray(arr2(&[
+            [0.0, 1.0],
+            [0.2, 0.8],
+            [0.4, 0.6],
+            [0.6, 0.4],
+            [0.8, 0.2],
+            [1.0, 0.0],
+        ]));
+        let x = Matrix::from_ndarray(arr2(&[
+            [0.0, 1.0],
+            [0.2, 0.8],
+            [0.4, 0.6],
+            [0.6, 0.4],
+            [0.8, 0.2],
+            [1.0, 0.0],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
+        let mut low = dummy_slide_run(z_low, 0.1);
+        low.delta = 0.05;
+        let mut best = dummy_slide_run(z_best, 0.9);
+        best.delta = 0.10;
+        let checkpoint = OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: vec![0.05, 0.10],
+            lambda_grid: vec![0.1],
+            config: OptimizeSlideConfig {
+                final_cv: Some(FinalCvConfig {
+                    repeats: 1,
+                    folds: 3,
+                    base_seed: 13,
+                    include_interactions: false,
+                    knockoff: KnockoffConfig {
+                        f_size: Some(1),
+                        niter: 4,
+                        spec: 0.25,
+                        nlambda: 20,
+                        knockoff_method: KnockoffMethod::Equi,
+                        family: GlmnetFamily::Binomial,
+                        ..KnockoffConfig::default()
+                    },
+                    ..FinalCvConfig::default()
+                }),
+                ..OptimizeSlideConfig::default()
+            },
+            evaluations: vec![low, best],
+            final_cv: None,
+        };
+
+        let result = optimize_slide_resume(checkpoint, &x, &y)
+            .unwrap_or_else(|error| panic!("resume with final CV should succeed: {error}"));
+
+        assert_eq!(result.best.delta, 0.10);
+        let final_cv = result
+            .final_cv
+            .unwrap_or_else(|| panic!("configured final CV should be attached"));
+        assert_eq!(final_cv.folds.len(), 3);
+        assert!(final_cv.mean.is_some());
+    }
+
+    #[test]
+    fn optimize_slide_with_checkpoint_persists_configured_final_cv() {
+        let z = Matrix::from_ndarray(arr2(&[
+            [0.0, 1.0],
+            [0.2, 0.8],
+            [0.4, 0.6],
+            [0.6, 0.4],
+            [0.8, 0.2],
+            [1.0, 0.0],
+        ]));
+        let x = z.clone();
+        let y = Vector::from_ndarray(arr1(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
+        let config = OptimizeSlideConfig {
+            final_cv: Some(FinalCvConfig {
+                repeats: 1,
+                folds: 3,
+                base_seed: 13,
+                include_interactions: false,
+                knockoff: KnockoffConfig {
+                    f_size: Some(1),
+                    niter: 4,
+                    spec: 0.25,
+                    nlambda: 20,
+                    knockoff_method: KnockoffMethod::Equi,
+                    family: GlmnetFamily::Binomial,
+                    ..KnockoffConfig::default()
+                },
+                ..FinalCvConfig::default()
+            }),
+            ..OptimizeSlideConfig::default()
+        };
+        let checkpoint = OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: vec![0.05],
+            lambda_grid: vec![0.1],
+            config: config.clone(),
+            evaluations: vec![dummy_slide_run(z, 1.0)],
+            final_cv: None,
+        };
+        let dir = tempdir().unwrap_or_else(|error| panic!("tempdir should succeed: {error}"));
+        let x_file = dir.path().join("x.csv");
+        let y_file = dir.path().join("y.csv");
+        std::fs::write(
+            &x_file,
+            "0.0,1.0\n0.2,0.8\n0.4,0.6\n0.6,0.4\n0.8,0.2\n1.0,0.0\n",
+        )
+        .unwrap_or_else(|error| panic!("write x file: {error}"));
+        std::fs::write(&y_file, "0.0\n0.0\n0.0\n1.0\n1.0\n1.0\n")
+            .unwrap_or_else(|error| panic!("write y file: {error}"));
+        let checkpoint_path = dir.path().join("checkpoint.json");
+        save_optimize_slide_checkpoint(&checkpoint_path, &checkpoint)
+            .unwrap_or_else(|error| panic!("save checkpoint should succeed: {error}"));
+
+        let result = optimize_slide_with_checkpoint(
+            &checkpoint_path,
+            &x,
+            &y,
+            &x_file,
+            &y_file,
+            &[0.05],
+            &[0.1],
+            &config,
+        )
+        .unwrap_or_else(|error| panic!("checkpointed final CV should succeed: {error}"));
+        let saved = load_optimize_slide_checkpoint(&checkpoint_path)
+            .unwrap_or_else(|error| panic!("load checkpoint should succeed: {error}"));
+
+        assert!(result.final_cv.is_some());
+        assert!(saved.final_cv.is_some());
+        assert_eq!(saved.final_cv, result.final_cv);
     }
 
     #[test]
@@ -1702,6 +1899,7 @@ mod tests {
                 family: GlmnetFamily::Gaussian,
                 ..MarginalLfSelectionConfig::default()
             },
+            final_cv: None,
         };
         let delta_grid = [0.05];
         let lambda_grid = [0.1];

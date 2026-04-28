@@ -181,13 +181,18 @@ After backend data exists, add the `Performance` tab:
   that omit `final_cv` still load. `slide-core` also exposes
   `run_final_slide_cv_for_best`, a minimal wrapper that calls
   `slide_cv::run_final_slide_cv` on the selected run's precomputed `Z` and
-  attaches the result to `OptimizeSlideResult`. Config plumbing, checkpoint
-  execution/progress, and CLI/TUI rendering are still pending.
+  attaches the result to `OptimizeSlideResult`. `OptimizeSlideConfig` now has
+  optional `final_cv: Option<FinalCvConfig>` plumbing, disabled by default and
+  backward-compatible when absent from legacy checkpoints. When configured,
+  `slide-core` runs final CV after best-run selection and persists the result
+  in checkpointed execution. CLI/TUI rendering remains pending.
 - Verification note: `cargo test -p slide-score`, `cargo test -p slide-cv`,
-  `cargo test -p slide-knockoff`, `cargo test -p slide-sdp --lib`, and
-  `cargo test -p slide-core --lib` pass. The core library suite now includes a
-  final-CV wrapper test that attaches optional final-CV output without changing
-  existing evaluations. The previous `slide-cv` compile
+  `cargo test -p slide-knockoff`, `cargo test -p slide-sdp --lib`,
+  `cargo test -p slide-core --lib`, and `cargo test -p slide-cli` pass. The
+  core library suite now includes final-CV wrapper/config/checkpoint tests that
+  keep final CV optional, preserve legacy missing-field deserialization, attach
+  output after best selection, and persist output to checkpoint JSON. The
+  previous `slide-cv` compile
   blocker was resolved by replacing Clarabel's `sdp-openblas` feature with
   plain `sdp` plus direct `blas-src`/`lapack-src` OpenBLAS providers, avoiding
   Clarabel's Linux-only `openblas-src/static` optional dependency.
