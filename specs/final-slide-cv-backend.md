@@ -186,6 +186,11 @@ After backend data exists, add the `Performance` tab:
   backward-compatible when absent from legacy checkpoints. When configured,
   `slide-core` runs final CV after best-run selection and persists the result
   in checkpointed execution. CLI/TUI rendering remains pending.
+- `slide-cli run` YAML loading now supports an optional nested `cv` block for
+  final CV. `cv.enabled: true` creates `OptimizeSlideConfig::final_cv`; absent
+  `cv` blocks and `cv.enabled: false` leave final CV disabled. The initial
+  user-facing surface maps only `cv.nrep`, `cv.k`, and `cv.eval_type`, while
+  reusing the run's current interaction and knockoff settings.
 - Verification note: `cargo test -p slide-score`, `cargo test -p slide-cv`,
   `cargo test -p slide-knockoff`, `cargo test -p slide-sdp --lib`,
   `cargo test -p slide-core --lib`, and `cargo test -p slide-cli` pass. The
