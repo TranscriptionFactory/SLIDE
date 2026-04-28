@@ -22,3 +22,6 @@ thiserror.workspace = true
 slide-knockoff = { path = "../slide-knockoff" }
 slide-score = { path = "../slide-score" }
 slide-types = { path = "../slide-types" }
+
+[dev-dependencies]
+slide-glmnet = { path = "../slide-glmnet" }

@@ -22,6 +22,7 @@ sha2 = "0.10"
 thiserror.workspace = true
 slide-data-io = { path = "../slide-data-io" }
 slide-glmnet = { path = "../slide-glmnet" }
+slide-cv = { path = "../slide-cv" }
 slide-knockoff = { path = "../slide-knockoff" }
 slide-love = { path = "../slide-love" }
 slide-types = { path = "../slide-types" }

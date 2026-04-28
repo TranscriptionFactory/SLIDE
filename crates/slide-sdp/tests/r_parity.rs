@@ -16,7 +16,7 @@ fn equi_matches_r_knockoff_fixture() {
     let actual =
         create_solve_equi(&sigma).unwrap_or_else(|error| panic!("equi solve failed: {error}"));
 
-    assert_vector_close(actual.as_ndarray(), expected.as_ndarray());
+    assert_vector_close(actual.as_ndarray(), &expected);
     assert_shifted_matrix_feasible(&sigma, actual.as_ndarray());
 }
 
@@ -30,7 +30,7 @@ fn sdp_matches_r_knockoff_fixtures() {
         let actual = create_solve_sdp(&sigma)
             .unwrap_or_else(|error| panic!("sdp solve failed for {name}: {error}"));
 
-        assert_vector_close(actual.as_ndarray(), expected.as_ndarray());
+        assert_vector_close(actual.as_ndarray(), &expected);
         assert_shifted_matrix_feasible(&sigma, actual.as_ndarray());
     }
 }
@@ -45,7 +45,7 @@ fn asdp_matches_r_knockoff_fixtures() {
         let actual = create_solve_asdp(&sigma, max_block_size)
             .unwrap_or_else(|error| panic!("asdp solve failed for {name}: {error}"));
 
-        assert_vector_close(actual.as_ndarray(), expected.as_ndarray());
+        assert_vector_close(actual.as_ndarray(), &expected);
         assert_shifted_matrix_feasible(&sigma, actual.as_ndarray());
     }
 }

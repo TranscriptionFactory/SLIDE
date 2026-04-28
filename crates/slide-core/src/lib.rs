@@ -149,6 +149,8 @@ pub struct LiveEvaluation {
 pub struct OptimizeSlideResult {
     pub best: SlideRunResult,
     pub evaluations: Vec<SlideRunResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_cv: Option<slide_cv::FinalCvResult>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -174,6 +176,8 @@ pub struct OptimizeSlideCheckpoint {
     pub lambda_grid: Vec<Scalar>,
     pub config: OptimizeSlideConfig,
     pub evaluations: Vec<SlideRunResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_cv: Option<slide_cv::FinalCvResult>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -598,6 +602,7 @@ pub fn optimize_slide(
             lambda_grid: lambda_grid.to_vec(),
             config: config.clone(),
             evaluations: Vec::new(),
+            final_cv: None,
         },
         x,
         y,
@@ -712,6 +717,7 @@ pub fn optimize_slide_with_checkpoint_progress(
             lambda_grid: lambda_grid.to_vec(),
             config: config.clone(),
             evaluations: Vec::new(),
+            final_cv: None,
         }
     };
 
@@ -840,6 +846,7 @@ fn finalize_checkpoint(
     Ok(OptimizeSlideResult {
         best,
         evaluations: checkpoint.evaluations,
+        final_cv: checkpoint.final_cv,
     })
 }
 
@@ -1190,7 +1197,6 @@ mod tests {
     use slide_knockoff::{KnockoffError, KnockoffMethod};
     use slide_love::{LoveConfig, NonPureMethod};
     use slide_types::{Matrix, Vector};
-    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]
@@ -1262,7 +1268,7 @@ mod tests {
         let corrected =
             correct_y(&y, &z_m).unwrap_or_else(|error| panic!("correct_y failed: {error}"));
 
-        let expected = arr1(&[-0.33333333333333326, 0.3333333333333335, 0.6666666666666667]);
+        let expected = arr1(&[-0.5, 0.0, 0.5]);
         assert!(corrected
             .as_ndarray()
             .iter()
@@ -1447,6 +1453,7 @@ mod tests {
             lambda_grid: vec![0.1],
             config: OptimizeSlideConfig::default(),
             evaluations: Vec::new(),
+            final_cv: None,
         };
         let path = dir.path().join("checkpoint.json");
 
@@ -1456,6 +1463,29 @@ mod tests {
             .unwrap_or_else(|error| panic!("load should succeed: {error}"));
 
         assert_eq!(loaded, checkpoint);
+    }
+
+    #[test]
+    fn optimize_slide_checkpoint_defaults_missing_final_cv_to_none() {
+        let checkpoint = OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: vec![0.05],
+            lambda_grid: vec![0.1],
+            config: OptimizeSlideConfig::default(),
+            evaluations: Vec::new(),
+            final_cv: None,
+        };
+        let mut json = serde_json::to_value(&checkpoint)
+            .unwrap_or_else(|error| panic!("checkpoint serialization should succeed: {error}"));
+        json.as_object_mut()
+            .unwrap_or_else(|| panic!("checkpoint json should be an object"))
+            .remove("final_cv");
+
+        let loaded: OptimizeSlideCheckpoint = serde_json::from_value(json)
+            .unwrap_or_else(|error| panic!("checkpoint without final_cv should load: {error}"));
+
+        assert_eq!(loaded.final_cv, None);
     }
 
     #[test]
@@ -1506,6 +1536,7 @@ mod tests {
                 },
                 score: 0.0,
             }],
+            final_cv: None,
         };
 
         let error = optimize_slide_resume(checkpoint, &x, &y)

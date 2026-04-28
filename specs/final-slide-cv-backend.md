@@ -176,12 +176,21 @@ After backend data exists, add the `Performance` tab:
   deterministic repeated k-fold splitting, fold-local Z standardization,
   marginal/interaction selection on precomputed Z, prediction rows, and
   fold-score aggregation.
-- Backend plumbing into `slide-core` checkpoints and CLI/TUI rendering is still
-  pending.
-- Verification note: `cargo test -p slide-score` passes. `cargo test -p
-  slide-cv` currently fails before compiling `slide-cv` because
-  `slide-knockoff` pulls Clarabel's static OpenBLAS feature and this
-  environment only has the dynamic OpenBLAS library.
+- `slide-core` `OptimizeSlideResult` and `OptimizeSlideCheckpoint` now carry
+  `final_cv: Option<FinalCvResult>` with serde defaults so older checkpoints
+  that omit `final_cv` still load. Config plumbing, execution, progress, and
+  CLI/TUI rendering are still pending.
+- Verification note: `cargo test -p slide-score`, `cargo test -p slide-cv`,
+  `cargo test -p slide-knockoff`, `cargo test -p slide-sdp --lib`, and
+  `cargo test -p slide-core --lib` pass. The previous `slide-cv` compile
+  blocker was resolved by replacing Clarabel's `sdp-openblas` feature with
+  plain `sdp` plus direct `blas-src`/`lapack-src` OpenBLAS providers, avoiding
+  Clarabel's Linux-only `openblas-src/static` optional dependency.
+- Residual verification note: full `cargo test -p slide-sdp` reaches the SDP
+  R-parity test now, but SDP/ASDP fixture values differ numerically while the
+  feasibility invariant still passes. Full `cargo test -p slide-core` was
+  interrupted after its R-parity fixture ran for several minutes; the core unit
+  suite, including checkpoint compatibility, passes.
 
 ## Open Decisions
 

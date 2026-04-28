@@ -59,10 +59,10 @@
 - [~] 7.6 End-to-end pipeline tests against R — partial: `crates/slide-core/tests/r_parity.rs` checks an HIV fixture, but acceptance remains approximate rather than full R parity
 
 ## 8. Cross-Validation & Scoring
-- [~] 8.1 Repeated k-fold CV (SLIDEcv) — partial: `slide-cv` now defines serializable final-CV config/result/prediction types, deterministic repeated k-fold split generation, fold-local standardization, marginal/interaction selection on precomputed Z, score aggregation, and focused unit tests; `cargo test -p slide-cv` is blocked by the existing Clarabel/openblas static-link environment issue before crate compilation
+- [~] 8.1 Repeated k-fold CV (SLIDEcv) — partial: `slide-cv` now defines serializable final-CV config/result/prediction types, deterministic repeated k-fold split generation, fold-local standardization, marginal/interaction selection on precomputed Z, score aggregation, and focused unit tests; `cargo test -p slide-cv` passes after narrowing Clarabel SDP features away from the static OpenBLAS shortcut
 - [~] 8.2 Estimator (logistic/linear regression scoring) — partial: `slide-score` now provides reusable selected-LF/interaction feature construction, linear/logistic prediction, AUC, and Pearson scoring with unit coverage; `slide-core` still has its private legacy scorer
 - [ ] 8.3 Control comparison (random LF scoring)
-- [~] 8.4 CV correctness tests — partial: added focused `slide-cv` tests for deterministic stratified folds, binary AUC aggregation, continuous correlation aggregation, and empty selected-feature handling; execution is blocked by the current static OpenBLAS link issue in the knockoff dependency path
+- [~] 8.4 CV correctness tests — partial: added focused `slide-cv` tests for deterministic stratified folds, binary AUC aggregation, continuous correlation aggregation, and empty selected-feature handling; `slide-core` checkpoints/results now carry optional `final_cv` with a backward-compatible missing-field test
 
 ## 9. Performance & Polish
 - [x] 9.1 Rayon parallelization for knockoff iterations — done: knockoff voting, SDP block solving, LOVE CV repeats, and interaction scans use rayon
