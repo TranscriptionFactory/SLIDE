@@ -1634,7 +1634,9 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "slide-core",
+ "slide-cv",
  "slide-data-io",
+ "slide-score",
  "slide-types",
 ]
 
