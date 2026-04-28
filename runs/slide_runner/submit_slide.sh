@@ -50,7 +50,8 @@ _resolve_project_dir() {
     return 1
 }
 
-PROJECT_DIR="$(_resolve_project_dir)"
+PROJECT_DIR=/ix/djishnu/Aaron/1_general_use/SLIDE_py
+#"$(_resolve_project_dir)"
 
 # ── Locate pixi ──────────────────────────────────────────────────────────────
 PIXI="${PIXI:-}"
@@ -89,7 +90,7 @@ resolve_path() {
     if [[ "$raw" == /* ]]; then
         echo "$raw"
     else
-        echo "${CONFIG_DIR}/${raw}"
+        echo "$(cd "${CONFIG_DIR}" && realpath -m "$raw")"
     fi
 }
 
@@ -134,11 +135,15 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     # Backends as a space-separated list; each task indexes by SLURM_ARRAY_TASK_ID.
     BACKENDS_LIST=$(yaml_query "' '.join(cfg['slide']['backends'])")
 
+    # Pre-compute pixi activation so SLURM tasks never call pixi (avoids lockfile).
+    PIXI_ACTIVATE=$("$PIXI" shell-hook -e dev --manifest-path "${PROJECT_DIR}/pixi.toml")
+
     # Pass resolved paths to SLURM tasks
     export SUBMIT_SCRIPT_DIR="$SCRIPT_DIR"
     export PIXI
     export SLIDE_BACKENDS="$BACKENDS_LIST"
     export SLIDE_OUT_BASE="$LOG_DIR"
+    export PIXI_ACTIVATE
 
     SLIDE_JOB=$(sbatch --parsable --export=ALL "${SBATCH_ARGS[@]}" \
         "${BASH_SOURCE[0]}" "$CONFIG")
@@ -170,17 +175,11 @@ echo "  project: ${PROJECT_DIR}"
 echo "  pixi:    ${PIXI}"
 echo "  output:  ${OUTPUT_DIR}/${BACKEND}/"
 
-# Stagger pixi starts to avoid lockfile contention when array tasks launch
-# simultaneously.  Each task waits (task_id * 30) seconds.
-STAGGER=$((SLURM_ARRAY_TASK_ID * 30))
-if [[ $STAGGER -gt 0 ]]; then
-    echo "  Staggering pixi start by ${STAGGER}s (task ${SLURM_ARRAY_TASK_ID})..."
-    sleep "$STAGGER"
-fi
+# Activate pixi env using pre-computed activation from login node (no pixi call needed).
+eval "$PIXI_ACTIVATE"
 echo ""
 
-"$PIXI" run -e dev --manifest-path "${PROJECT_DIR}/pixi.toml" \
-    python "${SCRIPT_DIR}/run_slide.py" \
+python "${SCRIPT_DIR}/run_slide.py" \
     --config "${CONFIG}" \
     --backend "${BACKEND}" \
     --out-dir "${OUTPUT_DIR}" \

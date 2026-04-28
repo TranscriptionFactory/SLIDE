@@ -20,6 +20,11 @@ networkx = ">=3.0"
 matplotlib = ">=3.7"
 seaborn = ">=0.12"
 pyyaml = ">=6.0"
+meson = ">=1.11.1,<2"
+ninja = ">=1.13.2,<2"
+# Fortran compiler toolchain for building vendored glmnet (same Fortran code as R's glmnet)
+gfortran = "*"
+gcc = "*"
 
 [pypi-dependencies]
 loveslide = { path = ".", editable = true }
@@ -67,3 +72,19 @@ test = "pytest tests/ -v"
 lint = "ruff check src/"
 fmt = "ruff format src/"
 check = "python -c \"import loveslide; print('loveslide', loveslide.__version__ if hasattr(loveslide, '__version__') else 'OK')\""
+# Build the vendored Fortran glmnet extension (same glmnet5.f90 as R's glmnet package).
+# This provides ~5-10x speedup over sklearn fallback and identical tie-breaking to R.
+# If this fails, the package still works (falls back to sklearn's lasso_path).
+build-glmnet = """python -c "
+import subprocess, sys, os, shutil
+src = 'src/loveslide/knockoff/_vendor/glmnet'
+bdir = os.path.join(src, 'builddir')
+if os.path.exists(bdir): shutil.rmtree(bdir)
+subprocess.check_call(['meson', 'setup', bdir, src])
+subprocess.check_call(['ninja', '-C', bdir])
+import glob
+for so in glob.glob(os.path.join(bdir, '_glmnet*.so')) + glob.glob(os.path.join(bdir, '_glmnet*.pyd')):
+    shutil.copy2(so, src)
+    print(f'Installed: {os.path.basename(so)}')
+"
+"""
