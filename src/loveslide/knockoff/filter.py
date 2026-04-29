@@ -302,8 +302,8 @@ def _run_single_knockoff(args):
     """
     X, y, knockoffs, statistic, fdr, offset, seed = args
 
-    # Set random seed for this iteration
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
 
     try:
         result = knockoff_filter(
@@ -445,10 +445,6 @@ def _prepare_knockoff_cache(
 
     if method not in ['asdp', 'sdp', 'equi']:
         raise ValueError(f"method must be 'asdp', 'sdp', or 'equi', got '{method}'")
-
-    # Do not use ASDP unless p > 500
-    if p <= 500 and method == 'asdp':
-        method = 'sdp'
 
     # Auto-enable shrinkage for n <= 1.25*p (R-style regularization)
     # Skip this check if match_r=True (R doesn't auto-shrink based on n/p ratio)
@@ -613,7 +609,8 @@ def _sample_knockoffs_from_cache(
 
 def _cached_iteration(X, y, cache, statistic, fdr, offset, seed):
     """Single cached knockoff iteration for parallel execution."""
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
     Xk = _sample_knockoffs_from_cache(X, cache)
     W = statistic(X, Xk, y)
     t = knockoff_threshold(W, fdr=fdr, offset=offset)
@@ -734,7 +731,7 @@ def knockoff_filter_voting(
     niter: int = 1000,
     spec: float = 0.1,
     n_jobs: int = 1,
-    base_seed: int = 42,
+    base_seed: Optional[int] = None,
     verbose: bool = False,
     match_r: bool = True,
     use_cache: bool = True,
@@ -771,8 +768,9 @@ def knockoff_filter_voting(
         Matches R SLIDE default.
     n_jobs : int, default=1
         Number of parallel jobs. Use -1 for all available cores.
-    base_seed : int, default=42
-        Base seed for reproducibility. Each iteration uses base_seed + i.
+    base_seed : int, optional
+        Base seed for reproducibility. When omitted, iterations do not reset
+        NumPy's RNG, matching R SLIDE's unseeded knockoff loop more closely.
     verbose : bool, default=False
         Print progress information.
     match_r : bool, default=True
@@ -908,7 +906,8 @@ def knockoff_filter_voting(
             from joblib import Parallel, delayed
             results_list = Parallel(n_jobs=n_jobs, backend="loky")(
                 delayed(_cached_iteration)(
-                    X, y, cache, statistic, fdr, offset, base_seed + i
+                    X, y, cache, statistic, fdr, offset,
+                    None if base_seed is None else base_seed + i
                 )
                 for i in range(niter)
             )
@@ -921,8 +920,9 @@ def knockoff_filter_voting(
                 print(f"  Completed {niter}/{niter} iterations ({n_jobs} parallel jobs)")
         else:
             for i in range(niter):
-                seed = base_seed + i
-                np.random.seed(seed)
+                seed = None if base_seed is None else base_seed + i
+                if seed is not None:
+                    np.random.seed(seed)
 
                 try:
                     # Only random sampling varies per iteration
@@ -950,8 +950,9 @@ def knockoff_filter_voting(
     elif n_jobs == 1:
         # Sequential uncached path for custom knockoffs
         for i in range(niter):
-            seed = base_seed + i
-            np.random.seed(seed)
+            seed = None if base_seed is None else base_seed + i
+            if seed is not None:
+                np.random.seed(seed)
 
             try:
                 result = knockoff_filter(
@@ -994,7 +995,8 @@ def knockoff_filter_voting(
 
         # Prepare arguments
         args_list = [
-            (X, y, None, None, fdr, offset, base_seed + i)
+            (X, y, None, None, fdr, offset,
+             None if base_seed is None else base_seed + i)
             for i in range(niter)
         ]
 
@@ -1061,7 +1063,7 @@ def knockoff_filter_voting_slide(
     spec: float = 0.1,
     f_size: int = 100,
     n_jobs: int = 1,
-    base_seed: int = 42,
+    base_seed: Optional[int] = None,
     verbose: bool = False,
     match_r: bool = True,
     use_cache: bool = True,
@@ -1103,8 +1105,9 @@ def knockoff_filter_voting_slide(
         This matches R SLIDE's selectShortFreq() default behavior.
     n_jobs : int, default=1
         Number of parallel jobs. Use -1 for all available cores.
-    base_seed : int, default=42
-        Base seed for reproducibility.
+    base_seed : int, optional
+        Base seed for reproducibility. When omitted, iterations do not reset
+        NumPy's RNG, matching R SLIDE's unseeded knockoff loop more closely.
     verbose : bool, default=False
         Print progress information.
     match_r : bool, default=True

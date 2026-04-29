@@ -375,8 +375,6 @@ class Knockoffs:
 
         # Solve SDP once (OPTIMIZATION: this is expensive and doesn't change between iterations)
         p = z.shape[1]
-        if p <= 500 and method == "asdp":
-            method = "sdp"  # Use full SDP for small problems
 
         logger.info(
             f"Pre-computing SDP solution for {p} features using method={method}"
@@ -711,7 +709,7 @@ class Knockoffs:
         in knockoff matrix generation, not the voting logic.
         """
         # Route python and r_knockoffs through select_short_freq_slide for
-        # consistent SLIDE methodology (findOptIter, deterministic seeding,
+        # consistent SLIDE methodology (findOptIter,
         # feature chunking, two-stage screening).
         if backend in ("r_knockoffs", "python"):
             result = Knockoffs.select_short_freq_slide(
