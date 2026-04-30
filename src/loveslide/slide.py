@@ -92,58 +92,72 @@ class SLIDE:
     @staticmethod
     def get_LF_genes(A, lf, X, y, lf_thresh=0.05, top_feats=20, outpath=None):
         """
-        Returns a dictionary of lists, categorizing genes into positive and negative based on their loadings.
+        Select the top features associated with a latent factor.
+
+        Matches the R SLIDE approach: top N/2 by absolute loading, then
+        top N/2 by absolute correlation from the remaining features.
 
         Parameters:
-        - lf: The name of the latent factor (column name in self.latent_factors).
-        - lf_thresh: The threshold for the latent factor loadings.
+        - A: Loading matrix (features x latent factors).
+        - lf: Column name in A for the latent factor.
+        - X: Feature data matrix.
+        - y: Response variable.
+        - top_feats: Total number of features to return (split between loading and correlation).
+        - outpath: Optional directory to save per-LF feature list.
 
         Returns:
-        - Dictionary with 'positive' and 'negative' keys, containing lists of indices (gene names) for each.
+        - DataFrame with 'loading', 'AUC', 'corr', 'color' columns for selected features.
         """
 
         if lf not in A.columns:
             raise ValueError(f"Latent factor {lf} not found in A matrix")
 
-        all_genes = A.loc[A[lf].abs() > 1e-2, lf]
-        scorer = Estimator(model="auto", scaler="standard")
+        # Get ALL non-zero features (no threshold — matches R behavior)
+        all_genes = A.loc[A[lf].abs() > 0, lf]
 
+        # Compute correlation for all candidates (cheap)
         lf_info = pd.DataFrame(
             index=all_genes.index, columns=["loading", "AUC", "corr", "color"]
         )
-
         lf_info["loading"] = all_genes
-
-        lf_info["AUC"] = np.array(
-            [scorer.evaluate(X[x], y, n_iters=3) for x in all_genes.index]
-        ).mean(axis=1)  # (.45 to .55)
         lf_info["corr"] = [
             np.corrcoef(X[x].values.flatten(), y.values.flatten())[0, 1]
             for x in all_genes.index
-        ]  # get the off diag element
+        ]
 
-        color = np.where(
-            lf_info["corr"] > 0, "red", np.where(lf_info["corr"] == 0, "gray", "blue")
+        # Select top N/2 by absolute loading
+        top_loading = lf_info.sort_values(by="loading", key=abs, ascending=False).head(
+            top_feats // 2
         )
-        color = np.where(lf_info["AUC"] > 0.45, color, "gray")
-        lf_info["color"] = color
 
-        lf_info = lf_info.sort_values(by="loading", key=abs, ascending=False)
+        # Select top N/2 by absolute correlation from remaining features
+        remaining = lf_info.drop(top_loading.index)
+        top_corr = remaining.sort_values(by="corr", key=abs, ascending=False).head(
+            top_feats // 2
+        )
+
+        # Tag groups for plot ordering (loading at bottom, corr on top)
+        top_loading = top_loading.copy()
+        top_corr = top_corr.copy()
+        top_loading["group"] = "loading"
+        top_corr["group"] = "corr"
+
+        # Combine and compute AUC only for selected features (expensive)
+        selected = pd.concat([top_loading, top_corr], axis=0)
+        scorer = Estimator(model="auto", scaler="standard")
+        selected["AUC"] = np.array(
+            [scorer.evaluate(X[x], y, n_iters=3) for x in selected.index]
+        ).mean(axis=1)
+
+        # Color: red = positive corr, blue = negative corr (matches R)
+        selected["color"] = np.where(selected["corr"] > 0, "red", "blue")
+
+        selected = selected.sort_values(by="loading", key=abs, ascending=False)
 
         if outpath is not None:
-            # Save gene names and their loading values
-            lf_info.to_csv(os.path.join(outpath, f"feature_list_{lf}.csv"), sep="\t")
+            selected.to_csv(os.path.join(outpath, f"feature_list_{lf}.csv"), sep="\t")
 
-        lf_info = lf_info[lf_info["loading"].abs() > lf_thresh]
-
-        top_auc = lf_info.sort_values(by="AUC", ascending=False).head(top_feats // 2)
-        top_loading = (
-            lf_info.drop(top_auc.index)
-            .sort_values(by="loading", key=abs, ascending=False)
-            .head(top_feats // 2)
-        )
-
-        return pd.concat([top_auc, top_loading], axis=0)
+        return selected
 
     def save_params(self, outpath, scores):
         """

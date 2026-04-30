@@ -33,20 +33,29 @@ class Plotter:
         colors = {'red': '#FF4B4B', 'gray': '#808080', 'blue': '#4B4BFF'}
         plt.style.use('default')
 
-        # Determine plot dimensions based on number of factors and genes
+        # Determine plot dimensions — match R: width = 1.5 * n_lfs, height = 7
         n_lfs = len(lfs)
         max_genes = max(len(df) for df in lfs.values())
-        
-        fig_width = min(20, max(20, n_lfs * 2.5)) + 2  # extra space for title
-        fig_height = min(30, max(6, max_genes * 0.6))  # scaled height for readability
+
+        fig_width = max(4, n_lfs * 2.5)
+        fig_height = max(5, max_genes * 0.4 + 1)
 
         fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=300)
         fig.patch.set_facecolor('white')
 
         # Plot each latent factor
         for i, (lf_name, lr_info) in enumerate(lfs.items()):
-            # Sort genes by loading ascending (so highest loadings at top)
-            lr_info = lr_info.sort_values(by='loading', ascending=True)
+            # R ordering: corr-selected at bottom, loading-selected at top.
+            # Within each group, ascending so highest value ends up at the
+            # extreme (top for loading, just-below-loading for corr).
+            if 'group' in lr_info.columns:
+                corr_group = lr_info[lr_info['group'] == 'corr'].sort_values(
+                    by='corr', key=abs, ascending=True)
+                loading_group = lr_info[lr_info['group'] == 'loading'].sort_values(
+                    by='loading', key=abs, ascending=True)
+                lr_info = pd.concat([corr_group, loading_group])
+            else:
+                lr_info = lr_info.sort_values(by='loading', key=abs, ascending=True)
             n_genes = len(lr_info)
 
             # Define vertical spacing

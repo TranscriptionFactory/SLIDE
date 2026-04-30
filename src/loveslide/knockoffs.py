@@ -332,29 +332,26 @@ class Knockoffs:
             Indices of selected variables.
         """
         # Map fstat names to functions
-        # GLMNet-based (uses vendored Fortran glmnet, faster)
-        # sklearn-based alternatives available for comparison
-        #
-        # Note: use_sklearn=True provides better R compatibility for W-statistics
-        # The W-statistic comparison showed higher correlation with R when using
-        # sklearn's lasso_path instead of the vendored Fortran glmnet.
+        # GLMNet-based (uses vendored Fortran glmnet — same glmnet5.f90 as R)
+        # This is the default for best R compatibility since it's the same
+        # coordinate descent algorithm R's knockoff package uses.
         fstat_map = {
-            # GLMNet-based (default) - use partial to pass use_sklearn for R compatibility
-            # Only glmnet_lambdasmax and glmnet_lambdadiff support use_sklearn parameter
-            "glmnet_lambdasmax": partial(stat_glmnet_lambdasmax, use_sklearn=True),
-            "glmnet_lambdadiff": partial(stat_glmnet_lambdadiff, use_sklearn=True),
-            "glmnet_coefdiff": stat_glmnet_coefdiff,  # Does not support use_sklearn
+            # GLMNet-based (default) - Fortran glmnet for R compatibility
+            "glmnet_lambdasmax": stat_glmnet_lambdasmax,
+            "glmnet_lambdadiff": stat_glmnet_lambdadiff,
+            "glmnet_coefdiff": stat_glmnet_coefdiff,
             # Lasso-based (wrapper around glmnet with family='gaussian')
             "lasso_lambdasmax": stat_lasso_lambdasmax,
             "lasso_lambdadiff": stat_lasso_lambdadiff,
             "lasso_coefdiff": stat_lasso_coefdiff,
-            # sklearn-based alternatives
-            "sqrt_lasso": stat_sqrt_lasso,  # Uses sklearn's lasso_path
-            "stability": stat_stability_selection,  # Uses sklearn's LassoCV
-            "random_forest": stat_random_forest,  # Uses sklearn's RandomForest
+            # sklearn-based alternatives (use_sklearn=True to force sklearn path)
+            "sklearn_lambdasmax": partial(stat_glmnet_lambdasmax, use_sklearn=True),
+            "sqrt_lasso": stat_sqrt_lasso,
+            "stability": stat_stability_selection,
+            "random_forest": stat_random_forest,
         }
         statistic = fstat_map.get(
-            fstat, partial(stat_glmnet_lambdasmax, use_sklearn=True)
+            fstat, stat_glmnet_lambdasmax
         )
 
         z = np.asarray(z, dtype=np.float64)
@@ -809,7 +806,7 @@ class Knockoffs:
         n_jobs=-1,
         backend="python",
         verbose=False,
-        slide_selection=False,
+        slide_selection=True,
         **kwargs,
     ) -> VotingResult:
         """

@@ -319,6 +319,88 @@ def _run_single_knockoff(args):
         return []
 
 
+def _cov_shrink_corpcor(X: np.ndarray) -> np.ndarray:
+    """Shrink covariance matrix using the Schäfer-Strimmer (2005) method.
+
+    Reimplements R's ``corpcor::cov.shrink`` in pure Python/NumPy.
+    The algorithm separately shrinks variances (toward the median variance)
+    and correlations (toward the identity matrix), then recombines them.
+
+    Parameters
+    ----------
+    X : np.ndarray of shape (n, p)
+        Data matrix (observations x variables).
+
+    Returns
+    -------
+    np.ndarray of shape (p, p)
+        Shrinkage-regularised covariance matrix.
+    """
+    n, p = X.shape
+    # Uniform weights (unweighted case)
+    w = np.full(n, 1.0 / n)
+    w2 = np.sum(w ** 2)          # 1/n
+    h1 = 1.0 / (1.0 - w2)       # n/(n-1)
+    h1w2 = w2 / (1.0 - w2)      # 1/(n-1)
+
+    # ── Weighted moments (mean, variance) ──────────────────────────────
+    wm = np.sum(w[:, None] * X, axis=0)                    # weighted mean
+    wv = h1 * (np.sum(w[:, None] * X ** 2, axis=0) - wm ** 2)  # weighted var
+    wv = np.maximum(wv, 0.0)
+
+    # ── Estimate lambda_var (variance shrinkage intensity) ─────────────
+    xc = X - wm[None, :]   # centred
+    zz = xc ** 2
+    q1 = np.sum(w[:, None] * zz, axis=0)
+    q2 = np.sum(w[:, None] * zz ** 2, axis=0) - q1 ** 2
+    target_var = np.median(wv)
+    num_var = np.sum(q2)
+    den_var = np.sum((q1 - target_var / h1) ** 2)
+    lambda_var = max(0.0, min(1.0, num_var / den_var * h1w2)) if den_var != 0 else 1.0
+
+    # Shrunk variances
+    vs = lambda_var * target_var + (1.0 - lambda_var) * wv
+    sc_shrunk = np.sqrt(vs)
+
+    # ── Estimate lambda (correlation shrinkage intensity) ──────────────
+    # IMPORTANT: R's estimate.lambda standardises with the ORIGINAL sample sd,
+    # not the shrunk sd.  The variance and correlation shrinkage are independent.
+    sc_orig = np.sqrt(wv)
+    sc_safe = np.where(sc_orig > 0, sc_orig, 1.0)
+    xs = xc / sc_safe[None, :]                      # standardised
+    xs[:, sc_orig == 0] = 0.0
+
+    sw = np.sqrt(w)
+    xsw = xs * sw[:, None]                          # xs * sqrt(w)
+
+    # SVD-based computation of sE2R and sER2
+    U, d, Vt = np.linalg.svd(xsw, full_matrices=False)
+    sE2R = (np.sum(xsw * ((U * d[None, :] ** 3) @ Vt))
+            - np.sum(np.sum(xsw ** 2, axis=0) ** 2))
+
+    xs2w = xs ** 2 * sw[:, None]
+    # sER2 = 2 * sum over i<j of (xs2w[:,i] * xs2w[:,j])
+    # Equivalent to sum(rowsums^2) - sum(colsums_of_squares^2)
+    # But R computes it with cumsum trick; replicate exactly:
+    cumrev = np.cumsum(xs2w[:, ::-1], axis=1)[:, ::-1]  # cumsum from right
+    sER2 = 2.0 * np.sum(xs2w[:, :(p - 1)] * cumrev[:, 1:])
+
+    den_cor = sE2R
+    num_cor = sER2 - sE2R
+    lambda_cor = max(0.0, min(1.0, num_cor / den_cor * h1w2)) if den_cor != 0 else 1.0
+
+    # Shrunk correlation matrix  R_shrunk = (1 - lambda) * R_sample + lambda * I
+    # R_sample = h1 * (xsw^T @ xsw)  but we only need (1-lambda)*R_sample + lambda*I
+    R_sample = h1 * (xsw.T @ xsw)
+    R_shrunk = (1.0 - lambda_cor) * R_sample
+    np.fill_diagonal(R_shrunk, 1.0)
+
+    # ── Combine: Sigma_shrunk = D^{1/2} R_shrunk D^{1/2} ──────────────
+    Sigma = R_shrunk * sc_shrunk[:, None] * sc_shrunk[None, :]
+
+    return Sigma
+
+
 def _prepare_knockoff_cache(
     X: np.ndarray,
     method: str = 'asdp',
@@ -400,21 +482,25 @@ def _prepare_knockoff_cache(
                 shrink = True
 
     if shrink:
-        try:
-            from sklearn.covariance import LedoitWolf
-            lw = LedoitWolf()
-            lw.fit(X)
-            Sigma = lw.covariance_
-        except ImportError:
-            warnings.warn(
-                "sklearn is not installed. Using manual shrinkage."
-            )
-            S = np.cov(X, rowvar=False, ddof=1)
-            if S.ndim == 0:
-                S = np.array([[S]])
-            trace_S = np.trace(S)
-            shrinkage_param = min(1.0, max(0.0, (p / n)))
-            Sigma = (1 - shrinkage_param) * S + shrinkage_param * (trace_S / p) * np.eye(p)
+        if match_r:
+            # Use Schäfer-Strimmer (2005) shrinkage to match R's corpcor::cov.shrink
+            Sigma = _cov_shrink_corpcor(X)
+        else:
+            try:
+                from sklearn.covariance import LedoitWolf
+                lw = LedoitWolf()
+                lw.fit(X)
+                Sigma = lw.covariance_
+            except ImportError:
+                warnings.warn(
+                    "sklearn is not installed. Using manual shrinkage."
+                )
+                S = np.cov(X, rowvar=False, ddof=1)
+                if S.ndim == 0:
+                    S = np.array([[S]])
+                trace_S = np.trace(S)
+                shrinkage_param = min(1.0, max(0.0, (p / n)))
+                Sigma = (1 - shrinkage_param) * S + shrinkage_param * (trace_S / p) * np.eye(p)
 
     # Compute diag_s using the solver (or external solver, e.g. R's SDP)
     if sdp_solver is not None:
@@ -979,7 +1065,7 @@ def knockoff_filter_voting_slide(
     verbose: bool = False,
     match_r: bool = True,
     use_cache: bool = True,
-    slide_selection: bool = False,
+    slide_selection: bool = True,
     **kwargs
 ) -> VotingResult:
     """
