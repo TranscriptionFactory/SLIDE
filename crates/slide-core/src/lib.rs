@@ -193,6 +193,7 @@ pub enum Phase {
         total_marginals: usize,
     },
     Scoring,
+    FinalCv,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -641,7 +642,7 @@ pub fn optimize_slide_resume(
         )?);
     }
 
-    maybe_run_final_cv(&mut checkpoint, y)?;
+    maybe_run_final_cv(&mut checkpoint, y, None)?;
     finalize_checkpoint(checkpoint)
 }
 
@@ -768,7 +769,7 @@ pub fn optimize_slide_with_checkpoint_progress(
         }
     }
 
-    if maybe_run_final_cv(&mut checkpoint, y)? {
+    if maybe_run_final_cv(&mut checkpoint, y, progress_path)? {
         save_optimize_slide_checkpoint(path, &checkpoint)?;
     }
 
@@ -864,6 +865,7 @@ fn finalize_checkpoint(
 fn maybe_run_final_cv(
     checkpoint: &mut OptimizeSlideCheckpoint,
     y: &Vector,
+    progress_path: Option<&Path>,
 ) -> Result<bool, SlideCoreError> {
     if checkpoint.final_cv.is_some() {
         return Ok(false);
@@ -878,6 +880,16 @@ fn maybe_run_final_cv(
         .iter()
         .max_by(|left, right| left.score.total_cmp(&right.score))
         .ok_or(SlideCoreError::NoSuccessfulEvaluations)?;
+    write_progress(
+        progress_path,
+        &ProgressReport {
+            grid_index: checkpoint.evaluations.len().saturating_sub(1),
+            total_grid: checkpoint.evaluations.len(),
+            delta: best.delta,
+            lambda: best.lambda,
+            phase: Phase::FinalCv,
+        },
+    );
     checkpoint.final_cv = Some(slide_cv::run_final_slide_cv(&best.z, y, config)?);
     Ok(true)
 }

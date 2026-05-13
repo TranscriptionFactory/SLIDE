@@ -114,11 +114,12 @@ enum Tab {
     Love,
     Factors,
     Slide,
+    Performance,
 }
 
 impl Tab {
-    fn titles() -> [Line<'static>; 4] {
-        ["Overview", "LOVE", "Factors", "SLIDE"].map(Line::from)
+    fn titles() -> [Line<'static>; 5] {
+        ["Overview", "LOVE", "Factors", "SLIDE", "Performance"].map(Line::from)
     }
 }
 
@@ -467,16 +468,18 @@ impl App {
             Tab::Overview => Tab::Love,
             Tab::Love => Tab::Factors,
             Tab::Factors => Tab::Slide,
-            Tab::Slide => Tab::Overview,
+            Tab::Slide => Tab::Performance,
+            Tab::Performance => Tab::Overview,
         };
     }
 
     fn prev_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Overview => Tab::Slide,
+            Tab::Overview => Tab::Performance,
             Tab::Love => Tab::Overview,
             Tab::Factors => Tab::Love,
             Tab::Slide => Tab::Factors,
+            Tab::Performance => Tab::Slide,
         };
     }
 
@@ -634,6 +637,7 @@ impl App {
                 Tab::Love => 1,
                 Tab::Factors => 2,
                 Tab::Slide => 3,
+                Tab::Performance => 4,
             })
             .block(
                 Block::default()
@@ -655,6 +659,7 @@ impl App {
                 Tab::Love => self.render_love(frame, layout[1]),
                 Tab::Factors => self.render_factors(frame, layout[1]),
                 Tab::Slide => self.render_slide(frame, layout[1]),
+                Tab::Performance => self.render_performance(frame, layout[1]),
             }
         }
 
@@ -678,6 +683,7 @@ impl App {
                 }
             }
             Tab::Slide => footer_spans.push(" | v sub-view".dark_gray()),
+            Tab::Performance => {}
             Tab::Overview => {}
         }
         if self.feature_search_editing {
@@ -882,8 +888,10 @@ impl App {
         };
         let best = self.data().best_run.as_ref();
 
-        let running_line = if completed < total {
-            if let Some(ref prog) = self.progress {
+        let running_line = if let Some(ref prog) = self.progress {
+            if matches!(prog.phase, Phase::FinalCv) {
+                "running: final CV for best model".to_owned()
+            } else if completed < total {
                 format!(
                     "running: eval {}/{} (d={:.2}, l={:.2})",
                     prog.grid_index + 1,
@@ -892,13 +900,18 @@ impl App {
                     prog.lambda,
                 )
             } else {
-                "running: waiting for progress...".to_owned()
+                "status: complete".to_owned()
             }
+        } else if completed < total {
+            "running: waiting for progress...".to_owned()
         } else {
             "status: complete".to_owned()
         };
 
-        let has_phase = completed < total && self.progress.is_some();
+        let has_phase = self
+            .progress
+            .as_ref()
+            .is_some_and(|progress| completed < total || matches!(progress.phase, Phase::FinalCv));
         let parts = Layout::default()
             .direction(Direction::Vertical)
             .constraints(if has_phase {
@@ -934,6 +947,19 @@ impl App {
                             run.love.pure_vec.len()
                         )
                     }
+                )
+            )),
+            Line::from(format!(
+                "final CV: {}",
+                self.data().final_cv.as_ref().map_or_else(
+                    || "not available".to_owned(),
+                    |cv| format!(
+                        "{:?} mean {} ± {} across {} folds",
+                        cv.metric,
+                        format_optional_scalar(cv.mean),
+                        format_optional_scalar(cv.standard_error),
+                        cv.folds.len()
+                    )
                 )
             )),
             Line::from(
@@ -1887,6 +1913,215 @@ impl App {
         frame.render_widget(self.factor_response_corr_widget(), sections[1]);
     }
 
+    fn render_performance(&self, frame: &mut Frame, area: Rect) {
+        let Some(cv) = self.data().final_cv.as_ref() else {
+            frame.render_widget(
+                Paragraph::new(Text::from(vec![
+                    Line::from("Final CV is not available for this checkpoint."),
+                    Line::from("Enable it in the run YAML with cv.enabled: true."),
+                ]))
+                .block(Block::default().borders(Borders::ALL).title("Performance"))
+                .wrap(Wrap { trim: true }),
+                area,
+            );
+            return;
+        };
+
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(8),
+                Constraint::Min(8),
+                Constraint::Length(9),
+            ])
+            .split(area);
+
+        frame.render_widget(self.performance_summary_widget(cv), sections[0]);
+        frame.render_widget(self.cv_fold_score_chart(cv), sections[1]);
+        frame.render_widget(self.cv_model_size_table(cv), sections[2]);
+    }
+
+    fn performance_summary_widget(&self, cv: &slide_cv::FinalCvResult) -> Paragraph<'static> {
+        let fold_count = cv.folds.len();
+        let scored_count = cv
+            .folds
+            .iter()
+            .filter(|fold| fold.metric_value.is_some())
+            .count();
+        let empty_count = fold_count.saturating_sub(scored_count);
+        let repeats = cv
+            .folds
+            .iter()
+            .map(|fold| fold.repeat)
+            .max()
+            .map_or(0, |value| value + 1);
+        let folds_per_repeat = cv
+            .folds
+            .iter()
+            .map(|fold| fold.fold)
+            .max()
+            .map_or(0, |value| value + 1);
+        let mean_marginals = if fold_count == 0 {
+            0.0
+        } else {
+            cv.folds
+                .iter()
+                .map(|fold| fold.selected_marginal_lfs.len())
+                .sum::<usize>() as Scalar
+                / fold_count as Scalar
+        };
+        let mean_interactions = if fold_count == 0 {
+            0.0
+        } else {
+            cv.folds
+                .iter()
+                .map(|fold| fold.selected_interactions.len())
+                .sum::<usize>() as Scalar
+                / fold_count as Scalar
+        };
+        let prediction_count = cv.predictions.len();
+
+        let mut lines = vec![
+            Line::from(format!(
+                "metric: {:?} | mean: {} | SE: {}",
+                cv.metric,
+                format_optional_scalar(cv.mean),
+                format_optional_scalar(cv.standard_error),
+            )),
+            Line::from(format!(
+                "folds: {scored_count}/{fold_count} scored | empty/degenerate: {empty_count}"
+            )),
+            Line::from(format!(
+                "design: {repeats} repeat(s) x {folds_per_repeat} fold(s) | predictions: {prediction_count}"
+            )),
+            Line::from(format!(
+                "mean selected model size: {:.1} marginal LF(s), {:.1} interaction(s)",
+                mean_marginals, mean_interactions
+            )),
+        ];
+        if empty_count > 0 {
+            lines.push(Line::from(
+                "warning: some folds produced no scored model; inspect fold bars/model sizes.",
+            ));
+        }
+
+        Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Final CV Summary"),
+            )
+            .wrap(Wrap { trim: true })
+    }
+
+    fn cv_fold_score_chart(&self, cv: &slide_cv::FinalCvResult) -> BarChart<'static> {
+        let title = "Fold Scores";
+        if cv.folds.is_empty() {
+            return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
+        }
+        let scores = cv
+            .folds
+            .iter()
+            .filter_map(|fold| fold.metric_value)
+            .filter(|value| value.is_finite())
+            .collect::<Vec<_>>();
+        let max_abs = scores
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f64, Scalar::max)
+            .max(0.01);
+        let scale = 1000.0 / max_abs;
+        let bars = cv
+            .folds
+            .iter()
+            .take(80)
+            .map(|fold| {
+                let label = format!("R{}F{}", fold.repeat + 1, fold.fold + 1);
+                match fold.metric_value {
+                    Some(value) if value.is_finite() => {
+                        let color = if value >= 0.0 {
+                            Color::Green
+                        } else {
+                            Color::Red
+                        };
+                        Bar::default()
+                            .value((value.abs() * scale) as u64)
+                            .label(Line::from(label))
+                            .text_value(format!("{value:.3}"))
+                            .style(Style::default().fg(color))
+                    }
+                    _ => Bar::default()
+                        .value(0)
+                        .label(Line::from(label))
+                        .text_value("n/a".to_owned())
+                        .style(Style::default().fg(Color::DarkGray)),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let title = if cv.folds.len() > bars.len() {
+            format!("Fold Scores | first {} of {}", bars.len(), cv.folds.len())
+        } else {
+            title.to_owned()
+        };
+        BarChart::default()
+            .data(BarGroup::default().bars(&bars))
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .bar_gap(0)
+            .max(1000)
+    }
+
+    fn cv_model_size_table(&self, cv: &slide_cv::FinalCvResult) -> Table<'static> {
+        let title = "Fold Model Sizes";
+        let rows = cv.folds.iter().take(8).map(|fold| {
+            Row::new([
+                format!("{}", fold.repeat + 1),
+                format!("{}", fold.fold + 1),
+                fold.train_n.to_string(),
+                fold.valid_n.to_string(),
+                fold.selected_marginal_lfs.len().to_string(),
+                fold.selected_interactions.len().to_string(),
+                format_optional_scalar(fold.metric_value),
+            ])
+        });
+        let title = if cv.folds.len() > 8 {
+            format!("{title} | first 8 of {}", cv.folds.len())
+        } else {
+            title.to_owned()
+        };
+        Table::new(
+            rows,
+            [
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(8),
+                Constraint::Length(8),
+                Constraint::Length(10),
+                Constraint::Length(12),
+                Constraint::Length(10),
+            ],
+        )
+        .header(
+            Row::new([
+                "rep",
+                "fold",
+                "train",
+                "valid",
+                "marg LFs",
+                "interacts",
+                "metric",
+            ])
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(Block::default().borders(Borders::ALL).title(title))
+    }
+
     fn render_selection_frequency(&self, frame: &mut Frame, area: Rect) {
         let title = "SLIDE Marginal Factor Selection";
         let Some(run) = self.current_run() else {
@@ -2133,10 +2368,15 @@ fn empty_table(title: &'static str) -> Table<'static> {
         .block(Block::default().borders(Borders::ALL).title(title))
 }
 
+fn format_optional_scalar(value: Option<Scalar>) -> String {
+    value.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"))
+}
+
 #[derive(Clone, Debug)]
 struct DashboardData {
     runs: Vec<SlideRunResult>,
     best_run: Option<SlideRunResult>,
+    final_cv: Option<slide_cv::FinalCvResult>,
     total_grid_points: usize,
     delta_values: Vec<Scalar>,
     lambda_values: Vec<Scalar>,
@@ -2167,10 +2407,10 @@ impl DashboardData {
         } else {
             None
         };
-        let runs = if let Some(result) = result {
-            result.evaluations
+        let (runs, final_cv) = if let Some(result) = result {
+            (result.evaluations, result.final_cv)
         } else {
-            checkpoint.evaluations.clone()
+            (checkpoint.evaluations.clone(), checkpoint.final_cv.clone())
         };
         // Load matrices from data reference paths (or CLI override)
         let x_path = args
@@ -2236,6 +2476,7 @@ impl DashboardData {
             run_lookup,
             runs,
             best_run,
+            final_cv,
             response_type,
             config_lines,
             factor_rankings,
@@ -3166,6 +3407,7 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
         Phase::KnockoffMarginal => 2,
         Phase::KnockoffInteraction { .. } => 3,
         Phase::Scoring => 4,
+        Phase::FinalCv => 5,
     };
 
     let labels = [
@@ -3174,6 +3416,7 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
         "SLIDE Marginal",
         "SLIDE Interactions",
         "Score",
+        "Final CV",
     ];
 
     // For SLIDE interaction selection, show progress info in the label.
@@ -3189,7 +3432,7 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
         _ => String::new(),
     };
 
-    let constraints: Vec<Constraint> = (0..5).map(|_| Constraint::Percentage(20)).collect();
+    let constraints: Vec<Constraint> = (0..6).map(|_| Constraint::Percentage(16)).collect();
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(constraints)
