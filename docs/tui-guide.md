@@ -118,7 +118,7 @@ A quick-test config with fewer iterations for verifying the TUI is at
 
 ## TUI Tabs and Views
 
-The dashboard has four tabs. Use the keys below to navigate.
+The dashboard has five tabs. Use the keys below to navigate.
 
 ### Overview tab
 
@@ -173,6 +173,28 @@ Two sub-views (toggle with `v`):
 
 Both sub-views also display factor-response correlation beneath the frequency
 bars.
+
+### Performance tab
+
+Final cross-validation results for the best SLIDE model, when the run
+configuration enabled final CV:
+
+```yaml
+cv:
+  enabled: true
+```
+
+This tab reads the persisted `final_cv` block from the checkpoint or result
+JSON. It shows:
+
+- Final CV metric, mean, and standard error
+- Scored fold count vs empty or degenerate folds
+- Fold-score bar chart
+- Per-fold train/validation sizes and selected model sizes
+
+If final CV was not enabled for the run, the tab displays a short
+"not available" message instead. During live runs, the Overview tab also shows
+`FinalCv` as the current phase while final CV is running.
 
 ---
 

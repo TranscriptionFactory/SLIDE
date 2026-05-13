@@ -72,7 +72,22 @@ slide-cli submit --script job.sh --checkpoint ckpt.json --config config.yaml
 | `q`   | Quit                    |
 | `1-7` | Switch LOVE sub-view; `6-7` are advanced diagnostics |
 | `m`   | Cycle loading matrix row mode |
-| `Tab` | Cycle between Overview, LOVE, Factors, and SLIDE tabs |
+| `Tab` | Cycle between Overview, LOVE, Factors, SLIDE, and Performance tabs |
+
+## Performance Tab
+
+The Performance tab shows final cross-validation results for the best SLIDE
+model when the run config enables final CV:
+
+```yaml
+cv:
+  enabled: true
+```
+
+It summarizes the final CV metric mean/standard error, scored vs
+empty/degenerate folds, fold scores, and per-fold selected model sizes. If a
+checkpoint does not include `final_cv`, the tab reports that final CV is not
+available.
 
 ## Large LOVE Matrices
 
