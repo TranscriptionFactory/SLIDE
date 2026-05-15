@@ -52,9 +52,9 @@ def _lasso_max_lambda_glmnet(
     """
     Compute the maximum lambda at which each variable enters the lasso model.
 
-    Matches R's knockoff::lasso_max_lambda: calls glmnet on scale(X) with
-    standardize=FALSE, letting glmnet auto-generate its lambda grid with
-    nlambda=100 and lambda.min.ratio = ifelse(nobs<nvars, 0.01, 1e-4).
+    Matches R's knockoff:::lasso_max_lambda_glmnet exactly: computes an
+    explicit 500-point log-spaced lambda grid with lambda_max/2000 ratio,
+    then passes it to glmnet(X, y, lambda=lambda, standardize=FALSE).
 
     Parameters
     ----------
@@ -91,27 +91,28 @@ def _lasso_max_lambda_glmnet(
         X_std = X
         stds = None
 
-    # Match R's glmnet lambda.min.ratio: ifelse(nobs < nvars, 0.01, 1e-4)
-    # R's knockoff package does NOT pre-compute a lambda grid — it lets
-    # glmnet auto-generate one with these defaults. Previously we pre-computed
-    # a 250-point grid with ratio=1/2000, which diverged significantly from R.
-    min_lambda_ratio = 0.01 if n < p else 1e-4
-
     if family == 'gaussian':
         # Match R's behavior: don't center y explicitly, let intercept handle it
         # R does: glmnet(scale(X), y, intercept=T, standardize=F)
         y_work = y if intercept else (y - y.mean())
 
+        # Match R's knockoff:::lasso_max_lambda_glmnet exactly:
+        #   lambda_max = max(abs(t(X) %*% y)) / n
+        #   lambda_min = lambda_max / 2000
+        #   k = (0:(nlambda-1)) / nlambda   # nlambda = 500
+        #   lambda = lambda_max * (lambda_min/lambda_max)^k
+        nlambda = 500
+        lambda_max = np.max(np.abs(X_std.T @ y_work)) / n
+        lambda_min = lambda_max / 2000
+        k = np.arange(nlambda) / nlambda
+        lambdas = lambda_max * (lambda_min / lambda_max) ** k
+
         if HAS_GLMNET and not use_sklearn:
-            # Let Fortran glmnet auto-generate the lambda grid (matching R).
-            # R's knockoff::lasso_max_lambda calls glmnet(X, y, standardize=F)
-            # without specifying a lambda path, so glmnet uses its own
-            # log-spaced grid with nlambda=100 and the ratio above.
+            # Pass explicit lambda grid to match R's knockoff package.
+            # R calls: glmnet(X, y, lambda=lambda, intercept=T, standardize=F)
             model = ElasticNet(
                 alpha=1.0,  # Pure lasso
-                n_lambda=100,  # R's glmnet default
-                min_lambda_ratio=min_lambda_ratio,
-                lambda_path=None,  # Let Fortran auto-generate (matches R)
+                lambda_path=lambdas,  # Explicit grid (matches R)
                 standardize=False,    # Already standardized above (R-style)
                 fit_intercept=intercept,  # Match R: intercept=T
                 n_splits=0,           # No CV
@@ -122,19 +123,13 @@ def _lasso_max_lambda_glmnet(
             alphas = model.lambda_path_
             coefs = model.coef_path_  # (p, n_lambda)
         else:
-            # sklearn fallback: generate lambda grid matching R's glmnet defaults
-            lambda_max = np.max(np.abs(X_std.T @ y_work)) / n
-            lambda_min = lambda_max * min_lambda_ratio
-            n_alphas = 100  # Match R's nlambda default
-            k = np.arange(n_alphas) / n_alphas
-            lambdas = lambda_max * (lambda_min / lambda_max) ** k
-
+            # sklearn fallback with same R-matching lambda grid
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:
                     alphas, coefs, _ = lasso_path(X_std, y_work, alphas=lambdas, max_iter=10000)
                 except Exception:
-                    alphas, coefs, _ = lasso_path(X_std, y_work, n_alphas=n_alphas, max_iter=10000)
+                    alphas, coefs, _ = lasso_path(X_std, y_work, n_alphas=nlambda, max_iter=10000)
 
         # coefs has shape (p, n_alphas)
         # Find first nonzero entry for each variable (vectorized)
@@ -147,6 +142,8 @@ def _lasso_max_lambda_glmnet(
         return lambda_entry
 
     elif family == 'binomial':
+        # R's glmnet default: lambda.min.ratio = ifelse(nobs<nvars, 0.01, 1e-4)
+        min_lambda_ratio = 0.01 if n < p else 1e-4
         if HAS_GLMNET and not use_sklearn:
             # Let Fortran glmnet auto-generate lambda grid (matching R)
             try:
