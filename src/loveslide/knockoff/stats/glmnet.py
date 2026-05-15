@@ -43,18 +43,15 @@ def _r_scale(X: np.ndarray) -> tuple:
 def _lasso_max_lambda_glmnet(
     X: np.ndarray,
     y: np.ndarray,
+    nlambda: int = 250,
     intercept: bool = True,
-    standardize: bool = True,
+    standardize: bool = True,  # Match R: always standardize X with scale() (ddof=1)
     family: str = 'gaussian',
-    use_sklearn: bool = False,
+    use_sklearn: bool = False,  # Force sklearn fallback for R-compatibility
     **kwargs
 ) -> np.ndarray:
     """
     Compute the maximum lambda at which each variable enters the lasso model.
-
-    Matches R's knockoff:::lasso_max_lambda_glmnet exactly: computes an
-    explicit 500-point log-spaced lambda grid with lambda_max/2000 ratio,
-    then passes it to glmnet(X, y, lambda=lambda, standardize=FALSE).
 
     Parameters
     ----------
@@ -62,14 +59,20 @@ def _lasso_max_lambda_glmnet(
         Feature matrix.
     y : array-like of shape (n,)
         Response vector.
+    nlambda : int, default=250
+        Number of lambda values.
     intercept : bool, default=True
         Whether to fit an intercept.
     standardize : bool, default=True
-        Whether to standardize features using R's scale() (ddof=1).
+        Whether to standardize features.
     family : str, default='gaussian'
         Response family.
     use_sklearn : bool, default=False
         Force sklearn lasso_path instead of vendored Fortran glmnet.
+        Set to True for better R-compatibility (sklearn produces
+        W-statistics with positive correlation to R's knockoff package,
+        while Fortran glmnet can produce negative correlation due to
+        different tie-breaking behavior).
 
     Returns
     -------
@@ -94,25 +97,28 @@ def _lasso_max_lambda_glmnet(
     if family == 'gaussian':
         # Match R's behavior: don't center y explicitly, let intercept handle it
         # R does: glmnet(scale(X), y, intercept=T, standardize=F)
+        # When X is centered (via _r_scale), centering y vs using intercept gives
+        # equivalent coefficient paths (only intercept term differs)
         y_work = y if intercept else (y - y.mean())
 
-        # Match R's knockoff:::lasso_max_lambda_glmnet exactly:
-        #   lambda_max = max(abs(t(X) %*% y)) / n
-        #   lambda_min = lambda_max / 2000
-        #   k = (0:(nlambda-1)) / nlambda   # nlambda = 500
-        #   lambda = lambda_max * (lambda_min/lambda_max)^k
-        nlambda = 500
+        # Generate lambda sequence (decreasing order)
+        # Computed on standardized X to match R's behavior
+        # Note: For centered X, X_std.T @ y == X_std.T @ (y - mean(y))
         lambda_max = np.max(np.abs(X_std.T @ y_work)) / n
         lambda_min = lambda_max / 2000
         k = np.arange(nlambda) / nlambda
         lambdas = lambda_max * (lambda_min / lambda_max) ** k
 
         if HAS_GLMNET and not use_sklearn:
-            # Pass explicit lambda grid to match R's knockoff package.
-            # R calls: glmnet(X, y, lambda=lambda, intercept=T, standardize=F)
+            # Use vendored Fortran glmnet for ~5-10x speedup
+            # Pass standardized X with standardize=False (like R's knockoff package)
+            # Note: Fortran glmnet can produce ties where sklearn doesn't,
+            # leading to negative correlation with R's knockoff package.
+            # Use use_sklearn=True for better R-compatibility.
             model = ElasticNet(
                 alpha=1.0,  # Pure lasso
-                lambda_path=lambdas,  # Explicit grid (matches R)
+                n_lambda=nlambda,
+                lambda_path=lambdas,  # Pre-specified, decreasing
                 standardize=False,    # Already standardized above (R-style)
                 fit_intercept=intercept,  # Match R: intercept=T
                 n_splits=0,           # No CV
@@ -123,12 +129,14 @@ def _lasso_max_lambda_glmnet(
             alphas = model.lambda_path_
             coefs = model.coef_path_  # (p, n_lambda)
         else:
-            # sklearn fallback with same R-matching lambda grid
+            # Fallback to sklearn
+            # sklearn's lasso_path handles intercept internally
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:
                     alphas, coefs, _ = lasso_path(X_std, y_work, alphas=lambdas, max_iter=10000)
                 except Exception:
+                    # Fallback: let sklearn choose alphas
                     alphas, coefs, _ = lasso_path(X_std, y_work, n_alphas=nlambda, max_iter=10000)
 
         # coefs has shape (p, n_alphas)
@@ -142,16 +150,22 @@ def _lasso_max_lambda_glmnet(
         return lambda_entry
 
     elif family == 'binomial':
-        # R's glmnet default: lambda.min.ratio = ifelse(nobs<nvars, 0.01, 1e-4)
-        min_lambda_ratio = 0.01 if n < p else 1e-4
+        # Generate lambda sequence (decreasing order)
+        # Computed on standardized X to match R's behavior
+        lambda_max = np.max(np.abs(X_std.T @ (y - y.mean()))) / n
+        lambda_min = lambda_max / 2000
+        k = np.arange(nlambda) / nlambda
+        lambdas = lambda_max * (lambda_min / lambda_max) ** k
+
         if HAS_GLMNET and not use_sklearn:
-            # Let Fortran glmnet auto-generate lambda grid (matching R)
+            # Use vendored Fortran glmnet for efficient path computation
+            # Pass standardized X with standardize=False (like R's knockoff package)
+            # Note: Set use_sklearn=True for better R-compatibility
             try:
                 model = LogitNet(
                     alpha=1.0,  # Pure lasso
-                    n_lambda=100,  # R's glmnet default
-                    min_lambda_ratio=min_lambda_ratio,
-                    lambda_path=None,  # Let Fortran auto-generate (matches R)
+                    n_lambda=nlambda,
+                    lambda_path=lambdas,
                     standardize=False,    # Already standardized above (R-style)
                     fit_intercept=intercept,
                     n_splits=0,           # No CV
@@ -174,26 +188,22 @@ def _lasso_max_lambda_glmnet(
                 logger.debug(f"LogitNet failed, falling back to sklearn: {e}")
                 # Fall through to sklearn fallback
 
-        # sklearn fallback: generate lambda grid matching R's glmnet defaults
+        # Fallback to sklearn (slower, uses loop)
         from sklearn.linear_model import LogisticRegression
         try:
-            lambda_max = np.max(np.abs(X_std.T @ (y - y.mean()))) / n
-            lambda_min = lambda_max * min_lambda_ratio
-            n_alphas = 100  # Match R's nlambda default
-            k = np.arange(n_alphas) / n_alphas
-            lambdas = lambda_max * (lambda_min / lambda_max) ** k
-
             Cs = 1 / (lambdas + 1e-10)
             lambda_entry = np.zeros(p)
-            for i, C in enumerate(Cs):
+            # Fit for each lambda
+            for i, C in enumerate(Cs[:min(100, nlambda)]):  # Limit iterations
                 clf = LogisticRegression(
                     penalty='l1', C=C, solver='saga',
                     fit_intercept=intercept, max_iter=1000
                 )
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    clf.fit(X_std, y)
+                    clf.fit(X_std, y)  # Use standardized X
 
+                # Check which variables have entered (vectorized)
                 coefs = clf.coef_.ravel()
                 newly_entered = (np.abs(coefs) > 0) & (lambda_entry == 0)
                 lambda_entry[newly_entered] = lambdas[i] * n
