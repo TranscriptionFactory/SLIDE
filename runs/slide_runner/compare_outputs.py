@@ -594,6 +594,7 @@ def main():
 
     for name, info in impls.items():
         st = load_summary_table(info["path"])
+        st.sort_values(by=["delta", "lambda"], inplace=True)
         if st is None:
             print(f"  {name:<16} (no summary_table.csv)")
             continue

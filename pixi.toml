@@ -30,12 +30,12 @@ gcc = "*"
 loveslide = { path = ".", editable = true }
 pqdm = "*"
 easydict = "*"
-rpy2 = "*"
+rpy2 = ">=3.6.7"
 
 # ─── Feature: R integration ──────────────────────────────────────────────────
 [feature.r.dependencies]
 r-base = ">=4.4"
-rpy2 = ">=3.5"
+rpy2 = ">=3.6.7"
 r-knockoff = "*"
 r-linprog = "*"
 r-lpsolve = "*"
