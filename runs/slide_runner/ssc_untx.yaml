@@ -27,7 +27,7 @@ slide:
   knockoff_offset: 0
 
 cv:
-  enabled: true
+  enabled: false  # disabled during knockoff alignment work
   nrep: 10
   k: 5
   eval_type: corr
