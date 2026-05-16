@@ -163,6 +163,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 export PYTHONUNBUFFERED=1
+export RPY2_CFFI_MODE=ABI  # Use rpy2 ABI mode (stable, avoids cffi API build issues)
 
 # Use pre-resolved values from the login-node phase (no pixi needed here).
 read -ra _backends <<< "${SLIDE_BACKENDS}"
