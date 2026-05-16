@@ -32,7 +32,7 @@ REQUIRED_DATA_KEYS = ["x_path", "y_path"]
 # "r"            = R LOVE       + R knockoffs
 BACKEND_MAP = {
     "python":       ("python", "python"),
-    "r_knockoffs":  ("python", "r"),
+    "r_knockoffs":  ("python", "r_knockoffs"),
     "r":            ("r",      "r"),
 }
 

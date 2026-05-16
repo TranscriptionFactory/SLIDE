@@ -245,9 +245,19 @@ class Knockoffs:
     @staticmethod
     def filter_knockoffs_iterative_r(z, y, fdr=0.1, niter=1, spec=0.2, **kwargs):
         """Run knockoff filter using R package via rpy2."""
-        import rpy2.robjects as robjects
-        from rpy2.robjects import pandas2ri
-        from rpy2.robjects.packages import importr
+        try:
+            import rpy2.robjects as robjects
+            from rpy2.robjects import pandas2ri
+            from rpy2.robjects.packages import importr
+        except Exception as e:
+            raise RuntimeError(
+                f"rpy2 initialization failed: {e}\n"
+                "This often occurs when rpy2 is first imported inside a subprocess "
+                "(joblib/loky). Solutions:\n"
+                "  1. Import rpy2 in the main process before spawning workers\n"
+                "  2. Use backend='r_knockoffs' (Python voting + R SDP) instead of "
+                "backend='r' (full R knockoff filter)"
+            ) from e
 
         knockoff = importr("knockoff")
         converter = robjects.default_converter + pandas2ri.converter

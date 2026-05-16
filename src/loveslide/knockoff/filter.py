@@ -1,5 +1,6 @@
 """Main knockoff filter pipeline."""
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, Callable, Union, List, Dict, Any
 import numpy as np
@@ -7,6 +8,8 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 from scipy import linalg
+
+logger = logging.getLogger(__name__)
 
 from .create import create_second_order, create_fixed, KnockoffVariables
 from .solve import create_solve_equi, create_solve_sdp, create_solve_asdp
@@ -89,14 +92,27 @@ def knockoff_threshold(
     # Candidate thresholds: 0 and absolute values of W
     ts = np.sort(np.concatenate([[0], np.abs(W)]))
 
+    logger.debug(
+        "knockoff_threshold: p=%d, fdr=%.3f, offset=%d, "
+        "W range=[%.4f, %.4f], #positive=%d, #negative=%d",
+        len(W), fdr, offset,
+        W.min(), W.max(),
+        np.sum(W > 0), np.sum(W < 0),
+    )
+
     # For each threshold, compute FDP estimate
     for t in ts:
         numerator = offset + np.sum(W <= -t)
         denominator = max(1, np.sum(W >= t))
         ratio = numerator / denominator
         if ratio <= fdr:
+            logger.debug(
+                "knockoff_threshold: t=%.6f, ratio=%.4f (<= fdr=%.3f)",
+                t, ratio, fdr,
+            )
             return t
 
+    logger.debug("knockoff_threshold: no threshold found, returning inf")
     return np.inf
 
 
@@ -615,6 +631,10 @@ def _cached_iteration(X, y, cache, statistic, fdr, offset, seed):
     W = statistic(X, Xk, y)
     t = knockoff_threshold(W, fdr=fdr, offset=offset)
     selected = np.where(W >= t)[0]
+    logger.debug(
+        "_cached_iteration: seed=%s, threshold=%.6f, selected=%d vars",
+        seed, t, len(selected),
+    )
     return selected
 
 
@@ -1027,10 +1047,22 @@ def knockoff_filter_voting(
     freq_vars = np.where(selection_counts >= min_selections)[0]
     freq_vars = np.sort(freq_vars)
 
+    logger.debug(
+        "knockoff_filter_voting: niter=%d, spec=%.3f, min_selections=%d, "
+        "freq_vars=%d, max_count=%d",
+        niter, spec, min_selections,
+        len(freq_vars),
+        int(selection_counts.max()) if len(selection_counts) > 0 else 0,
+    )
+
     # Apply findOptIter refinement if requested (R SLIDE behavior)
     optimal_iter = None
     if slide_selection and selected_list is not None and len(freq_vars) > 0:
         selected, optimal_iter = find_opt_iter(freq_vars, selected_list)
+        logger.debug(
+            "knockoff_filter_voting: findOptIter chose iter %d with %d vars",
+            optimal_iter, len(selected),
+        )
         if verbose:
             print(f"  findOptIter: chose iteration {optimal_iter} with {len(selected)} variables")
     else:
