@@ -30,6 +30,7 @@ gcc = "*"
 loveslide = { path = ".", editable = true }
 pqdm = "*"
 easydict = "*"
+cffi = ">=1.15,<2"  # rpy2 CFFI bindings incompatible with cffi 2.0
 rpy2 = ">=3.6.7"
 
 # ─── Feature: R integration ──────────────────────────────────────────────────
