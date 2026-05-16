@@ -220,6 +220,18 @@ def main():
 
     os.makedirs(cfg["out_base"], exist_ok=True)
 
+    # Pre-initialize rpy2 in main process to avoid CFFI crash in subprocesses
+    needs_r = any(
+        BACKEND_MAP.get(b, ("", ""))[0] == "r" or BACKEND_MAP.get(b, ("", ""))[1] in ("r", "r_knockoffs")
+        for b in backends
+    )
+    if needs_r:
+        try:
+            import rpy2.robjects  # noqa: F401
+            logger.info("rpy2 pre-initialized in main process")
+        except Exception as e:
+            logger.warning(f"rpy2 pre-initialization failed: {e}")
+
     logger.info(f"Config:   {cfg['config_path']}")
     logger.info(f"Data:     {cfg['x_path']}")
     logger.info(f"          {cfg['y_path']}")
