@@ -45,7 +45,7 @@ runSLIDE <- function(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_facto
                          spec = spec, fdr = fdr, niter = niter, elbow = FALSE, f_size = f_size, parallel = TRUE, ncore = 10)
     },
     error = function(e){
-      error_occured = TRUE
+      error_occured <<- TRUE
       warning("An error has occured with SLIDE. Re-running SLIDE with default f_size value.")
     },
     finally = {
