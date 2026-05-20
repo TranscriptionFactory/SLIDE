@@ -167,36 +167,48 @@ optimizeSLIDE <- function(input_params, sink_file = F){
       z_matrix <- calcZMatrix(x_std, all_latent_factors, x_path = NULL, lf_path = NULL, loop_outpath)
 
       # run SLIDE
-      SLIDE_res <- runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts,fdr=fdr)
-      saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
+      SLIDE_res <- tryCatch(
+        runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts,fdr=fdr),
+        error = function(e) {
+          warning("SLIDE failed for delta=", d, ", lambda=", l, ": ", e$message,
+                  ". Skipping this combination.", immediate. = TRUE)
+          NULL
+        }
+      )
 
-      if(length(SLIDE_res$SLIDE_res$marginal_vars) != 0) {
-        # get top features txt files and latent factor plots
-        SLIDE_res <- getTopFeatures(x, y, all_latent_factors, loop_outpath, SLIDE_res, num_top_feats = SLIDE_top_feats, condition = eval_type)
+      if (is.null(SLIDE_res)) {
+        loop_summary = c(d, l, NA, all_latent_factors$K, "NA", "NA", "NA")
+      } else {
         saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
 
-        plotSigGenes(SLIDE_res, plot_interactions = do_interacts, out_path = loop_outpath)
+        if(length(SLIDE_res$SLIDE_res$marginal_vars) != 0) {
+          # get top features txt files and latent factor plots
+          SLIDE_res <- getTopFeatures(x, y, all_latent_factors, loop_outpath, SLIDE_res, num_top_feats = SLIDE_top_feats, condition = eval_type)
+          saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
 
-        #the SLIDE_res has to be the output from getTopFeatures
-        #calculate the control performance plot
-        if(length(SLIDE_res$SLIDE_res$marginal_vars)!=0){
-        calcControlPerformance(z_matrix = z_matrix, y, do_interacts, SLIDE_res, condition = eval_type, loop_outpath)}
+          plotSigGenes(SLIDE_res, plot_interactions = do_interacts, out_path = loop_outpath)
 
-        # calculate the sampleCV performance
-        performance = sampleCV(y, z_matrix, SLIDE_res, sampleCV_K = sampleCV_K, condition = eval_type, sampleCV_iter = sampleCV_iter, logistic = FALSE, out_path = loop_outpath)
+          #the SLIDE_res has to be the output from getTopFeatures
+          #calculate the control performance plot
+          if(length(SLIDE_res$SLIDE_res$marginal_vars)!=0){
+          calcControlPerformance(z_matrix = z_matrix, y, do_interacts, SLIDE_res, condition = eval_type, loop_outpath)}
 
-      # fill in the summary table
-        if (do_interacts == TRUE){
-          interactors = c(SLIDE_res$interaction$p1, SLIDE_res$interaction$p2)[which(!(c(SLIDE_res$interaction$p1, SLIDE_res$interaction$p2) %in% SLIDE_res$marginal_vals))]
-          interactors = unique(interactors)
-          if (sum(interactors %in% SLIDE_res$marginal_vals) != 0) {stop("getting interactor code is wrong.")}
-          loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, length(SLIDE_res$marginal_vals), length(interactors), performance)
-        } else{
-          if (nrow(SLIDE_res$interaction) != 0) {stop("do_interacts set to FALSE but interaction terms found...")}
-          loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, length(SLIDE_res$marginal_vals), 'NA', performance)
+          # calculate the sampleCV performance
+          performance = sampleCV(y, z_matrix, SLIDE_res, sampleCV_K = sampleCV_K, condition = eval_type, sampleCV_iter = sampleCV_iter, logistic = FALSE, out_path = loop_outpath)
+
+        # fill in the summary table
+          if (do_interacts == TRUE){
+            interactors = c(SLIDE_res$interaction$p1, SLIDE_res$interaction$p2)[which(!(c(SLIDE_res$interaction$p1, SLIDE_res$interaction$p2) %in% SLIDE_res$marginal_vals))]
+            interactors = unique(interactors)
+            if (sum(interactors %in% SLIDE_res$marginal_vals) != 0) {stop("getting interactor code is wrong.")}
+            loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, length(SLIDE_res$marginal_vals), length(interactors), performance)
+          } else{
+            if (nrow(SLIDE_res$interaction) != 0) {stop("do_interacts set to FALSE but interaction terms found...")}
+            loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, length(SLIDE_res$marginal_vals), 'NA', performance)
+          }
+        } else {
+          loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, "NA", "NA", "NA")
         }
-      } else {
-        loop_summary = c(d, l, SLIDE_res$SLIDE_param['f_size'], all_latent_factors$K, "NA", "NA", "NA")
       }
       summary_table[cnt, ] = loop_summary
       cat("The number of total LFs is ", summary_table[cnt, ]$Num_of_LFs, ".\n")
