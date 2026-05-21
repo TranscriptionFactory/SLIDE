@@ -2074,7 +2074,7 @@ packages:
 - pypi: ./
   name: loveslide
   version: 1.0.0
-  sha256: 4f86962eb45b3f66baa275535e8200934bfa30bc3a095fd57c389efbc0024d0a
+  sha256: 407b5625320171a3072ef3385694ede3ab31e583a04e47a826498fa63e560763
   requires_dist:
   - numpy>=1.20.0
   - scipy>=1.7.0
