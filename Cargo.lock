@@ -1592,6 +1592,7 @@ dependencies = [
 name = "slide-glmnet"
 version = "0.1.0"
 dependencies = [
+ "cblas-sys",
  "ndarray",
  "rayon",
  "serde",

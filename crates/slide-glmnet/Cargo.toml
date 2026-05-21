@@ -9,12 +9,13 @@ repository.workspace = true
 description = "Elastic-net (glmnet) solver for SLIDE"
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
+cblas-sys = "0.1"
 ndarray.workspace = true
 rayon.workspace = true
 serde.workspace = true

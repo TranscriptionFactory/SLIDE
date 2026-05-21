@@ -1,10 +1,33 @@
-#![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use ndarray::{Array1, Array2, Axis, ShapeBuilder, Zip};
 use serde::{Deserialize, Serialize};
 use slide_types::{Matrix, Scalar, Vector};
 use thiserror::Error;
+
+/// Direct BLAS FFI calls bypassing ndarray's DOT_BLAS_CUTOFF=32 threshold.
+/// For n=24 (SSc dataset), ndarray never dispatches to BLAS — these functions do.
+#[allow(unsafe_code)]
+mod blas_direct {
+    use cblas_sys::{cblas_daxpy, cblas_ddot};
+    use std::os::raw::c_int;
+
+    /// BLAS ddot: dot product of two contiguous f64 slices.
+    #[inline]
+    pub fn ddot(x: &[f64], y: &[f64]) -> f64 {
+        let n = x.len().min(y.len()) as c_int;
+        // SAFETY: slices are valid, contiguous, and n does not exceed their length.
+        unsafe { cblas_ddot(n, x.as_ptr(), 1, y.as_ptr(), 1) }
+    }
+
+    /// BLAS daxpy: y += alpha * x for contiguous f64 slices.
+    #[inline]
+    pub fn daxpy(alpha: f64, x: &[f64], y: &mut [f64]) {
+        let n = x.len().min(y.len()) as c_int;
+        // SAFETY: slices are valid, contiguous, and n does not exceed their length.
+        unsafe { cblas_daxpy(n, alpha, x.as_ptr(), 1, y.as_mut_ptr(), 1) }
+    }
+}
 
 const DEFAULT_TOLERANCE: Scalar = 1.0e-7;
 const DEFAULT_MAX_ITER: usize = 10_000;
@@ -144,10 +167,16 @@ pub fn gaussian_lasso_path(
         } else {
             let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
             let threshold = 2.0 * lambda_value - prev_lambda;
+            let r_slice = residual.as_slice()
+                .unwrap_or_else(|| unreachable!("residual is contiguous"));
             (0..p)
                 .map(|j| {
                     beta_scaled[j].abs() > 0.0
-                        || (x_array.column(j).dot(&residual) / n_f).abs() >= threshold
+                        || {
+                            let col = x_array.column(j).to_slice()
+                                .unwrap_or_else(|| unreachable!("F-order column"));
+                            (blas_direct::ddot(col, r_slice) / n_f).abs() >= threshold
+                        }
                 })
                 .collect()
         };
@@ -168,9 +197,13 @@ pub fn gaussian_lasso_path(
 
             // Check KKT conditions on excluded coordinates
             let mut kkt_violated = false;
+            let r_slice = residual.as_slice()
+                .unwrap_or_else(|| unreachable!("residual is contiguous"));
             for j in 0..p {
                 if !candidate[j] {
-                    let grad = (x_array.column(j).dot(&residual) / n_f).abs();
+                    let col = x_array.column(j).to_slice()
+                        .unwrap_or_else(|| unreachable!("F-order column"));
+                    let grad = (blas_direct::ddot(col, r_slice) / n_f).abs();
                     if grad > lambda_value * config.alpha {
                         candidate[j] = true;
                         kkt_violated = true;
@@ -1005,6 +1038,10 @@ fn sweep_coordinates(
     alpha: Scalar,
     n: usize,
 ) -> Scalar {
+    // x is F-order so x.column(j) is contiguous; residual is owned Array1 (contiguous).
+    // Use direct BLAS ddot/daxpy to bypass ndarray's DOT_BLAS_CUTOFF=32.
+    let r_slice = residual.as_slice_mut()
+        .unwrap_or_else(|| unreachable!("residual is contiguous Array1"));
     let mut max_change = 0.0;
     for j in 0..x.ncols() {
         if !active[j] {
@@ -1016,18 +1053,19 @@ fn sweep_coordinates(
             continue;
         }
 
-        let column = x.column(j);
+        let col_slice = x.column(j).to_slice()
+            .unwrap_or_else(|| unreachable!("F-order column is contiguous"));
         let old_beta = beta[j];
         if old_beta != 0.0 {
-            residual.scaled_add(old_beta, &column);
+            blas_direct::daxpy(old_beta, col_slice, r_slice);
         }
 
-        let gradient = column.dot(residual) / (n as Scalar);
+        let gradient = blas_direct::ddot(col_slice, r_slice) / (n as Scalar);
         let new_beta = soft_threshold(gradient, lambda * alpha) / (norm + lambda * (1.0 - alpha));
         beta[j] = new_beta;
 
         if new_beta != 0.0 {
-            residual.scaled_add(-new_beta, &column);
+            blas_direct::daxpy(-new_beta, col_slice, r_slice);
         }
         let change = (new_beta - old_beta).abs();
         if change > max_change {
