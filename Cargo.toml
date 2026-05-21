@@ -19,7 +19,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.79"
 license = "MIT"
-authors = ["Aaron BIR", "Hanxi Xiao"]
+authors = ["Aaron BIR", "Hanxi Xiao", "Javad Rahimikollu"]
 repository = "https://github.com/TranscriptionFactory/SLIDE-rs"
 
 [workspace.dependencies]
@@ -36,4 +36,4 @@ thiserror = "2.0"
 openblas-src = { version = "0.10", features = ["system"] }
 
 [workspace.metadata.slide-rs]
-description = "Pure Rust port workspace for the SLIDE pipeline"
+description = "Pure Rust port workspace for the SLIDE pipeline (Rahimikollu et al., Nature Methods 2025)"
