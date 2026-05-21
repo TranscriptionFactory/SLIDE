@@ -2408,9 +2408,9 @@ impl DashboardData {
             None
         };
         let (runs, final_cv) = if let Some(result) = result {
-            (result.evaluations, result.final_cv)
+            (result.evaluations.into_iter().flatten().collect::<Vec<_>>(), result.final_cv)
         } else {
-            (checkpoint.evaluations.clone(), checkpoint.final_cv.clone())
+            (checkpoint.evaluations.iter().filter_map(|e| e.clone()).collect(), checkpoint.final_cv.clone())
         };
         // Load matrices from data reference paths (or CLI override)
         let x_path = args
