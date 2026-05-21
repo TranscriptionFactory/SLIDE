@@ -57,6 +57,12 @@ done
 cd "${ROOT}"
 mkdir -p "${OUT_DIR}"
 
+# CRC/HPC environments provide Go through environment modules; load it so
+# `go install github.com/charmbracelet/vhs@latest` works if VHS is missing.
+if type module >/dev/null 2>&1; then
+  module load go
+fi
+
 if [[ "${SKIP_PREPARE}" -eq 0 ]]; then
   echo "==> Preparing deterministic TUI fixture"
   scripts/test-slide-tui.sh --no-tui
