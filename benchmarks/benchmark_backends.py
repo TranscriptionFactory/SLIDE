@@ -140,17 +140,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # SLURM self-submission
 # ---------------------------------------------------------------------------
 def submit_slurm(args: argparse.Namespace) -> int:
-    """Re-invoke this script as a SLURM job, minus the --slurm flag."""
+    """Re-invoke this script as a SLURM job, minus the --slurm flag.
+
+    Pre-computes a pixi shell-hook activation snippet on the login node
+    so that inside SLURM the full pixi environment (numpy, loveslide,
+    rpy2, cargo, R, etc.) is available without pixi lockfile contention.
+    Requires: ``pixi install -e dev`` has been run at least once.
+    """
     script = Path(__file__).resolve()
     project_dir = _PROJECT_ROOT
 
-    # Use pixi env python directly — it has all deps pre-installed
-    pixi_python = project_dir / ".pixi" / "envs" / "dev" / "bin" / "python"
-    if not pixi_python.exists():
+    # Find pixi binary
+    pixi = os.environ.get("PIXI") or shutil.which("pixi")
+    if not pixi:
         log.error(
-            "Pixi dev env not found at %s. Run `pixi install -e dev` first.", pixi_python,
+            "pixi not found. Install from https://pixi.sh or set PIXI=/path/to/pixi"
         )
         return 1
+
+    # Pre-compute shell activation to bake into the sbatch --wrap command
+    hook_result = subprocess.run(
+        [pixi, "shell-hook", "-e", "dev", "--manifest-path", str(project_dir / "pixi.toml")],
+        capture_output=True, text=True,
+    )
+    if hook_result.returncode != 0:
+        log.error("pixi shell-hook failed: %s", hook_result.stderr)
+        return 1
+    pixi_activate = hook_result.stdout.strip()
 
     # Rebuild argv without --slurm and slurm-* flags
     # Map dest names back to CLI flag names where they differ
@@ -170,12 +186,8 @@ def submit_slurm(args: argparse.Namespace) -> int:
         elif val is not None:
             script_args.extend([flag, str(val)])
 
-    # Activate pixi env via PATH so cargo/R are also available, then run
-    pixi_env_bin = str(pixi_python.parent)
-    wrap_cmd = (
-        f'export PATH="{pixi_env_bin}:$PATH" && '
-        f'{pixi_python} {script} {" ".join(script_args)}'
-    )
+    inner_cmd = f"python {script} {' '.join(script_args)}"
+    wrap_cmd = f'{pixi_activate}\n{inner_cmd}'
 
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -194,7 +206,7 @@ def submit_slurm(args: argparse.Namespace) -> int:
         sbatch_args.append(f"--partition={args.slurm_partition}")
     sbatch_args.extend(["--wrap", wrap_cmd])
 
-    log.info("Submitting SLURM job: %s", " ".join(sbatch_args))
+    log.info("Submitting SLURM job")
     result = subprocess.run(sbatch_args, capture_output=True, text=True)
     if result.returncode == 0:
         log.info("SLURM job submitted: %s", result.stdout.strip())
