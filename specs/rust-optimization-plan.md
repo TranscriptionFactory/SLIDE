@@ -702,6 +702,27 @@ of collecting a `Vec<Array1>` and assembling afterward.
    baseline and 367s for R)
 7. Knockoff W-statistics should be sign-symmetric for null features
 
+### Phase 2 completion notes:
+
+**Step 2.1 (early stopping):** Implemented two criteria: nnz >= n (saturated
+model) and dev_ratio > 0.9999 (near-perfect fit). The fdev (fractional deviance
+change) criterion was omitted as it triggered too aggressively on small datasets
+without matching R's exact Fortran implementation. CV lambda selection pads
+truncated folds with Inf to avoid selecting un-computed lambdas. All 20
+slide-glmnet tests pass including R parity fixtures.
+
+**Step 2.2 (nalgebra conversion):** `to_nalgebra` now iterates column-major and
+uses `DMatrix::from_vec` (zero-copy column-major). `from_nalgebra` uses bulk
+`as_slice().to_vec()` with column-major Array2 construction instead of
+per-element row/col indexing. All 16 slide-types tests pass.
+
+**Step 2.3 (rayon flattening):** Added `parallel: bool` field to
+`KnockoffConfig` (default true). `knockoff_filter_voting` uses par_iter or
+sequential iter based on the flag. `select_short_freq` chunk iteration changed
+from par_iter to plain iter. `find_interaction_lfs` sets `parallel=false` since
+the outer par_iter over marginals already uses all cores. All knockoff and core
+tests pass.
+
 ### After Phase 2:
 
 8. Full SSc benchmark (all 4 configs) — expect all configs faster than R
