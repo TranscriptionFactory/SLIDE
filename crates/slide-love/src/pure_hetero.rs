@@ -1,4 +1,3 @@
-use nalgebra::DMatrix;
 use ndarray::{Array1, Array2, Axis};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -352,16 +351,8 @@ fn left_inverse(
     cross_bi: &Array2<Scalar>,
     bi_t: &Array2<Scalar>,
 ) -> Result<Array2<Scalar>, PureHeteroError> {
-    let cross_bi_na = DMatrix::from_row_slice(
-        cross_bi.nrows(),
-        cross_bi.ncols(),
-        &cross_bi.iter().copied().collect::<Vec<_>>(),
-    );
-    let bi_t_na = DMatrix::from_row_slice(
-        bi_t.nrows(),
-        bi_t.ncols(),
-        &bi_t.iter().copied().collect::<Vec<_>>(),
-    );
+    let cross_bi_na = Matrix::from_ndarray(cross_bi.clone()).to_nalgebra();
+    let bi_t_na = Matrix::from_ndarray(bi_t.clone()).to_nalgebra();
 
     if let Some(solution) = cross_bi_na.lu().solve(&bi_t_na) {
         return Ok(Matrix::from_nalgebra(solution).into_ndarray());
@@ -386,12 +377,8 @@ fn schur_complement_diagonal(
 
     let solve_term = {
         let theta_core_na = theta_core_matrix.to_nalgebra();
-        let theta_cross_t = theta_cross.t().to_owned();
-        let theta_cross_t_na = DMatrix::from_row_slice(
-            theta_cross_t.nrows(),
-            theta_cross_t.ncols(),
-            &theta_cross_t.iter().copied().collect::<Vec<_>>(),
-        );
+        let theta_cross_t_na =
+            Matrix::from_ndarray(theta_cross.t().to_owned()).to_nalgebra();
         if let Some(solution) = theta_core_na.lu().solve(&theta_cross_t_na) {
             Matrix::from_nalgebra(solution)
                 .into_ndarray()

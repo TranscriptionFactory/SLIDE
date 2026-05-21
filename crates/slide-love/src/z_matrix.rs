@@ -58,7 +58,13 @@ pub fn map_estimate_z(
 
     let gamma_inv = gamma_inverse(gamma)?;
     let weighted_loadings = gamma_weighted_loadings(a.as_ndarray(), &gamma_inv);
-    let c_inv = c.pseudoinverse()?;
+    let c_inv = {
+        let c_na = c.to_nalgebra();
+        match c_na.try_inverse() {
+            Some(inv) => Matrix::from_nalgebra(inv),
+            None => c.pseudoinverse()?,
+        }
+    };
 
     let gram = a.as_ndarray().t().dot(&weighted_loadings) + c_inv.as_ndarray();
     let gram_inv = Matrix::from_ndarray(gram).pseudoinverse()?;
@@ -86,8 +92,10 @@ fn gamma_inverse(gamma: &Vector) -> Result<Array1<Scalar>, ZMatrixError> {
         .copied()
         .enumerate()
         .map(|(index, value)| {
-            if value <= 0.0 {
+            if value < 0.0 {
                 Err(ZMatrixError::NonPositiveGamma { index, value })
+            } else if value == 0.0 {
+                Ok(1.0e-10_f64.recip()) // match Python: replace 0 with 1e-10
             } else {
                 Ok(value.recip())
             }
@@ -135,10 +143,22 @@ mod tests {
     }
 
     #[test]
-    fn map_estimate_z_rejects_non_positive_gamma() {
+    fn map_estimate_z_clamps_zero_gamma_to_small_positive() {
         let x = Matrix::from_ndarray(arr2(&[[1.0, 2.0]]));
         let a = Matrix::from_ndarray(arr2(&[[1.0], [0.0]]));
         let gamma = Vector::from(arr1(&[1.0, 0.0]));
+        let c = Matrix::from_ndarray(arr2(&[[1.0]]));
+
+        // Zero gamma is now clamped to 1e-10 (matching Python), so this should succeed
+        let result = map_estimate_z(&x, &a, &gamma, &c);
+        assert!(result.is_ok(), "zero gamma should be clamped, not rejected");
+    }
+
+    #[test]
+    fn map_estimate_z_rejects_negative_gamma() {
+        let x = Matrix::from_ndarray(arr2(&[[1.0, 2.0]]));
+        let a = Matrix::from_ndarray(arr2(&[[1.0], [0.0]]));
+        let gamma = Vector::from(arr1(&[1.0, -0.5]));
         let c = Matrix::from_ndarray(arr2(&[[1.0]]));
 
         let error = map_estimate_z(&x, &a, &gamma, &c).unwrap_err();
@@ -147,7 +167,7 @@ mod tests {
             error,
             ZMatrixError::NonPositiveGamma {
                 index: 1,
-                value: 0.0,
+                value: -0.5,
             }
         );
     }
