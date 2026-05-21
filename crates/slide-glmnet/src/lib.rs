@@ -545,22 +545,6 @@ fn build_geometric_lambda_grid(
     )))
 }
 
-fn fit_augmented_path(
-    x: &Matrix,
-    x_tilde: &Matrix,
-    y: &Vector,
-    family: GlmnetFamily,
-    config: &GaussianLassoPathConfig,
-) -> Result<GaussianLassoPathResult, GlmnetError> {
-    validate_knockoff_inputs(x, x_tilde, y)?;
-
-    let augmented = augment_features(x, x_tilde);
-    match family {
-        GlmnetFamily::Gaussian => gaussian_lasso_path(&augmented, y, config),
-        GlmnetFamily::Binomial => binomial_lasso_path(&augmented, y, config),
-    }
-}
-
 fn augment_features(x: &Matrix, x_tilde: &Matrix) -> Matrix {
     Matrix::from_ndarray(
         ndarray::concatenate(

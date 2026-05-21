@@ -6,9 +6,8 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_glmnet::{
-    stat_glmnet_coefdiff, stat_glmnet_coefdiff_prebuilt, stat_glmnet_lambdadiff,
-    stat_glmnet_lambdadiff_prebuilt, stat_glmnet_lambdasmax, stat_glmnet_lambdasmax_prebuilt,
-    GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
+    stat_glmnet_coefdiff_prebuilt, stat_glmnet_lambdadiff_prebuilt,
+    stat_glmnet_lambdasmax_prebuilt, GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
 };
 use slide_sdp::{create_solve_asdp, create_solve_equi, create_solve_sdp, SdpError};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
@@ -480,43 +479,6 @@ fn empty_voting_result(
         selected_list: Vec::new(),
         optimal_iter: None,
         stage_one_union,
-    }
-}
-
-fn compute_statistic(
-    x: &Matrix,
-    x_tilde: &Matrix,
-    y: &Vector,
-    config: &KnockoffConfig,
-) -> Result<Vector, KnockoffError> {
-    let glmnet_config = GaussianLassoPathConfig {
-        nlambda: config.nlambda,
-        cv_folds: x.nrows().clamp(2, 5),
-        ..GaussianLassoPathConfig::default()
-    };
-
-    match config.statistic {
-        KnockoffStatistic::GlmnetLambdasMax => Ok(stat_glmnet_lambdasmax(
-            x,
-            x_tilde,
-            y,
-            config.family,
-            &glmnet_config,
-        )?),
-        KnockoffStatistic::GlmnetLambdaDiff => Ok(stat_glmnet_lambdadiff(
-            x,
-            x_tilde,
-            y,
-            config.family,
-            &glmnet_config,
-        )?),
-        KnockoffStatistic::GlmnetCoefDiff => Ok(stat_glmnet_coefdiff(
-            x,
-            x_tilde,
-            y,
-            config.family,
-            &glmnet_config,
-        )?),
     }
 }
 
