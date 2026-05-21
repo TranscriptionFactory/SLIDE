@@ -291,7 +291,7 @@ def run_rust_backend(
     if args.rust_bin:
         cmd = [str(args.rust_bin), "run"]
     else:
-        cmd = ["cargo", "run", "--release", "-p", "slide-cli", "--", "run"]
+        cmd = ["cargo", "run", "--release", "-p", "slide-rs", "--", "run"]
     cmd.extend(["--config", str(config_path), "--checkpoint", str(checkpoint_path)])
     if args.threads:
         cmd.extend(["--threads", str(args.threads)])
