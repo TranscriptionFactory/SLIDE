@@ -35,6 +35,7 @@ import datetime as dt
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -141,8 +142,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def submit_slurm(args: argparse.Namespace) -> int:
     """Re-invoke this script as a SLURM job, minus the --slurm flag."""
     script = Path(__file__).resolve()
-    # Rebuild argv without --slurm
-    rerun_args = [sys.executable, str(script)]
+    project_dir = _PROJECT_ROOT
+
+    # Use pixi env python directly — it has all deps pre-installed
+    pixi_python = project_dir / ".pixi" / "envs" / "dev" / "bin" / "python"
+    if not pixi_python.exists():
+        log.error(
+            "Pixi dev env not found at %s. Run `pixi install -e dev` first.", pixi_python,
+        )
+        return 1
+
+    # Rebuild argv without --slurm and slurm-* flags
+    script_args = []
     for key, val in vars(args).items():
         if key == "slurm":
             continue
@@ -151,14 +162,20 @@ def submit_slurm(args: argparse.Namespace) -> int:
             continue
         if isinstance(val, bool):
             if val:
-                rerun_args.append(flag)
+                script_args.append(flag)
         elif isinstance(val, list):
-            rerun_args.append(flag)
-            rerun_args.extend(str(v) for v in val)
+            script_args.append(flag)
+            script_args.extend(str(v) for v in val)
         elif val is not None:
-            rerun_args.extend([flag, str(val)])
+            script_args.extend([flag, str(val)])
 
-    cmd_str = " ".join(rerun_args)
+    # Activate pixi env via PATH so cargo/R are also available, then run
+    pixi_env_bin = str(pixi_python.parent)
+    wrap_cmd = (
+        f'export PATH="{pixi_env_bin}:$PATH" && '
+        f'{pixi_python} {script} {" ".join(script_args)}'
+    )
+
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,7 +191,7 @@ def submit_slurm(args: argparse.Namespace) -> int:
     ]
     if args.slurm_partition:
         sbatch_args.append(f"--partition={args.slurm_partition}")
-    sbatch_args.extend(["--wrap", cmd_str])
+    sbatch_args.extend(["--wrap", wrap_cmd])
 
     log.info("Submitting SLURM job: %s", " ".join(sbatch_args))
     result = subprocess.run(sbatch_args, capture_output=True, text=True)
