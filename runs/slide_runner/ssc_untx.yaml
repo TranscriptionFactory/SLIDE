@@ -27,7 +27,7 @@ slide:
   knockoff_offset: 0
 
 cv:
-  enabled: true
+  enabled: false  # disabled during knockoff alignment work
   nrep: 10
   k: 5
   eval_type: corr
@@ -38,6 +38,6 @@ output:
 slurm:
   job_name: ssc_slide
   time: "2-12:00:00"
-  mem: 150G
+  mem: 75G
   cpus_per_task: 4
   cluster: htc

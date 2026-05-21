@@ -31,17 +31,17 @@ gcc = "*"
 loveslide = { path = ".", editable = true }
 pqdm = "*"
 easydict = "*"
-rpy2 = "*"
+rpy2 = ">=3.6.7"
 
 # ─── Feature: R integration ──────────────────────────────────────────────────
 [feature.r.dependencies]
 r-base = ">=4.4"
-rpy2 = ">=3.5"
-r-knockoff = "*"
+rpy2 = ">=3.6.7"
+r-knockoff = ">=0.9"
 r-linprog = "*"
 r-lpsolve = "*"
 r-mass = "*"
-r-glmnet = "*"
+r-glmnet = ">=4.1"
 
 # ─── Feature: dev tools ──────────────────────────────────────────────────────
 [feature.dev.dependencies]
@@ -64,8 +64,9 @@ dev = { features = ["r", "dev", "viz"], solve-group = "default" }
 
 # ─── Activation ──────────────────────────────────────────────────────────────
 # Prevent stale user-site packages from shadowing pixi's environment
+# RPY2_CFFI_MODE=ABI: use rpy2's stable ABI mode (avoids cffi def_extern build issues)
 [activation]
-env = { PYTHONNOUSERSITE = "1" }
+env = { PYTHONNOUSERSITE = "1", RPY2_CFFI_MODE = "ABI" }
 
 # ─── Tasks ───────────────────────────────────────────────────────────────────
 [tasks]

@@ -1,5 +1,6 @@
 """Main knockoff filter pipeline."""
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, Callable, Union, List, Dict, Any
 import numpy as np
@@ -7,6 +8,8 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 from scipy import linalg
+
+logger = logging.getLogger(__name__)
 
 from .create import create_second_order, create_fixed, KnockoffVariables
 from .solve import create_solve_equi, create_solve_sdp, create_solve_asdp
@@ -89,14 +92,27 @@ def knockoff_threshold(
     # Candidate thresholds: 0 and absolute values of W
     ts = np.sort(np.concatenate([[0], np.abs(W)]))
 
+    logger.debug(
+        "knockoff_threshold: p=%d, fdr=%.3f, offset=%d, "
+        "W range=[%.4f, %.4f], #positive=%d, #negative=%d",
+        len(W), fdr, offset,
+        W.min(), W.max(),
+        np.sum(W > 0), np.sum(W < 0),
+    )
+
     # For each threshold, compute FDP estimate
     for t in ts:
         numerator = offset + np.sum(W <= -t)
         denominator = max(1, np.sum(W >= t))
         ratio = numerator / denominator
         if ratio <= fdr:
+            logger.debug(
+                "knockoff_threshold: t=%.6f, ratio=%.4f (<= fdr=%.3f)",
+                t, ratio, fdr,
+            )
             return t
 
+    logger.debug("knockoff_threshold: no threshold found, returning inf")
     return np.inf
 
 
@@ -302,8 +318,8 @@ def _run_single_knockoff(args):
     """
     X, y, knockoffs, statistic, fdr, offset, seed = args
 
-    # Set random seed for this iteration
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
 
     try:
         result = knockoff_filter(
@@ -445,10 +461,6 @@ def _prepare_knockoff_cache(
 
     if method not in ['asdp', 'sdp', 'equi']:
         raise ValueError(f"method must be 'asdp', 'sdp', or 'equi', got '{method}'")
-
-    # Do not use ASDP unless p > 500
-    if p <= 500 and method == 'asdp':
-        method = 'sdp'
 
     # Auto-enable shrinkage for n <= 1.25*p (R-style regularization)
     # Skip this check if match_r=True (R doesn't auto-shrink based on n/p ratio)
@@ -613,11 +625,16 @@ def _sample_knockoffs_from_cache(
 
 def _cached_iteration(X, y, cache, statistic, fdr, offset, seed):
     """Single cached knockoff iteration for parallel execution."""
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
     Xk = _sample_knockoffs_from_cache(X, cache)
     W = statistic(X, Xk, y)
     t = knockoff_threshold(W, fdr=fdr, offset=offset)
     selected = np.where(W >= t)[0]
+    logger.debug(
+        "_cached_iteration: seed=%s, threshold=%.6f, selected=%d vars",
+        seed, t, len(selected),
+    )
     return selected
 
 
@@ -734,7 +751,7 @@ def knockoff_filter_voting(
     niter: int = 1000,
     spec: float = 0.1,
     n_jobs: int = 1,
-    base_seed: int = 42,
+    base_seed: Optional[int] = None,
     verbose: bool = False,
     match_r: bool = True,
     use_cache: bool = True,
@@ -771,8 +788,9 @@ def knockoff_filter_voting(
         Matches R SLIDE default.
     n_jobs : int, default=1
         Number of parallel jobs. Use -1 for all available cores.
-    base_seed : int, default=42
-        Base seed for reproducibility. Each iteration uses base_seed + i.
+    base_seed : int, optional
+        Base seed for reproducibility. When omitted, iterations do not reset
+        NumPy's RNG, matching R SLIDE's unseeded knockoff loop more closely.
     verbose : bool, default=False
         Print progress information.
     match_r : bool, default=True
@@ -908,7 +926,8 @@ def knockoff_filter_voting(
             from joblib import Parallel, delayed
             results_list = Parallel(n_jobs=n_jobs, backend="loky")(
                 delayed(_cached_iteration)(
-                    X, y, cache, statistic, fdr, offset, base_seed + i
+                    X, y, cache, statistic, fdr, offset,
+                    None if base_seed is None else base_seed + i
                 )
                 for i in range(niter)
             )
@@ -921,8 +940,9 @@ def knockoff_filter_voting(
                 print(f"  Completed {niter}/{niter} iterations ({n_jobs} parallel jobs)")
         else:
             for i in range(niter):
-                seed = base_seed + i
-                np.random.seed(seed)
+                seed = None if base_seed is None else base_seed + i
+                if seed is not None:
+                    np.random.seed(seed)
 
                 try:
                     # Only random sampling varies per iteration
@@ -950,8 +970,9 @@ def knockoff_filter_voting(
     elif n_jobs == 1:
         # Sequential uncached path for custom knockoffs
         for i in range(niter):
-            seed = base_seed + i
-            np.random.seed(seed)
+            seed = None if base_seed is None else base_seed + i
+            if seed is not None:
+                np.random.seed(seed)
 
             try:
                 result = knockoff_filter(
@@ -994,7 +1015,8 @@ def knockoff_filter_voting(
 
         # Prepare arguments
         args_list = [
-            (X, y, None, None, fdr, offset, base_seed + i)
+            (X, y, None, None, fdr, offset,
+             None if base_seed is None else base_seed + i)
             for i in range(niter)
         ]
 
@@ -1025,10 +1047,22 @@ def knockoff_filter_voting(
     freq_vars = np.where(selection_counts >= min_selections)[0]
     freq_vars = np.sort(freq_vars)
 
+    logger.debug(
+        "knockoff_filter_voting: niter=%d, spec=%.3f, min_selections=%d, "
+        "freq_vars=%d, max_count=%d",
+        niter, spec, min_selections,
+        len(freq_vars),
+        int(selection_counts.max()) if len(selection_counts) > 0 else 0,
+    )
+
     # Apply findOptIter refinement if requested (R SLIDE behavior)
     optimal_iter = None
     if slide_selection and selected_list is not None and len(freq_vars) > 0:
         selected, optimal_iter = find_opt_iter(freq_vars, selected_list)
+        logger.debug(
+            "knockoff_filter_voting: findOptIter chose iter %d with %d vars",
+            optimal_iter, len(selected),
+        )
         if verbose:
             print(f"  findOptIter: chose iteration {optimal_iter} with {len(selected)} variables")
     else:
@@ -1061,7 +1095,7 @@ def knockoff_filter_voting_slide(
     spec: float = 0.1,
     f_size: int = 100,
     n_jobs: int = 1,
-    base_seed: int = 42,
+    base_seed: Optional[int] = None,
     verbose: bool = False,
     match_r: bool = True,
     use_cache: bool = True,
@@ -1103,8 +1137,9 @@ def knockoff_filter_voting_slide(
         This matches R SLIDE's selectShortFreq() default behavior.
     n_jobs : int, default=1
         Number of parallel jobs. Use -1 for all available cores.
-    base_seed : int, default=42
-        Base seed for reproducibility.
+    base_seed : int, optional
+        Base seed for reproducibility. When omitted, iterations do not reset
+        NumPy's RNG, matching R SLIDE's unseeded knockoff loop more closely.
     verbose : bool, default=False
         Print progress information.
     match_r : bool, default=True

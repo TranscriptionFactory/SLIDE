@@ -15,6 +15,27 @@ from sklearn.linear_model import LinearRegression, Lasso, lasso_path
 
 logger = logging.getLogger(__name__)
 
+
+def _import_rpy2():
+    """Lazy rpy2 import with graceful CFFI error handling.
+
+    Returns rpy2.robjects module. Raises RuntimeError with actionable advice
+    if rpy2 fails to initialize (common in subprocess/loky contexts).
+    """
+    try:
+        import rpy2.robjects as robjects
+        return robjects
+    except Exception as e:
+        raise RuntimeError(
+            f"rpy2 initialization failed: {e}\n"
+            "This often occurs when rpy2 is first imported inside a subprocess "
+            "(joblib/loky). Solutions:\n"
+            "  1. Add `import rpy2.robjects` at the top of your main script\n"
+            "  2. Use backend='r_knockoffs' (Python voting + R SDP) instead of "
+            "backend='r' (full R pipeline)"
+        ) from e
+
+
 # Import from bundled knockoff package
 from .knockoff.filter import (
     knockoff_filter,
@@ -79,7 +100,7 @@ def _create_second_order_r(X: np.ndarray) -> np.ndarray:
     ImportError
         If rpy2 or the R knockoff package is not installed.
     """
-    import rpy2.robjects as robjects
+    robjects = _import_rpy2()
     from rpy2.robjects import numpy2ri, pandas2ri
     from rpy2.robjects.packages import importr
 
@@ -113,7 +134,7 @@ def _solve_sdp_r(Sigma: np.ndarray, method: str = "sdp") -> np.ndarray:
     np.ndarray
         Diagonal s-vector of shape (p,).
     """
-    import rpy2.robjects as robjects
+    robjects = _import_rpy2()
     from rpy2.robjects import numpy2ri
     from rpy2.robjects.packages import importr
 
@@ -245,7 +266,7 @@ class Knockoffs:
     @staticmethod
     def filter_knockoffs_iterative_r(z, y, fdr=0.1, niter=1, spec=0.2, **kwargs):
         """Run knockoff filter using R package via rpy2."""
-        import rpy2.robjects as robjects
+        robjects = _import_rpy2()
         from rpy2.robjects import pandas2ri
         from rpy2.robjects.packages import importr
 
@@ -375,8 +396,6 @@ class Knockoffs:
 
         # Solve SDP once (OPTIMIZATION: this is expensive and doesn't change between iterations)
         p = z.shape[1]
-        if p <= 500 and method == "asdp":
-            method = "sdp"  # Use full SDP for small problems
 
         logger.info(
             f"Pre-computing SDP solution for {p} features using method={method}"
@@ -711,7 +730,7 @@ class Knockoffs:
         in knockoff matrix generation, not the voting logic.
         """
         # Route python and r_knockoffs through select_short_freq_slide for
-        # consistent SLIDE methodology (findOptIter, deterministic seeding,
+        # consistent SLIDE methodology (findOptIter,
         # feature chunking, two-stage screening).
         if backend in ("r_knockoffs", "python"):
             result = Knockoffs.select_short_freq_slide(

@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 
 from .love_python.love import LOVE
-from .knockoffs import _rlist_get
+from .knockoffs import _rlist_get, _import_rpy2
 
 
 def call_love_r(X, lbd=0.5, delta=None, thresh_fdr=0.2, rep_CV=50,
@@ -40,7 +40,7 @@ def call_love_r(X, lbd=0.5, delta=None, thresh_fdr=0.2, rep_CV=50,
     dict
         Dictionary with LOVE results matching Python format.
     """
-    import rpy2.robjects as robjects
+    robjects = _import_rpy2()
     from rpy2.robjects import numpy2ri
     from rpy2.robjects.conversion import get_conversion, localconverter
 
@@ -95,7 +95,7 @@ def call_love_r(X, lbd=0.5, delta=None, thresh_fdr=0.2, rep_CV=50,
 
 def _convert_r_pure_ind(r_list):
     """Convert R pureInd list to Python format."""
-    import rpy2.robjects as robjects
+    robjects = _import_rpy2()
     result = []
     for i in range(len(r_list)):
         item = r_list[i]

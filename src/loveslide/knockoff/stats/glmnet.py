@@ -150,29 +150,25 @@ def _lasso_max_lambda_glmnet(
         return lambda_entry
 
     elif family == 'binomial':
-        # Generate lambda sequence (decreasing order)
-        # Computed on standardized X to match R's behavior
-        lambda_max = np.max(np.abs(X_std.T @ (y - y.mean()))) / n
-        lambda_min = lambda_max / 2000
-        k = np.arange(nlambda) / nlambda
-        lambdas = lambda_max * (lambda_min / lambda_max) ** k
+        # R's knockoff calls glmnet(X, y, family="binomial") with default args:
+        #   nlambda=100, lambda.min.ratio = ifelse(nobs<nvars, 0.01, 1e-4)
+        # It does NOT pre-compute an explicit grid like the gaussian case.
+        min_lambda_ratio = 0.01 if n < p else 1e-4
 
         if HAS_GLMNET and not use_sklearn:
-            # Use vendored Fortran glmnet for efficient path computation
-            # Pass standardized X with standardize=False (like R's knockoff package)
-            # Note: Set use_sklearn=True for better R-compatibility
             try:
                 model = LogitNet(
                     alpha=1.0,  # Pure lasso
-                    n_lambda=nlambda,
-                    lambda_path=lambdas,
+                    n_lambda=100,  # R's glmnet default
+                    min_lambda_ratio=min_lambda_ratio,
+                    lambda_path=None,  # Let Fortran auto-generate (matches R)
                     standardize=False,    # Already standardized above (R-style)
                     fit_intercept=intercept,
                     n_splits=0,           # No CV
                     tol=1e-7,
                     max_iter=100000,
                 )
-                model.fit(X_std, y)  # Pass standardized X
+                model.fit(X_std, y)
                 alphas = model.lambda_path_
                 # LogitNet coef_path_ shape: (1, p, n_lambda) for binary
                 coefs = model.coef_path_.squeeze(axis=0)  # -> (p, n_lambda)
@@ -188,22 +184,26 @@ def _lasso_max_lambda_glmnet(
                 logger.debug(f"LogitNet failed, falling back to sklearn: {e}")
                 # Fall through to sklearn fallback
 
-        # Fallback to sklearn (slower, uses loop)
+        # sklearn fallback: generate lambda grid matching R's glmnet defaults
         from sklearn.linear_model import LogisticRegression
         try:
+            lambda_max = np.max(np.abs(X_std.T @ (y - y.mean()))) / n
+            lambda_min = lambda_max * min_lambda_ratio
+            n_alphas = 100
+            k = np.arange(n_alphas) / n_alphas
+            lambdas = lambda_max * (lambda_min / lambda_max) ** k
+
             Cs = 1 / (lambdas + 1e-10)
             lambda_entry = np.zeros(p)
-            # Fit for each lambda
-            for i, C in enumerate(Cs[:min(100, nlambda)]):  # Limit iterations
+            for i, C in enumerate(Cs):
                 clf = LogisticRegression(
                     penalty='l1', C=C, solver='saga',
                     fit_intercept=intercept, max_iter=1000
                 )
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    clf.fit(X_std, y)  # Use standardized X
+                    clf.fit(X_std, y)
 
-                # Check which variables have entered (vectorized)
                 coefs = clf.coef_.ravel()
                 newly_entered = (np.abs(coefs) > 0) & (lambda_entry == 0)
                 lambda_entry[newly_entered] = lambdas[i] * n

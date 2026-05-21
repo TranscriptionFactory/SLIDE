@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import datetime
+import warnings
 from glob import glob
 import pickle
 from tqdm import tqdm
@@ -494,53 +495,78 @@ class OptimizeSLIDE(SLIDE):
             )
             return
 
-        # R-style sequential per-marginal processing
-        all_sig_interactions = []  # List of (marginal_idx, interacting_idx) tuples
-        used_marginals = set()
-
         z_all = self.latent_factors.values  # Full LF matrix
         y = self.data.Y.values
         n_lfs = z_all.shape[1]
+        max_interactions = y.shape[0] - len(self.marginal_idxs)
+        current_spec = spec
+        if max_interactions <= 0:
+            self.interaction_pairs = np.array([])
+            self.interaction_terms = np.array([])
+            return
 
-        for marg_idx in self.marginal_idxs:
-            used_marginals.add(marg_idx)
-            z_marginal = z_all[:, marg_idx]
+        while True:
+            # R-style sequential per-marginal processing
+            all_sig_interactions = []  # List of (marginal_idx, interacting_idx) tuples
+            used_marginals = set()
+            retry_with_higher_spec = False
 
-            # Get candidate columns: all LFs except already-used marginals
-            candidate_idxs = [i for i in range(n_lfs) if i not in used_marginals]
-            if len(candidate_idxs) == 0:
-                continue
+            for marg_idx in self.marginal_idxs:
+                used_marginals.add(marg_idx)
+                z_marginal = z_all[:, marg_idx]
 
-            z_candidates = z_all[:, candidate_idxs]
+                # Get candidate columns: all LFs except already-used marginals
+                candidate_idxs = [i for i in range(n_lfs) if i not in used_marginals]
+                if len(candidate_idxs) == 0:
+                    continue
 
-            # Create interaction terms: marginal × each candidate
-            interaction_terms = (
-                z_marginal[:, np.newaxis] * z_candidates
-            )  # (n, n_candidates)
+                z_candidates = z_all[:, candidate_idxs]
 
-            # Correct y for marginal effect (residuals from lm(y ~ z_marginal))
-            corrected_y = Knockoffs.correct_y(z_marginal, y)
+                # Create interaction terms: marginal × each candidate
+                interaction_terms = (
+                    z_marginal[:, np.newaxis] * z_candidates
+                )  # (n, n_candidates)
 
-            # Run knockoff filter
-            sig_interaction_local_idxs = Knockoffs.select_short_freq(
-                z=interaction_terms,
-                y=corrected_y,
-                spec=spec,
-                fdr=fdr,
-                niter=niter,
-                f_size=f_size,
-                n_workers=n_workers,
-                backend=knockoff_backend,
-                method=knockoff_method,
-                shrink=knockoff_shrink,
-                offset=knockoff_offset,
-                fstat=fstat,
-            )
+                # Correct y for marginal effect (residuals from lm(y ~ z_marginal))
+                corrected_y = Knockoffs.correct_y(z_marginal, y)
 
-            # Map back to original LF indices
-            for local_idx in sig_interaction_local_idxs:
-                interacting_idx = candidate_idxs[local_idx]
-                all_sig_interactions.append((marg_idx, interacting_idx))
+                # Run knockoff filter
+                sig_interaction_local_idxs = Knockoffs.select_short_freq(
+                    z=interaction_terms,
+                    y=corrected_y,
+                    spec=current_spec,
+                    fdr=fdr,
+                    niter=niter,
+                    f_size=f_size,
+                    n_workers=n_workers,
+                    backend=knockoff_backend,
+                    method=knockoff_method,
+                    shrink=knockoff_shrink,
+                    offset=knockoff_offset,
+                    fstat=fstat,
+                )
+
+                # R interactionSLIDE reruns the whole interaction pass with a
+                # stricter spec if any marginal yields too large a model.
+                if len(sig_interaction_local_idxs) > max_interactions:
+                    current_spec += 0.1
+                    retry_with_higher_spec = True
+                    break
+
+                # Map back to original LF indices
+                for local_idx in sig_interaction_local_idxs:
+                    interacting_idx = candidate_idxs[local_idx]
+                    all_sig_interactions.append((marg_idx, interacting_idx))
+
+            if not retry_with_higher_spec:
+                break
+            if current_spec > 1.0:
+                warnings.warn(
+                    "Interaction selection exceeded model size even after "
+                    "increasing spec beyond 1.0; returning no interactions."
+                )
+                all_sig_interactions = []
+                break
 
         # Store results
         if len(all_sig_interactions) == 0:
