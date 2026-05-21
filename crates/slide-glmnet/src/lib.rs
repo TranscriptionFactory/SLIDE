@@ -246,9 +246,24 @@ pub fn stat_glmnet_lambdasmax(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
-    let path = fit_augmented_path(x, x_tilde, y, family, config)?;
+    validate_knockoff_inputs(x, x_tilde, y)?;
+    let augmented = augment_features(x, x_tilde);
+    stat_glmnet_lambdasmax_prebuilt(&augmented, x.shape().1, y, family, config)
+}
+
+/// Compute lambdasmax statistic from a pre-built augmented matrix `[X | X_tilde]`.
+pub fn stat_glmnet_lambdasmax_prebuilt(
+    augmented: &Matrix,
+    p: usize,
+    y: &Vector,
+    family: GlmnetFamily,
+    config: &GaussianLassoPathConfig,
+) -> Result<Vector, GlmnetError> {
+    let path = match family {
+        GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, config)?,
+        GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, config)?,
+    };
     let beta = path.beta.as_ndarray();
-    let p = x.shape().1;
     let lambda = path.lambda.as_ndarray();
 
     let entries = entry_lambda(beta, lambda);
@@ -269,9 +284,24 @@ pub fn stat_glmnet_lambdadiff(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
-    let path = fit_augmented_path(x, x_tilde, y, family, config)?;
+    validate_knockoff_inputs(x, x_tilde, y)?;
+    let augmented = augment_features(x, x_tilde);
+    stat_glmnet_lambdadiff_prebuilt(&augmented, x.shape().1, y, family, config)
+}
+
+/// Compute lambdadiff statistic from a pre-built augmented matrix `[X | X_tilde]`.
+pub fn stat_glmnet_lambdadiff_prebuilt(
+    augmented: &Matrix,
+    p: usize,
+    y: &Vector,
+    family: GlmnetFamily,
+    config: &GaussianLassoPathConfig,
+) -> Result<Vector, GlmnetError> {
+    let path = match family {
+        GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, config)?,
+        GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, config)?,
+    };
     let beta = path.beta.as_ndarray();
-    let p = x.shape().1;
     let mut statistic = Array1::zeros(p);
 
     for j in 0..p {
@@ -357,20 +387,29 @@ pub fn stat_glmnet_coefdiff(
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
     validate_knockoff_inputs(x, x_tilde, y)?;
-
     let augmented = augment_features(x, x_tilde);
-    let cv = cross_validated_lambda(&augmented, y, family, config)?;
+    stat_glmnet_coefdiff_prebuilt(&augmented, x.shape().1, y, family, config)
+}
+
+/// Compute coefdiff statistic from a pre-built augmented matrix `[X | X_tilde]`.
+pub fn stat_glmnet_coefdiff_prebuilt(
+    augmented: &Matrix,
+    p: usize,
+    y: &Vector,
+    family: GlmnetFamily,
+    config: &GaussianLassoPathConfig,
+) -> Result<Vector, GlmnetError> {
+    let cv = cross_validated_lambda(augmented, y, family, config)?;
     let fit_config = GaussianLassoPathConfig {
         lambda: Some(Vector::from_ndarray(Array1::from_vec(vec![cv.lambda_min]))),
         ..config.clone()
     };
     let path = match family {
-        GlmnetFamily::Gaussian => gaussian_lasso_path(&augmented, y, &fit_config)?,
-        GlmnetFamily::Binomial => binomial_lasso_path(&augmented, y, &fit_config)?,
+        GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, &fit_config)?,
+        GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, &fit_config)?,
     };
 
     let coefficient = path.beta.as_ndarray().column(0).to_owned();
-    let p = x.shape().1;
     let mut statistic = Array1::zeros(p);
     for j in 0..p {
         statistic[j] = coefficient[j].abs() - coefficient[p + j].abs();

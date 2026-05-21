@@ -6,8 +6,9 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_glmnet::{
-    stat_glmnet_coefdiff, stat_glmnet_lambdadiff, stat_glmnet_lambdasmax, GaussianLassoPathConfig,
-    GlmnetError, GlmnetFamily,
+    stat_glmnet_coefdiff, stat_glmnet_coefdiff_prebuilt, stat_glmnet_lambdadiff,
+    stat_glmnet_lambdadiff_prebuilt, stat_glmnet_lambdasmax, stat_glmnet_lambdasmax_prebuilt,
+    GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
 };
 use slide_sdp::{create_solve_asdp, create_solve_equi, create_solve_sdp, SdpError};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
@@ -270,13 +271,29 @@ pub fn knockoff_filter_voting(
 ) -> Result<VotingResult, KnockoffError> {
     validate_voting_inputs(x, y, config)?;
     let cache = prepare_knockoff_cache(x, &config.knockoff_method)?;
+    let (n, p) = x.shape();
     let selected_list: Vec<Vec<usize>> = (0..config.niter)
         .into_par_iter()
-        .map(|iteration| {
-            let x_tilde = cache.sample(config.base_seed + (iteration as u64));
-            let w = compute_statistic(x, &x_tilde, y, config)?;
-            knockoff_filter(&w, config.fdr, config.knockoff_offset)
-        })
+        .map_init(
+            || {
+                // Per-thread: pre-allocate augmented buffer, fill X portion once
+                let mut buf = Array2::zeros((n, 2 * p));
+                buf.columns_mut().into_iter().zip(x.as_ndarray().columns()).for_each(
+                    |(mut dst, src)| dst.assign(&src),
+                );
+                buf
+            },
+            |buf, iteration| {
+                let x_tilde = cache.sample(config.base_seed + (iteration as u64));
+                // Fill X_tilde portion into pre-allocated buffer
+                for (j, src_col) in x_tilde.as_ndarray().columns().into_iter().enumerate() {
+                    buf.column_mut(p + j).assign(&src_col);
+                }
+                let augmented = Matrix::from_ndarray(buf.clone());
+                let w = compute_statistic_prebuilt(&augmented, p, y, config)?;
+                knockoff_filter(&w, config.fdr, config.knockoff_offset)
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
 
     build_voting_result(x.ncols(), config, selected_list, None)
@@ -496,6 +513,43 @@ fn compute_statistic(
         KnockoffStatistic::GlmnetCoefDiff => Ok(stat_glmnet_coefdiff(
             x,
             x_tilde,
+            y,
+            config.family,
+            &glmnet_config,
+        )?),
+    }
+}
+
+fn compute_statistic_prebuilt(
+    augmented: &Matrix,
+    p: usize,
+    y: &Vector,
+    config: &KnockoffConfig,
+) -> Result<Vector, KnockoffError> {
+    let glmnet_config = GaussianLassoPathConfig {
+        nlambda: config.nlambda,
+        cv_folds: augmented.nrows().clamp(2, 5),
+        ..GaussianLassoPathConfig::default()
+    };
+
+    match config.statistic {
+        KnockoffStatistic::GlmnetLambdasMax => Ok(stat_glmnet_lambdasmax_prebuilt(
+            augmented,
+            p,
+            y,
+            config.family,
+            &glmnet_config,
+        )?),
+        KnockoffStatistic::GlmnetLambdaDiff => Ok(stat_glmnet_lambdadiff_prebuilt(
+            augmented,
+            p,
+            y,
+            config.family,
+            &glmnet_config,
+        )?),
+        KnockoffStatistic::GlmnetCoefDiff => Ok(stat_glmnet_coefdiff_prebuilt(
+            augmented,
+            p,
             y,
             config.family,
             &glmnet_config,
