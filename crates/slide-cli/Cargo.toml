@@ -1,5 +1,5 @@
 [package]
-name = "SLIDE-rs"
+name = "slide-rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -26,8 +26,8 @@ serde_yaml = "0.9"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.28"
 ratatui = "0.29"
-slide-core = { path = "../slide-core" }
-slide-cv = { path = "../slide-cv" }
-slide-data-io = { path = "../slide-data-io" }
-slide-score = { path = "../slide-score" }
-slide-types = { path = "../slide-types" }
+slide-core = { version = "0.1.0", path = "../slide-core" }
+slide-cv = { version = "0.1.0", path = "../slide-cv" }
+slide-data-io = { version = "0.1.0", path = "../slide-data-io" }
+slide-score = { version = "0.1.0", path = "../slide-score" }
+slide-types = { version = "0.1.0", path = "../slide-types" }

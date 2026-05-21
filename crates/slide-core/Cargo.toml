@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Core orchestration logic for the SLIDE pipeline"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -20,12 +21,12 @@ serde.workspace = true
 serde_json = "1.0"
 sha2 = "0.10"
 thiserror.workspace = true
-slide-data-io = { path = "../slide-data-io" }
-slide-glmnet = { path = "../slide-glmnet" }
-slide-cv = { path = "../slide-cv" }
-slide-knockoff = { path = "../slide-knockoff" }
-slide-love = { path = "../slide-love" }
-slide-types = { path = "../slide-types" }
+slide-data-io = { version = "0.1.0", path = "../slide-data-io" }
+slide-glmnet = { version = "0.1.0", path = "../slide-glmnet" }
+slide-cv = { version = "0.1.0", path = "../slide-cv" }
+slide-knockoff = { version = "0.1.0", path = "../slide-knockoff" }
+slide-love = { version = "0.1.0", path = "../slide-love" }
+slide-types = { version = "0.1.0", path = "../slide-types" }
 
 [dev-dependencies]
 tempfile = "3.13"

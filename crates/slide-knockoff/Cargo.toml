@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Knockoff filter variable selection for SLIDE"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -20,6 +21,6 @@ rand.workspace = true
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-slide-glmnet = { path = "../slide-glmnet" }
-slide-sdp = { path = "../slide-sdp" }
-slide-types = { path = "../slide-types" }
+slide-glmnet = { version = "0.1.0", path = "../slide-glmnet" }
+slide-sdp = { version = "0.1.0", path = "../slide-sdp" }
+slide-types = { version = "0.1.0", path = "../slide-types" }

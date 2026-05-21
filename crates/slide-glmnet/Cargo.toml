@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Elastic-net (glmnet) solver for SLIDE"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -18,4 +19,4 @@ ndarray.workspace = true
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-slide-types = { path = "../slide-types" }
+slide-types = { version = "0.1.0", path = "../slide-types" }

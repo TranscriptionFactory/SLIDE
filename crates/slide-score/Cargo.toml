@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Scoring and evaluation metrics for SLIDE"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -17,4 +18,4 @@ path = "src/lib.rs"
 ndarray.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-slide-types = { path = "../slide-types" }
+slide-types = { version = "0.1.0", path = "../slide-types" }
