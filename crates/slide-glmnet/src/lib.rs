@@ -808,9 +808,7 @@ fn sweep_coordinates(
         let column = x.column(j);
         let old_beta = beta[j];
         if old_beta != 0.0 {
-            for row in 0..x.nrows() {
-                residual[row] += column[row] * old_beta;
-            }
+            residual.scaled_add(old_beta, &column);
         }
 
         let gradient = column.dot(residual) / (n as Scalar);
@@ -818,9 +816,7 @@ fn sweep_coordinates(
         beta[j] = new_beta;
 
         if new_beta != 0.0 {
-            for row in 0..x.nrows() {
-                residual[row] -= column[row] * new_beta;
-            }
+            residual.scaled_add(-new_beta, &column);
         }
         let change = (new_beta - old_beta).abs();
         if change > max_change {
