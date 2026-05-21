@@ -153,13 +153,14 @@ def submit_slurm(args: argparse.Namespace) -> int:
         return 1
 
     # Rebuild argv without --slurm and slurm-* flags
+    # Map dest names back to CLI flag names where they differ
+    _dest_to_flag = {"lambdas": "--lam"}
+    _skip_keys = {"slurm", "slurm_time", "slurm_mem", "slurm_cpus", "slurm_cluster", "slurm_partition"}
     script_args = []
     for key, val in vars(args).items():
-        if key == "slurm":
+        if key in _skip_keys:
             continue
-        flag = f"--{key.replace('_', '-')}"
-        if key in ("slurm_time", "slurm_mem", "slurm_cpus", "slurm_cluster", "slurm_partition"):
-            continue
+        flag = _dest_to_flag.get(key, f"--{key.replace('_', '-')}")
         if isinstance(val, bool):
             if val:
                 script_args.append(flag)
