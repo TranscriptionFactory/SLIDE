@@ -19,7 +19,7 @@ Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 |---------|------|-----------|-------|
 | `python` | Python | Python | Pure Python pipeline via `loveslide` |
 | `r_knockoffs` | Python | R (via rpy2) | Python LOVE + R knockoff package |
-| `rust` | Rust | Rust | Full Rust pipeline via `slide-cli` |
+| `rust` | Rust | Rust | Full Rust pipeline via `slide-rs` |
 
 ## Runtime Results
 

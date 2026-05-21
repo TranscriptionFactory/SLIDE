@@ -1,7 +1,7 @@
 # TUI Visual Assessment
 
 This document assesses the current SLIDE terminal UI implementation in
-`crates/slide-cli/src/tui.rs` and separates the visuals worth keeping from the
+`crates/slide-rs/src/tui.rs` and separates the visuals worth keeping from the
 ones that should be simplified, hidden, or removed.
 
 ## Keep And Refine
@@ -17,7 +17,7 @@ Keep the current top-level tabs:
 
 This is a useful mental model: operational progress, LOVE factor creation,
 per-factor inspection, and SLIDE knockoff selection are distinct tasks. The
-structure is implemented around `App::render` in `crates/slide-cli/src/tui.rs`.
+structure is implemented around `App::render` in `crates/slide-rs/src/tui.rs`.
 
 Refinement: make the footer more context-aware. It currently always shows
 factor navigation even outside the Factors tab. Showing only relevant keys per
@@ -192,4 +192,4 @@ Recommended direction:
 
 ## Verification
 
-`cargo check -p slide-cli` passed at the time of this assessment.
+`cargo check -p slide-rs` passed at the time of this assessment.

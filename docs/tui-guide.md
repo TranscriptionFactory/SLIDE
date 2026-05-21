@@ -1,6 +1,6 @@
 # SLIDE TUI Guide
 
-The `slide-cli` binary includes a terminal dashboard (TUI) for monitoring
+The `slide-rs` binary includes a terminal dashboard (TUI) for monitoring
 SLIDE pipeline runs in real time. It reads checkpoint files written during
 optimization and renders live-updating views of LOVE factor creation, SLIDE
 knockoff selection, factor diagnostics, and more.
@@ -14,7 +14,7 @@ git clone https://github.com/TranscriptionFactory/omni-SLIDE.git
 ```
 From the project repository:
 ```bash
-cargo build --release && ./target/release/slide-cli monitor \
+cargo build --release && ./target/release/slide-rs monitor \
   --config tests/test_config_quick.yaml \
   --checkpoint tests/test_config_checkpoint.json
 ```
@@ -31,7 +31,7 @@ From the repo root:
 cargo build --release
 ```
 
-The binary lands at `target/release/slide-cli`.
+The binary lands at `target/release/slide-rs`.
 
 > Requires OpenBLAS headers on the system. On the CRC cluster, load the
 > appropriate module first (e.g. `module load openblas`).
@@ -46,7 +46,7 @@ Launches the SLIDE optimization in the background and opens the TUI on top.
 The TUI polls the checkpoint file and updates as results arrive.
 
 ```bash
-./target/release/slide-cli monitor \
+./target/release/slide-rs monitor \
   --config path/to/config.yaml \
   --checkpoint path/to/checkpoint.json
 ```
@@ -60,7 +60,7 @@ Runs optimization and writes checkpoint JSON, no TUI. Useful for batch/SLURM
 jobs where you attach the TUI separately.
 
 ```bash
-./target/release/slide-cli run \
+./target/release/slide-rs run \
   --config path/to/config.yaml \
   --checkpoint path/to/checkpoint.json
 ```
@@ -71,7 +71,7 @@ Opens the TUI against a checkpoint file written by a running or completed
 pipeline.
 
 ```bash
-./target/release/slide-cli tui \
+./target/release/slide-rs tui \
   --checkpoint path/to/checkpoint.json
 ```
 
@@ -258,7 +258,7 @@ If final CV was not enabled for the run, the tab displays a short
 
 ```bash
 # Single command — runs pipeline and TUI together
-./target/release/slide-cli monitor \
+./target/release/slide-rs monitor \
   --config my_config.yaml \
   --checkpoint /tmp/my_run.json
 ```
@@ -275,7 +275,7 @@ Submit the pipeline as a SLURM job:
 #SBATCH --cpus-per-task=4
 #SBATCH --cluster=htc
 
-./target/release/slide-cli run \
+./target/release/slide-rs run \
   --config my_config.yaml \
   --checkpoint /ix/djishnu/$USER/checkpoints/run1.json
 ```
@@ -283,7 +283,7 @@ Submit the pipeline as a SLURM job:
 Then attach the TUI from a login node while the job runs:
 
 ```bash
-./target/release/slide-cli tui \
+./target/release/slide-rs tui \
   --checkpoint /ix/djishnu/$USER/checkpoints/run1.json
 ```
 
@@ -293,7 +293,7 @@ evaluations complete. Add `--no-follow` to view a finished run without polling.
 ### Reviewing a completed run
 
 ```bash
-./target/release/slide-cli tui \
+./target/release/slide-rs tui \
   --checkpoint results/checkpoint.json \
   --x data/features.csv \
   --no-follow
