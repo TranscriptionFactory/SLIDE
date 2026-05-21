@@ -839,6 +839,11 @@ fn sweep_coordinates(
     max_change
 }
 
+/// Binomial coordinate descent using IRLS (iteratively reweighted least squares).
+///
+/// Each outer iteration computes sigmoid/weights ONCE, then solves a weighted
+/// least-squares subproblem via coordinate descent. This reduces sigmoid
+/// evaluations from O(n × p × CD_iters) to O(n × Newton_iters).
 fn binomial_coordinate_descent_step(
     x: &Array2<Scalar>,
     y: &Array1<Scalar>,
@@ -849,7 +854,10 @@ fn binomial_coordinate_descent_step(
     tolerance: Scalar,
     max_iter: usize,
 ) {
-    let mut eta = x.dot(beta);
+    let n = x.nrows();
+    let p = x.ncols();
+    let n_f = n as Scalar;
+    let mut eta = x.dot(&*beta);
     eta += *intercept;
     let mut active = beta
         .iter()
@@ -857,107 +865,149 @@ fn binomial_coordinate_descent_step(
         .collect::<Vec<_>>();
 
     for _ in 0..max_iter {
-        let mut max_change = update_intercept(eta.view_mut(), y, intercept);
+        // --- IRLS outer step: compute working quantities ONCE ---
+        let prob = eta.mapv(sigmoid);
+        let weights = prob.mapv(|p_val| (p_val * (1.0 - p_val)).max(MIN_PROBABILITY));
+        let working_response = &eta + &((y - &prob) / &weights);
+
+        // Precompute weighted column squared norms
+        let weighted_col_sq_norm = Array1::from_iter((0..p).map(|j| {
+            let col = x.column(j);
+            Zip::from(&weights)
+                .and(&col)
+                .fold(0.0, |acc, &w, &x_ij| acc + w * x_ij * x_ij)
+                / n_f
+        }));
+
+        // Update intercept: β₀ = Σ wᵢ(zᵢ - xᵢ·β) / Σ wᵢ
+        let wsum = weights.sum();
+        let intercept_change = if wsum > 0.0 {
+            let xbeta = x.dot(&*beta);
+            let new_intercept = Zip::from(&weights)
+                .and(&working_response)
+                .and(&xbeta)
+                .fold(0.0, |acc, &w, &z, &xb| acc + w * (z - xb))
+                / wsum;
+            let change = (new_intercept - *intercept).abs();
+            *intercept = new_intercept;
+            change
+        } else {
+            0.0
+        };
+
+        // Working residual for the weighted LS problem: z - β₀ - X·β
+        let mut w_residual = working_response - *intercept;
+        w_residual -= &x.dot(&*beta);
+
+        let mut max_change = intercept_change;
+
+        // Active set sweep
         if active.iter().any(|&flag| flag) {
-            let active_change =
-                sweep_binomial_coordinates(x, y, beta, &mut eta, &active, lambda, alpha);
+            let active_change = sweep_weighted_coordinates(
+                x,
+                &weights,
+                &weighted_col_sq_norm,
+                beta,
+                &mut w_residual,
+                &active,
+                lambda,
+                alpha,
+                n_f,
+            );
             max_change = max_change.max(active_change);
             if max_change > tolerance {
+                eta = x.dot(&*beta);
+                eta.mapv_inplace(|v| (v + *intercept).clamp(-MAX_ETA, MAX_ETA));
                 continue;
             }
         }
 
-        let full_set = vec![true; x.ncols()];
-        let full_change =
-            sweep_binomial_coordinates(x, y, beta, &mut eta, &full_set, lambda, alpha);
+        // Full sweep
+        let full_set = vec![true; p];
+        let full_change = sweep_weighted_coordinates(
+            x,
+            &weights,
+            &weighted_col_sq_norm,
+            beta,
+            &mut w_residual,
+            &full_set,
+            lambda,
+            alpha,
+            n_f,
+        );
         for (index, value) in beta.iter().copied().enumerate() {
             active[index] = value.abs() > 0.0;
         }
 
         max_change = max_change.max(full_change);
+
+        // Recompute eta (avoids numerical drift from incremental updates)
+        eta = x.dot(&*beta);
+        eta.mapv_inplace(|v| (v + *intercept).clamp(-MAX_ETA, MAX_ETA));
+
         if max_change <= tolerance {
             break;
         }
     }
 }
 
-fn update_intercept(
-    mut eta: ndarray::ArrayViewMut1<'_, Scalar>,
-    y: &Array1<Scalar>,
-    intercept: &mut Scalar,
-) -> Scalar {
-    let probability = eta.mapv(sigmoid);
-    let weights = probability.mapv(|value| (value * (1.0 - value)).max(MIN_PROBABILITY));
-    let gradient = (y - &probability).sum();
-    let hessian = weights.sum();
-    if hessian == 0.0 {
-        return 0.0;
-    }
-
-    let step = gradient / hessian;
-    *intercept += step;
-    eta += step;
-    step.abs()
-}
-
-fn sweep_binomial_coordinates(
+/// Coordinate descent sweep on a weighted least-squares subproblem.
+///
+/// Solves: min Σ wᵢ(zᵢ - β₀ - xᵢ·β)² + n·λ·penalty(β)
+/// using the precomputed working residual (z - β₀ - X·β) and weights.
+#[allow(clippy::too_many_arguments)]
+fn sweep_weighted_coordinates(
     x: &Array2<Scalar>,
-    y: &Array1<Scalar>,
+    weights: &Array1<Scalar>,
+    weighted_col_sq_norm: &Array1<Scalar>,
     beta: &mut Array1<Scalar>,
-    eta: &mut Array1<Scalar>,
+    w_residual: &mut Array1<Scalar>,
     active: &[bool],
     lambda: Scalar,
     alpha: Scalar,
+    n_f: Scalar,
 ) -> Scalar {
     let mut max_change = 0.0;
-
     for j in 0..x.ncols() {
         if !active[j] {
             continue;
         }
-
-        let probability = eta.mapv(sigmoid);
-        let mut weights = probability.mapv(|value| value * (1.0 - value));
-        weights.mapv_inplace(|value| value.max(MIN_PROBABILITY));
-        let residual = y - &probability;
-
-        let column = x.column(j);
-        let old_beta = beta[j];
-        let weighted_norm = Zip::from(&weights)
-            .and(&column)
-            .fold(0.0, |acc, &weight, &x_ij| acc + weight * x_ij * x_ij)
-            / (x.nrows() as Scalar);
-        if weighted_norm == 0.0 {
+        let wnorm = weighted_col_sq_norm[j];
+        if wnorm == 0.0 {
             beta[j] = 0.0;
             continue;
         }
 
-        let numerator = Zip::from(&residual)
-            .and(&weights)
-            .and(&column)
-            .fold(0.0, |acc, &resid, &weight, &x_ij| {
-                acc + x_ij * (resid + weight * x_ij * old_beta)
-            })
-            / (x.nrows() as Scalar);
-        let new_beta =
-            soft_threshold(numerator, lambda * alpha) / (weighted_norm + lambda * (1.0 - alpha));
-        beta[j] = new_beta;
-
-        let delta = new_beta - old_beta;
-        if delta != 0.0 {
-            Zip::from(eta.view_mut())
+        let column = x.column(j);
+        let old_beta = beta[j];
+        if old_beta != 0.0 {
+            Zip::from(w_residual.view_mut())
                 .and(&column)
-                .for_each(|eta_i, &x_ij| {
-                    *eta_i = (*eta_i + delta * x_ij).clamp(-MAX_ETA, MAX_ETA);
-                });
+                .for_each(|r, &x_ij| *r += old_beta * x_ij);
         }
 
-        let change = delta.abs();
+        // Weighted gradient: Σ wᵢ xᵢⱼ rᵢ / n
+        let gradient = Zip::from(weights)
+            .and(&column)
+            .and(w_residual.view())
+            .fold(0.0, |acc, &w, &x_ij, &r| acc + w * x_ij * r)
+            / n_f;
+
+        let new_beta =
+            soft_threshold(gradient, lambda * alpha) / (wnorm + lambda * (1.0 - alpha));
+        beta[j] = new_beta;
+
+        if new_beta != 0.0 {
+            Zip::from(w_residual.view_mut())
+                .and(&column)
+                .for_each(|r, &x_ij| *r -= new_beta * x_ij);
+        }
+
+        let change = (new_beta - old_beta).abs();
         if change > max_change {
             max_change = change;
         }
     }
-
     max_change
 }
 
