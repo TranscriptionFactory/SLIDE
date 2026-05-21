@@ -382,6 +382,8 @@ def load_rust_result(delta: float, lam: float, out_dir: Path) -> BackendResult |
     # Find the evaluation matching this (delta, lambda)
     ev = None
     for e in ckpt.get("evaluations", []):
+        if e is None:
+            continue
         if abs(e["delta"] - delta) < 1e-9 and abs(e["lambda"] - lam) < 1e-9:
             ev = e
             break

@@ -153,7 +153,7 @@ pub struct LiveEvaluation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OptimizeSlideResult {
     pub best: SlideRunResult,
-    pub evaluations: Vec<SlideRunResult>,
+    pub evaluations: Vec<Option<SlideRunResult>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_cv: Option<slide_cv::FinalCvResult>,
 }
@@ -180,7 +180,7 @@ pub struct OptimizeSlideCheckpoint {
     pub delta_grid: Vec<Scalar>,
     pub lambda_grid: Vec<Scalar>,
     pub config: OptimizeSlideConfig,
-    pub evaluations: Vec<SlideRunResult>,
+    pub evaluations: Vec<Option<SlideRunResult>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_cv: Option<slide_cv::FinalCvResult>,
 }
@@ -649,7 +649,7 @@ pub fn optimize_slide_resume(
 
     for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
     {
-        checkpoint.evaluations.push(run_slide_evaluation(
+        match run_slide_evaluation(
             &standardized.matrix,
             y,
             delta,
@@ -659,7 +659,16 @@ pub fn optimize_slide_resume(
             None,
             grid_index,
             total_grid,
-        )?);
+        ) {
+            Ok(result) => checkpoint.evaluations.push(Some(result)),
+            Err(SlideCoreError::Love(LoveError::DantzigFailed)) => {
+                eprintln!(
+                    "[SLIDE] LOVE Dantzig LP solver failed for delta={delta}, lambda={lambda} — skipping"
+                );
+                checkpoint.evaluations.push(None);
+            }
+            Err(error) => return Err(error),
+        }
     }
 
     maybe_run_final_cv(&mut checkpoint, y, None)?;
@@ -771,7 +780,7 @@ pub fn optimize_slide_with_checkpoint_progress(
 
     for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
     {
-        checkpoint.evaluations.push(run_slide_evaluation(
+        match run_slide_evaluation(
             &standardized.matrix,
             y,
             delta,
@@ -781,7 +790,16 @@ pub fn optimize_slide_with_checkpoint_progress(
             live_path.as_deref(),
             grid_index,
             total_grid,
-        )?);
+        ) {
+            Ok(result) => checkpoint.evaluations.push(Some(result)),
+            Err(SlideCoreError::Love(LoveError::DantzigFailed)) => {
+                eprintln!(
+                    "[SLIDE] LOVE Dantzig LP solver failed for delta={delta}, lambda={lambda} — skipping"
+                );
+                checkpoint.evaluations.push(None);
+            }
+            Err(error) => return Err(error),
+        }
         save_optimize_slide_checkpoint(path, &checkpoint)?;
         // Remove live sidecar now that the checkpoint includes this eval.
         if let Some(ref lp) = live_path {
@@ -839,7 +857,7 @@ fn validate_checkpoint_inputs(
 }
 
 fn validate_checkpoint_evaluations(
-    evaluations: &[SlideRunResult],
+    evaluations: &[Option<SlideRunResult>],
     grid: &[(Scalar, Scalar)],
 ) -> Result<(), SlideCoreError> {
     if evaluations.len() > grid.len() {
@@ -850,15 +868,17 @@ fn validate_checkpoint_evaluations(
     }
 
     for (index, evaluation) in evaluations.iter().enumerate() {
-        let (expected_delta, expected_lambda) = grid[index];
-        if evaluation.delta != expected_delta || evaluation.lambda != expected_lambda {
-            return Err(SlideCoreError::CheckpointEvaluationMismatch {
-                index,
-                checkpoint_delta: evaluation.delta,
-                checkpoint_lambda: evaluation.lambda,
-                expected_delta,
-                expected_lambda,
-            });
+        if let Some(evaluation) = evaluation {
+            let (expected_delta, expected_lambda) = grid[index];
+            if evaluation.delta != expected_delta || evaluation.lambda != expected_lambda {
+                return Err(SlideCoreError::CheckpointEvaluationMismatch {
+                    index,
+                    checkpoint_delta: evaluation.delta,
+                    checkpoint_lambda: evaluation.lambda,
+                    expected_delta,
+                    expected_lambda,
+                });
+            }
         }
     }
 
@@ -871,6 +891,7 @@ fn finalize_checkpoint(
     let best = checkpoint
         .evaluations
         .iter()
+        .filter_map(|eval| eval.as_ref())
         .max_by(|left, right| left.score.total_cmp(&right.score))
         .cloned()
         .ok_or(SlideCoreError::NoSuccessfulEvaluations)?;
@@ -898,6 +919,7 @@ fn maybe_run_final_cv(
     let best = checkpoint
         .evaluations
         .iter()
+        .filter_map(|eval| eval.as_ref())
         .max_by(|left, right| left.score.total_cmp(&right.score))
         .ok_or(SlideCoreError::NoSuccessfulEvaluations)?;
     write_progress(
@@ -1652,7 +1674,7 @@ mod tests {
         let best = dummy_slide_run(z, 1.0);
         let result = OptimizeSlideResult {
             best: best.clone(),
-            evaluations: vec![best],
+            evaluations: vec![Some(best)],
             final_cv: None,
         };
         let config = FinalCvConfig {
@@ -1738,7 +1760,7 @@ mod tests {
                 }),
                 ..OptimizeSlideConfig::default()
             },
-            evaluations: vec![low, best],
+            evaluations: vec![Some(low), Some(best)],
             final_cv: None,
         };
 
@@ -1790,7 +1812,7 @@ mod tests {
             delta_grid: vec![0.05],
             lambda_grid: vec![0.1],
             config: config.clone(),
-            evaluations: vec![dummy_slide_run(z, 1.0)],
+            evaluations: vec![Some(dummy_slide_run(z, 1.0))],
             final_cv: None,
         };
         let dir = tempdir().unwrap_or_else(|error| panic!("tempdir should succeed: {error}"));
@@ -1836,7 +1858,7 @@ mod tests {
             delta_grid: vec![0.05, 0.10],
             lambda_grid: vec![0.1],
             config: OptimizeSlideConfig::default(),
-            evaluations: vec![super::SlideRunResult {
+            evaluations: vec![Some(super::SlideRunResult {
                 delta: 0.10,
                 lambda: 0.1,
                 love: slide_love::LoveResult {
@@ -1873,7 +1895,7 @@ mod tests {
                     voting: Vec::new(),
                 },
                 score: 0.0,
-            }],
+            })],
             final_cv: None,
         };
 
