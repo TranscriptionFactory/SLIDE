@@ -1,0 +1,66 @@
+{
+  "x_ref": {
+    "path": "/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/X.csv",
+    "sha256": "9cc14385d91db2be81ee10454cbafccde8a135699f95bbfa3c8f170aec0665b8",
+    "nrows": 24,
+    "ncols": 804
+  },
+  "y_ref": {
+    "path": "/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/Y.csv",
+    "sha256": "c4a141c7c55777746ebac95ebf0d25dc034a7643e422d37a36aede8371d4ae1a",
+    "nrows": 24,
+    "ncols": 1
+  },
+  "delta_grid": [
+    0.1
+  ],
+  "lambda_grid": [
+    1.0
+  ],
+  "config": {
+    "do_interacts": true,
+    "response_type": "Continuous",
+    "love": {
+      "lbd": {
+        "v": 1,
+        "dim": [
+          1
+        ],
+        "data": [
+          0.5
+        ]
+      },
+      "mu": 0.5,
+      "est_non_pure_row": "HardThreshold",
+      "pure_homo": true,
+      "diagonal": false,
+      "delta": null,
+      "merge_strategy": "Intersection",
+      "rep_cv": 50,
+      "ndelta": 50,
+      "q": "L2",
+      "exact": false,
+      "max_pure": null,
+      "nfolds": 10,
+      "thresh_fdr": 0.2
+    },
+    "knockoff": {
+      "fdr": 0.1,
+      "spec": 0.1,
+      "niter": 500,
+      "f_size": null,
+      "knockoff_method": {
+        "Asdp": {
+          "max_block_size": 100
+        }
+      },
+      "knockoff_offset": 0,
+      "statistic": "GlmnetLambdasMax",
+      "nlambda": 250,
+      "base_seed": 42,
+      "slide_selection": false,
+      "family": "Gaussian"
+    }
+  },
+  "evaluations": []
+}
