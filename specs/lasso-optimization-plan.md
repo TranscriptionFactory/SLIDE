@@ -165,36 +165,59 @@ Instead of running 100 independent lasso paths, batch them: the X portion is sha
 ## Recommended Execution Order
 
 ```
-C.1 (strong rules)      — highest impact, algorithmic improvement
+C.1 (strong rules)      — highest impact, algorithmic improvement     ✅ DONE
   ↓
-C.5 (reduce nlambda)    — easy, reduces work proportionally
+C.5 (reduce nlambda)    — easy, reduces work proportionally           ✅ DONE
   ↓
-C.2 (covariance update) — medium impact, n < p case
+C.2 (covariance update) — medium impact, n < p case                   ⏭️ SKIPPED (n ≈ p in typical SLIDE datasets)
   ↓
-C.3 (BLAS verification) — may already be working, just verify
+C.3 (BLAS verification) — may already be working, just verify         ✅ VERIFIED (ndarray blas feature + openblas-src + F-layout)
   ↓
-C.4 (reduce allocation) — incremental improvement
+C.4 (reduce allocation) — incremental improvement                     ⏭️ SKIPPED (allocations are small, <100KB per iteration)
   ↓
-C.6 (batch paths)       — speculative, only if still needed
+C.6 (batch paths)       — speculative, only if still needed           ⏭️ DEFERRED
 ```
+
+### Implementation notes
+
+**C.1 (strong rules):** Implemented for both Gaussian and binomial paths.
+- Before each lambda step, screen out coordinates where `|X_j^T r / n| < 2λ_k - λ_{k-1}`
+- After convergence on the strong set, check KKT on excluded coordinates
+- If KKT violated, add violators and re-run (loop until clean)
+- Also: residual maintained across lambda steps (avoids O(n×p) recomputation per step)
+
+**C.5 (reduce nlambda + early stopping):**
+- `stat_glmnet_lambdasmax_prebuilt` uses `min(nlambda, 100)` instead of 250
+- `early_stop_all_entered` flag: path stops once every coefficient has been non-zero at least once
+- Applied to both Gaussian and binomial paths
+
+**C.2 (skipped):** Gram matrix precomputation gives O(p) gradient vs O(n), but since n ≈ 2p
+in typical SLIDE augmented matrices (HIV: 67×72, SSc: ~200×200), the speedup is negligible.
+The 1.5-3x estimate applies to n << p regimes.
+
+**C.3 (verified):** ndarray `blas` feature is enabled in workspace Cargo.toml, OpenBLAS is the
+backend (`openblas-src`), and `PreparedData` converts to Fortran order (`.f()`), so
+`x.column(j)` returns contiguous slices that dispatch to BLAS `ddot`/`daxpy`.
+
+**C.4 (skipped):** Per-iteration allocations are ~100KB (PreparedData copy + beta_path + residual).
+With 100-700 iterations, total allocation churn is <100MB — not a bottleneck.
 
 ## Verification at each step
 
-1. `cargo test -p slide-glmnet` — existing tests pass
-2. `cargo test --workspace` — no regressions
+1. `cargo test -p slide-glmnet` — existing tests pass ✅ (all 20 pass including R parity)
+2. `cargo test --workspace` — no regressions ✅
 3. Re-run HIV profiling: `target/release/slide run --config ... 2>&1 | grep timing`
 4. Compare lasso path output (beta, lambda) against reference to ensure correctness
 
-## Files to modify
+## Files modified
 
 | File | Change |
 |------|--------|
-| `crates/slide-glmnet/src/lib.rs` | Core lasso implementation |
-| `crates/slide-knockoff/src/lib.rs` | Knockoff iteration loop (allocation reuse) |
+| `crates/slide-glmnet/src/lib.rs` | Strong rules, reduced nlambda, early stopping, residual persistence |
 
 ## Success criteria
 
 - Rust pipeline ≤ Python time on HIV dataset (currently ~394s Rust vs ~50s Python)
 - Rust pipeline ≤ 2x R time on SSc dataset at delta=0.1
 - Z-matrix correlation ≥ 0.95 with Python reference (correctness maintained)
-- All existing tests pass
+- All existing tests pass ✅
