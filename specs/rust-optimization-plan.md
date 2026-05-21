@@ -86,11 +86,16 @@ Based on the diagnostic, apply minimal fixes. Likely candidates:
 
 ---
 
-## Phase 1: Critical performance fixes
+## Phase 1: Critical performance fixes ✅ COMPLETED
 
 Each step is independently committable and testable.
 
-### Step 1.1: Remove eigendecomposition pre-check from `cholesky()`
+### Step 1.1: Remove eigendecomposition pre-check from `cholesky()` ✅
+
+**Commit:** `c5daba2` — Removed eigendecomp + symmetry pre-check. LAPACK
+cholesky now fails naturally for non-PD matrices (returns `NotPositiveDefinite`
+with `NAN` eigenvalue). Removed orphaned `minimum_eigenvalue()` and
+`POSITIVE_DEFINITE_TOLERANCE`. All 16 slide-types tests pass.
 
 **Audit issue:** #1 — Cholesky costs 2x due to eigendecomp PD check.
 
@@ -157,7 +162,15 @@ except linalg.LinAlgError:
 **Impact:** ~2x speedup on all Cholesky-dependent paths (SDP, knockoff cache,
 LOVE omega estimation).
 
-### Step 1.2: Replace SDP feasibility binary search with closed-form scaling
+### Step 1.2: Replace SDP feasibility binary search with closed-form scaling ✅
+
+**Commit:** `c656a4d` — Replaced 64-step binary search with closed-form
+γ = (λ_min(2Σ) - floor) / (λ_min(2Σ) - λ_min(2Σ - diag(s))). Uses identity
+λ_min(2Σ) = 2·λ_min(Σ) to avoid second eigendecomp. Unified
+`enforce_correlation_feasibility` and `enforce_covariance_feasibility` into
+single `enforce_feasibility` function. R parity tests updated to verify
+feasibility invariants (solution is valid but numerically different from
+binary search). All 7 slide-sdp tests pass.
 
 **Audit issue:** #2 — 128 eigendecompositions per SDP solve.
 
@@ -221,7 +234,12 @@ this matters mainly for the initial cache construction (one-time cost per
 knockoff run), so pipeline impact is moderate (~10-20% overall) but it removes
 a major latency spike.
 
-### Step 1.3: Restructure binomial CD to IRLS
+### Step 1.3: Restructure binomial CD to IRLS ✅
+
+**Commit:** `68016e0` — Replaced `sweep_binomial_coordinates` (sigmoid per
+coordinate) with IRLS structure: compute sigmoid/weights once per outer Newton
+iteration, then solve weighted LS via new `sweep_weighted_coordinates`. All 20
+slide-glmnet tests pass including R parity (binomial path + knockoff stats).
 
 **Audit issue:** #3 — sigmoid recomputed per coordinate.
 
@@ -298,7 +316,12 @@ the dot products and norms. The column squared norms become
 to O(n × Newton_iters × λ_count). For typical numbers (p=344, CD_iters=5,
 Newton_iters=5), this is ~344/5 = **~70x fewer sigmoid calls** per lambda step.
 
-### Step 1.4: Eliminate augmented matrix clone in voting loop
+### Step 1.4: Eliminate augmented matrix clone in voting loop ✅
+
+**Commit:** `998dc24` — Changed `map_init` to create a `Matrix` directly
+(instead of `Array2`), then mutate columns in place each iteration via
+`as_ndarray_mut()`. The `compute_statistic_prebuilt` borrows `&Matrix`
+immutably — no clone needed. Simpler than the plan's `_raw` variant approach.
 
 **Audit issue:** #4 — 825 KB clone per iteration.
 
@@ -353,7 +376,14 @@ calls `x.as_ndarray()` immediately — so the `Matrix` wrapper is pure overhead.
 Moderate direct speedup (~5-10%), but reduces GC/allocator pressure which
 improves cache behavior for the CD inner loop.
 
-### Step 1.5: Add missing column swap in knockoff statistic (correctness)
+### Step 1.5: Add missing column swap in knockoff statistic (correctness) ✅
+
+**Commit:** `998dc24` (combined with 1.4) — Added Bernoulli(0.5) column swap
+between X and X_tilde before computing the knockoff statistic. Swap uses
+deterministic seed `base_seed + iteration + SWAP_SEED_OFFSET`. After computing
+the stat, signs are corrected: `W[j] *= -1` for swapped columns. Columns are
+un-swapped in place to restore X for the next iteration. All 8 slide-knockoff
+tests pass (determinism preserved).
 
 **Audit issue:** not in original audit, discovered during Python review.
 
@@ -712,18 +742,18 @@ Phase 3 (polish) — steps are independent
 
 ## Summary Table
 
-| Step | Issue | Est. Impact | Crate(s) | Risk |
-|------|-------|-------------|----------|------|
-| 0.1-0.2 | Z-matrix wrong | correctness | slide-love, slide-core | high — root cause unknown |
-| 1.1 | Eigen before Cholesky | 2x on Cholesky paths | slide-types | low |
-| 1.2 | SDP binary search | 50-100x on SDP stage | slide-sdp | medium — verify feasibility |
-| 1.3 | Sigmoid per coordinate | ~70x fewer sigmoid calls | slide-glmnet | medium — match R behavior |
-| 1.4 | Augmented clone | ~80 MB/call saved | slide-knockoff, slide-glmnet | low |
-| 1.5 | Missing column swap | correctness | slide-knockoff | low |
-| 2.1 | No early stopping | ~2x on glmnet | slide-glmnet | low |
-| 2.2 | Slow nalgebra conversion | ~10x per conversion | slide-types | low |
-| 2.3 | Nested rayon | ~20-30% overall | slide-knockoff, slide-core | low |
-| 3.1 | Redundant validation | 5-10% on decomp paths | slide-types | low |
-| 3.2 | Box-Muller sampling | ~40% on RNG | slide-knockoff | low |
-| 3.3 | Cache bloat | memory savings | slide-knockoff | low |
-| 3.4 | Interaction alloc | minor | slide-core | low |
+| Step | Issue | Est. Impact | Crate(s) | Status |
+|------|-------|-------------|----------|--------|
+| 0.1-0.2 | Z-matrix wrong | correctness | slide-love, slide-core | pending |
+| 1.1 | Eigen before Cholesky | 2x on Cholesky paths | slide-types | ✅ done |
+| 1.2 | SDP binary search | 50-100x on SDP stage | slide-sdp | ✅ done |
+| 1.3 | Sigmoid per coordinate | ~70x fewer sigmoid calls | slide-glmnet | ✅ done |
+| 1.4 | Augmented clone | ~80 MB/call saved | slide-knockoff | ✅ done |
+| 1.5 | Missing column swap | correctness | slide-knockoff | ✅ done |
+| 2.1 | No early stopping | ~2x on glmnet | slide-glmnet | pending |
+| 2.2 | Slow nalgebra conversion | ~10x per conversion | slide-types | pending |
+| 2.3 | Nested rayon | ~20-30% overall | slide-knockoff, slide-core | pending |
+| 3.1 | Redundant validation | 5-10% on decomp paths | slide-types | pending |
+| 3.2 | Box-Muller sampling | ~40% on RNG | slide-knockoff | pending |
+| 3.3 | Cache bloat | memory savings | slide-knockoff | pending |
+| 3.4 | Interaction alloc | minor | slide-core | pending |
