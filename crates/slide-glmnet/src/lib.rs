@@ -664,11 +664,7 @@ impl PreparedData {
         let y_mean = y_array.iter().copied().sum::<Scalar>() / (n as Scalar);
 
         let mut x_centered = x_array.to_owned();
-        for row in 0..n {
-            for col in 0..p {
-                x_centered[(row, col)] -= x_mean[col];
-            }
-        }
+        x_centered -= &x_mean.view().insert_axis(Axis(0));
         let y_centered = y_array.mapv(|value| value - y_mean);
 
         let mut column_scale = Array1::ones(p);
