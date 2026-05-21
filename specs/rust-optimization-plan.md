@@ -627,58 +627,56 @@ pub fn knockoff_filter_voting(
 
 ## Phase 3: Polish ✅ COMPLETED
 
-### Step 3.1: Remove redundant validation in decomposition inner loops
+### Step 3.1: Remove redundant validation in decomposition inner loops ✅
+
+**Commit:** `fe849b8`
 
 **Audit issue:** #8
 
 **File:** `crates/slide-types/src/lib.rs`
 
-Add `_unchecked` variants of `symmetric_eigendecomposition`, `cholesky`, etc.
-that skip `validate_square` and `validate_symmetric`. Use them from internal
-code paths where the matrix is known to be valid (SDP loop, LOVE).
+Added `symmetric_eigendecomposition_unchecked()` and `cholesky_unchecked()` to
+`Matrix`. Original checked methods now delegate to unchecked after validation.
+Internal callers in slide-sdp, slide-knockoff, and slide-love switched to
+unchecked variants.
 
-Keep the checked versions as the public API.
+### Step 3.2: Switch normal sampling to Ziggurat ✅
 
-### Step 3.2: Switch normal sampling to Ziggurat
+**Commit:** `fe849b8`
 
 **Audit issue:** #9
 
-**File:** `crates/slide-knockoff/src/lib.rs` — `sample_standard_normal`
+**File:** `crates/slide-knockoff/src/lib.rs`
 
-**Change:** Replace hand-rolled Box-Muller with `rand_distr::StandardNormal`:
-
-```rust
-use rand_distr::{Distribution, StandardNormal};
-
-fn sample_knockoffs(mu_k: &Array2, l_trans: &Array2, seed: u64) -> Array2 {
-    let mut rng = StdRng::seed_from_u64(seed);
-    let normals = Array2::from_shape_fn((n, p), |_| StandardNormal.sample(&mut rng));
-    mu_k + normals.dot(l_trans)
-}
-```
-
-Add `rand_distr` dependency to `slide-knockoff/Cargo.toml`.
+Replaced hand-rolled Box-Muller (`sample_standard_normal` with spare caching)
+with `rand_distr::StandardNormal` (Ziggurat). Added `rand_distr = "0.4"` to
+`slide-knockoff/Cargo.toml`.
 
 **Impact:** ~40% faster normal generation.
 
-### Step 3.3: Trim KnockoffCache
+### Step 3.3: Trim KnockoffCache ✅
+
+**Commit:** `fe849b8`
 
 **Audit issue:** #10
 
-**File:** `crates/slide-knockoff/src/lib.rs:406-423`
+**File:** `crates/slide-knockoff/src/lib.rs`
 
-Remove `mu`, `sigma`, `diag_s` from `KnockoffCache`. Only `mu_k` and `l_trans`
-are needed for sampling. This saves ~3 matrix clones per cache construction and
+Removed `mu`, `sigma`, `diag_s` from `KnockoffCache`. Only `mu_k` and `l_trans`
+are retained for sampling. Saves ~3 matrix clones per cache construction and
 reduces working set size.
 
-### Step 3.4: Pre-allocate interaction term matrix
+### Step 3.4: Pre-allocate interaction term matrix ✅
+
+**Commit:** `fe849b8`
 
 **Audit issue:** #11
 
-**File:** `crates/slide-core/src/lib.rs:472-477`
+**File:** `crates/slide-core/src/lib.rs`
 
-Pre-allocate `Array2::zeros((n, n_pairs))` and fill columns in-place instead
-of collecting a `Vec<Array1>` and assembling afterward.
+Pre-allocate `Array2::zeros((nrows, total_interactions))` and fill columns
+in-place via `ndarray::azip!` instead of collecting `Vec<Array1>` then
+assembling via `columns_to_matrix`. Removed the now-dead helper.
 
 ---
 
