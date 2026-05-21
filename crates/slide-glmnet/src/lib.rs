@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-use ndarray::{Array1, Array2, Axis, Zip};
+use ndarray::{Array1, Array2, Axis, ShapeBuilder, Zip};
 use serde::{Deserialize, Serialize};
 use slide_types::{Matrix, Scalar, Vector};
 use thiserror::Error;
@@ -696,8 +696,13 @@ impl PreparedData {
             }
         }
 
+        // Convert to column-major (Fortran) order so x.column(j) returns
+        // a contiguous slice, enabling SIMD and BLAS dispatch.
+        let mut x_col_major = Array2::zeros((n, p).f());
+        x_col_major.assign(&x_centered);
+
         let column_sq_norm = Array1::from_iter((0..p).map(|col| {
-            x_centered
+            x_col_major
                 .column(col)
                 .iter()
                 .map(|value| value * value)
@@ -706,7 +711,7 @@ impl PreparedData {
         }));
 
         Self {
-            x_scaled: Matrix::from_ndarray(x_centered),
+            x_scaled: Matrix::from_ndarray(x_col_major),
             y_raw: y.clone(),
             y_centered: Vector::from_ndarray(y_centered),
             x_mean,
