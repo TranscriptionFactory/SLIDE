@@ -169,7 +169,7 @@ C.1 (strong rules)      — highest impact, algorithmic improvement     ✅ DONE
   ↓
 C.5 (reduce nlambda)    — easy, reduces work proportionally           ✅ DONE
   ↓
-C.2 (covariance update) — medium impact, n < p case                   ⏭️ SKIPPED (n ≈ p in typical SLIDE datasets)
+C.2 (covariance update) — medium impact, n < p case                   ✅ DONE (Gram-based path when n < 2p)
   ↓
 C.3 (BLAS verification) — may already be working, just verify         ✅ VERIFIED (ndarray blas feature + openblas-src + F-layout)
   ↓
@@ -191,9 +191,13 @@ C.6 (batch paths)       — speculative, only if still needed           ⏭️ D
 - `early_stop_all_entered` flag: path stops once every coefficient has been non-zero at least once
 - Applied to both Gaussian and binomial paths
 
-**C.2 (skipped):** Gram matrix precomputation gives O(p) gradient vs O(n), but since n ≈ 2p
-in typical SLIDE augmented matrices (HIV: 67×72, SSc: ~200×200), the speedup is negligible.
-The 1.5-3x estimate applies to n << p regimes.
+**C.2 (done):** Gram matrix (covariance update) implemented for Gaussian lasso when n < 2p.
+Precomputes G = X^T X / n via BLAS dgemm (one-time O(n·p²)) and Xy = X^T y / n via dgemv.
+Inner CD loop maintains grad_cache = Xy - G·β; gradient reads are O(1), updates are O(p)
+axpy on grad_cache. Strong rules and KKT checks use grad_cache directly (no residual needed).
+Deviance ratio computed via quadratic form: RSS/n = y^Ty/n - 2·β^T·Xy + β^T·G·β.
+Falls back to residual-based path when n ≥ 2p. Key win for SSc dataset (n=24, 2p=48-344):
+all inner loop operations shift from n=24 (below BLAS threshold) to p≥48 (above threshold).
 
 **C.3 (verified):** ndarray `blas` feature is enabled in workspace Cargo.toml, OpenBLAS is the
 backend (`openblas-src`), and `PreparedData` converts to Fortran order (`.f()`), so
@@ -213,7 +217,7 @@ With 100-700 iterations, total allocation churn is <100MB — not a bottleneck.
 
 | File | Change |
 |------|--------|
-| `crates/slide-glmnet/src/lib.rs` | Strong rules, reduced nlambda, early stopping, residual persistence |
+| `crates/slide-glmnet/src/lib.rs` | Strong rules, reduced nlambda, early stopping, residual persistence, Gram-matrix CD path |
 
 ## Success criteria
 
