@@ -39,7 +39,17 @@ Screenshot docs/assets/tui/love-loading-matrix.png
 Tab
 Wait+Screen /Factors/
 Sleep 700 ms
-Screenshot docs/assets/tui/factors.png
+Screenshot docs/assets/tui/factor-1.png
+
+PageDown
+Wait+Screen /factor 2/
+Sleep 700 ms
+Screenshot docs/assets/tui/factor-2.png
+
+PageDown
+Wait+Screen /factor 3/
+Sleep 700 ms
+Screenshot docs/assets/tui/factor-3.png
 
 Tab
 Wait+Screen /SLIDE/

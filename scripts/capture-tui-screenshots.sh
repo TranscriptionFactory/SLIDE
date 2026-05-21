@@ -17,7 +17,9 @@ Outputs:
   docs/assets/tui/overview.png
   docs/assets/tui/love-diagnostics.png
   docs/assets/tui/love-loading-matrix.png
-  docs/assets/tui/factors.png
+  docs/assets/tui/factor-1.png
+  docs/assets/tui/factor-2.png
+  docs/assets/tui/factor-3.png
   docs/assets/tui/slide-selection.png
   docs/assets/tui/performance.png
   docs/assets/tui/tui-demo.gif

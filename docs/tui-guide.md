@@ -103,7 +103,9 @@ Outputs are written under `docs/assets/tui/`:
 - `overview.png`
 - `love-diagnostics.png`
 - `love-loading-matrix.png`
-- `factors.png`
+- `factor-1.png`
+- `factor-2.png`
+- `factor-3.png`
 - `slide-selection.png`
 - `performance.png`
 - `tui-demo.gif`

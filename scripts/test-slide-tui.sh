@@ -5,8 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="${SLIDE_TUI_WORKDIR:-${ROOT}/.tmp/tui-smoke}"
 CONFIG="${WORKDIR}/tui-smoke.yaml"
 CHECKPOINT="${WORKDIR}/tui-smoke-checkpoint.json"
-X_CSV="${WORKDIR}/tui-smoke-x.csv"
-Y_CSV="${WORKDIR}/tui-smoke-y.csv"
+SOURCE_X_CSV="${ROOT}/example/HIV+cytokines_X.csv"
+SOURCE_Y_CSV="${ROOT}/example/HIV+cytokines_y.csv"
+X_CSV="${WORKDIR}/tui-smoke-hiv-x.csv"
+Y_CSV="${WORKDIR}/tui-smoke-hiv-y.csv"
 
 PROFILE="debug"
 OPEN_TUI=1
@@ -17,7 +19,7 @@ usage() {
 Usage: scripts/test-slide-tui.sh [--release] [--no-tui] [--reuse]
 
 Builds the Rust SLIDE CLI, runs focused TUI/core tests, creates a small
-final-CV checkpoint, then opens the TUI on that checkpoint.
+final-CV HIV checkpoint, then opens the TUI on that checkpoint.
 
 Options:
   --release  Build and run target/release/slide instead of debug.
@@ -96,41 +98,31 @@ cv:
   eval_type: auc
 YAML
 
-echo "==> Generating small deterministic TUI fixture"
-python - "${X_CSV}" "${Y_CSV}" <<'PY'
+echo "==> Generating HIV cytokines TUI fixture"
+python - "${SOURCE_X_CSV}" "${SOURCE_Y_CSV}" "${X_CSV}" "${Y_CSV}" <<'PY'
 import csv
-import math
+import shutil
 import sys
 from pathlib import Path
 
-x_path = Path(sys.argv[1])
-y_path = Path(sys.argv[2])
-n = 30
-p = 10
-
-with x_path.open("w", newline="") as handle:
-    writer = csv.writer(handle)
-    writer.writerow(["sample_id"] + [f"feature_{j+1}" for j in range(p)])
-    for i in range(n):
-        y = 1 if i >= n // 2 else 0
-        row = [f"S{i+1:02d}"]
-        for j in range(p):
-            signal = (1.5 if y else -1.5) if j < 4 else 0.0
-            value = signal + math.sin((i + 1) * (j + 2)) * 0.2 + ((i % 3) - 1) * 0.05
-            row.append(f"{value:.6f}")
-        writer.writerow(row)
-
-with y_path.open("w", newline="") as handle:
-    writer = csv.writer(handle)
-    writer.writerow(["sample_id", "class"])
-    for i in range(n):
-        writer.writerow([f"S{i+1:02d}", 1 if i >= n // 2 else 0])
+source_x, source_y, x_path, y_path = map(Path, sys.argv[1:])
+feature_limit = 40
+with source_x.open(newline="") as src, x_path.open("w", newline="") as dst:
+    reader = csv.reader(src)
+    writer = csv.writer(dst)
+    for row in reader:
+        writer.writerow(row[: feature_limit + 1])
+shutil.copyfile(source_y, y_path)
+print(f"source: {source_x}")
+print(f"features: first {feature_limit} HIV cytokine features")
+print(f"X data: {x_path}")
+print(f"Y data: {y_path}")
 PY
 
-echo "==> Running small SLIDE job with final CV"
+echo "==> Running HIV SLIDE job with final CV"
 "${BIN}" run --config "${CONFIG}" --checkpoint "${CHECKPOINT}"
 
-echo "==> Validating checkpoint contains final_cv"
+echo "==> Validating checkpoint contains final_cv and multiple factors"
 python - "${CHECKPOINT}" <<'PY'
 import json
 import sys
@@ -141,8 +133,14 @@ data = json.loads(path.read_text())
 final_cv = data.get("final_cv")
 if not final_cv:
     raise SystemExit(f"{path} does not contain final_cv")
+evaluations = data.get("evaluations", [])
+factor_counts = [run.get("love", {}).get("k", 0) for run in evaluations]
+max_factors = max(factor_counts, default=0)
+if max_factors < 2:
+    raise SystemExit(f"{path} only produced {max_factors} factor(s); screenshots need multiple factor views")
 folds = final_cv.get("folds", [])
 print(f"checkpoint: {path}")
+print(f"max_factors={max_factors} evaluations={len(evaluations)}")
 print(f"final_cv metric={final_cv.get('metric')} mean={final_cv.get('mean')} se={final_cv.get('standard_error')} folds={len(folds)}")
 PY
 
@@ -155,6 +153,7 @@ Checkpoint: ${CHECKPOINT}
 Manual checks in the TUI:
   - Tab order includes Overview, LOVE, Factors, SLIDE, Performance.
   - Overview has a "final CV:" line.
+  - Factors has multiple pages; use PageUp/PageDown to browse factors.
   - Performance shows final CV summary, fold scores, and fold model sizes.
   - Press q to quit.
 EOF
