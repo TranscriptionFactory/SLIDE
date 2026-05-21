@@ -135,42 +135,72 @@ pub fn gaussian_lasso_path(
     let mut ever_nonzero = vec![false; p];
     let mut n_ever_nonzero = 0usize;
 
+    // Pre-extract raw slices for the hot path — avoids ndarray overhead per access.
+    // The design matrix is column-major, so column j is at x_data[j*n..(j+1)*n].
+    let x_data = x_array
+        .as_slice_memory_order()
+        .unwrap_or_else(|| unreachable!("column-major matrix is contiguous"));
+    let col_norms = prepared
+        .column_sq_norm
+        .as_slice()
+        .unwrap_or_else(|| unreachable!("Array1 is contiguous"));
+
+    // Reusable buffers — allocated once, reused across all lambda steps + CD calls
+    let mut candidate = vec![true; p];
+    let mut active = vec![false; p];
+
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         // Strong rule screening: skip coordinates guaranteed to remain zero.
         // At lambda_k, if |X_j^T r / n| < 2*lambda_k - lambda_{k-1}, then
         // coordinate j will stay zero (given it was zero at lambda_{k-1}).
-        let mut candidate: Vec<bool> = if lambda_index == 0 {
-            vec![true; p] // no screening on first lambda
+        if lambda_index == 0 {
+            candidate.fill(true);
         } else {
             let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
             let threshold = 2.0 * lambda_value - prev_lambda;
-            (0..p)
-                .map(|j| {
-                    beta_scaled[j].abs() > 0.0
-                        || (x_array.column(j).dot(&residual) / n_f).abs() >= threshold
-                })
-                .collect()
-        };
+            let b = beta_scaled
+                .as_slice()
+                .unwrap_or_else(|| unreachable!("Array1 is contiguous"));
+            let r = residual
+                .as_slice()
+                .unwrap_or_else(|| unreachable!("Array1 is contiguous"));
+            for j in 0..p {
+                if b[j].abs() > 0.0 {
+                    candidate[j] = true;
+                } else {
+                    candidate[j] = (col_dot(x_data, n, j, r) / n_f).abs() >= threshold;
+                }
+            }
+        }
 
         // Strong rule + KKT check loop
         loop {
             coordinate_descent_step(
-                x_array,
-                &prepared.column_sq_norm,
-                &mut beta_scaled,
-                &mut residual,
+                x_data,
+                n,
+                col_norms,
+                beta_scaled
+                    .as_slice_mut()
+                    .unwrap_or_else(|| unreachable!("Array1 is contiguous")),
+                residual
+                    .as_slice_mut()
+                    .unwrap_or_else(|| unreachable!("Array1 is contiguous")),
                 lambda_value,
                 config.alpha,
                 config.tolerance,
                 config.max_iter,
                 &candidate,
+                &mut active,
             );
 
             // Check KKT conditions on excluded coordinates
+            let r = residual
+                .as_slice()
+                .unwrap_or_else(|| unreachable!("Array1 is contiguous"));
             let mut kkt_violated = false;
             for j in 0..p {
                 if !candidate[j] {
-                    let grad = (x_array.column(j).dot(&residual) / n_f).abs();
+                    let grad = (col_dot(x_data, n, j, r) / n_f).abs();
                     if grad > lambda_value * config.alpha {
                         candidate[j] = true;
                         kkt_violated = true;
@@ -207,7 +237,13 @@ pub fn gaussian_lasso_path(
             break;
         }
         if null_deviance > 0.0 {
-            let rss = residual.dot(&residual);
+            let r = residual
+                .as_slice()
+                .unwrap_or_else(|| unreachable!("Array1 is contiguous"));
+            let mut rss: Scalar = 0.0;
+            for i in 0..n {
+                rss += r[i] * r[i];
+            }
             let dev_ratio = 1.0 - rss / null_deviance;
             if dev_ratio > DEVMAX {
                 break;
@@ -907,13 +943,17 @@ impl PreparedData {
         let mut x_col_major = Array2::zeros((n, p).f());
         x_col_major.assign(&x_centered);
 
+        let x_data = x_col_major
+            .as_slice_memory_order()
+            .unwrap_or_else(|| unreachable!("freshly allocated column-major array"));
+        let n_f = n as Scalar;
         let column_sq_norm = Array1::from_iter((0..p).map(|col| {
-            x_col_major
-                .column(col)
-                .iter()
-                .map(|value| value * value)
-                .sum::<Scalar>()
-                / (n as Scalar)
+            let c = &x_data[col * n..(col + 1) * n];
+            let mut sq: Scalar = 0.0;
+            for i in 0..n {
+                sq += c[i] * c[i];
+            }
+            sq / n_f
         }));
 
         Self {
@@ -933,39 +973,35 @@ impl PreparedData {
 /// The `residual` is maintained incrementally (y - X*beta) and persists across
 /// lambda steps. The `candidate` mask restricts which coordinates are considered
 /// (replacing the old "full sweep over all p" with "sweep over strong set").
+///
+/// `active` is a caller-owned buffer (size p) reused across lambda steps to
+/// avoid per-call allocation.
 #[allow(clippy::too_many_arguments)]
 fn coordinate_descent_step(
-    x: &Array2<Scalar>,
-    column_sq_norm: &Array1<Scalar>,
-    beta: &mut Array1<Scalar>,
-    residual: &mut Array1<Scalar>,
+    x_data: &[Scalar],
+    n: usize,
+    column_sq_norm: &[Scalar],
+    beta: &mut [Scalar],
+    residual: &mut [Scalar],
     lambda: Scalar,
     alpha: Scalar,
     tolerance: Scalar,
     max_iter: usize,
     candidate: &[bool],
+    active: &mut [bool],
 ) {
-    let n = x.nrows();
+    let p = candidate.len();
 
     // Active set: non-zero betas within the candidate set
-    let mut active: Vec<bool> = beta
-        .iter()
-        .zip(candidate.iter())
-        .map(|(value, &cand)| cand && value.abs() > 0.0)
-        .collect();
+    for j in 0..p {
+        active[j] = candidate[j] && beta[j].abs() > 0.0;
+    }
 
     for _ in 0..max_iter {
         let mut max_change = 0.0;
         if active.iter().any(|&flag| flag) {
             max_change = sweep_coordinates(
-                x,
-                column_sq_norm,
-                beta,
-                residual,
-                &active,
-                lambda,
-                alpha,
-                n,
+                x_data, n, column_sq_norm, beta, residual, active, lambda, alpha,
             );
             if max_change > tolerance {
                 continue;
@@ -974,18 +1010,11 @@ fn coordinate_descent_step(
 
         // Sweep the full candidate set (not all p coordinates)
         let candidate_change = sweep_coordinates(
-            x,
-            column_sq_norm,
-            beta,
-            residual,
-            candidate,
-            lambda,
-            alpha,
-            n,
+            x_data, n, column_sq_norm, beta, residual, candidate, lambda, alpha,
         );
 
-        for (index, value) in beta.iter().copied().enumerate() {
-            active[index] = candidate[index] && value.abs() > 0.0;
+        for j in 0..p {
+            active[j] = candidate[j] && beta[j].abs() > 0.0;
         }
 
         if candidate_change.max(max_change) <= tolerance {
@@ -994,19 +1023,31 @@ fn coordinate_descent_step(
     }
 }
 
+/// Inner loop using raw slices to bypass ndarray abstraction overhead.
+///
+/// For small n (e.g. 24), ndarray's iterator setup, stride computation, and
+/// BLAS dispatch threshold checks dominate the actual 24-element dot products.
+/// Raw slice loops let the compiler auto-vectorize without overhead.
+///
+/// `x_data` is the column-major matrix data (column j at offset `j * n`).
 #[allow(clippy::too_many_arguments)]
 fn sweep_coordinates(
-    x: &Array2<Scalar>,
-    column_sq_norm: &Array1<Scalar>,
-    beta: &mut Array1<Scalar>,
-    residual: &mut Array1<Scalar>,
+    x_data: &[Scalar],
+    n: usize,
+    column_sq_norm: &[Scalar],
+    beta: &mut [Scalar],
+    residual: &mut [Scalar],
     active: &[bool],
     lambda: Scalar,
     alpha: Scalar,
-    n: usize,
 ) -> Scalar {
-    let mut max_change = 0.0;
-    for j in 0..x.ncols() {
+    let n_f = n as Scalar;
+    let la = lambda * alpha;
+    let denom_extra = lambda * (1.0 - alpha);
+    let p = active.len();
+    let mut max_change: Scalar = 0.0;
+
+    for j in 0..p {
         if !active[j] {
             continue;
         }
@@ -1016,19 +1057,30 @@ fn sweep_coordinates(
             continue;
         }
 
-        let column = x.column(j);
+        let c = &x_data[j * n..(j + 1) * n];
         let old_beta = beta[j];
+
         if old_beta != 0.0 {
-            residual.scaled_add(old_beta, &column);
+            for i in 0..n {
+                residual[i] += old_beta * c[i];
+            }
         }
 
-        let gradient = column.dot(residual) / (n as Scalar);
-        let new_beta = soft_threshold(gradient, lambda * alpha) / (norm + lambda * (1.0 - alpha));
+        let mut dot: Scalar = 0.0;
+        for i in 0..n {
+            dot += c[i] * residual[i];
+        }
+        let gradient = dot / n_f;
+
+        let new_beta = soft_threshold(gradient, la) / (norm + denom_extra);
         beta[j] = new_beta;
 
         if new_beta != 0.0 {
-            residual.scaled_add(-new_beta, &column);
+            for i in 0..n {
+                residual[i] -= new_beta * c[i];
+            }
         }
+
         let change = (new_beta - old_beta).abs();
         if change > max_change {
             max_change = change;
@@ -1212,6 +1264,18 @@ fn sweep_weighted_coordinates(
         }
     }
     max_change
+}
+
+/// Raw-slice dot product: column j of a column-major matrix with vector v.
+/// Avoids ndarray iterator/bounds-check overhead for small n.
+#[inline(always)]
+fn col_dot(x_data: &[Scalar], n: usize, j: usize, v: &[Scalar]) -> Scalar {
+    let c = &x_data[j * n..(j + 1) * n];
+    let mut dot: Scalar = 0.0;
+    for i in 0..n {
+        dot += c[i] * v[i];
+    }
+    dot
 }
 
 fn soft_threshold(value: Scalar, penalty: Scalar) -> Scalar {
