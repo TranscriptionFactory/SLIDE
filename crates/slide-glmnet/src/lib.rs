@@ -232,8 +232,9 @@ pub fn binomial_lasso_path(
     let y_raw = prepared.y_raw.as_ndarray();
     let n = x_scaled.nrows();
     let p = x_scaled.ncols();
+    let n_f = n as Scalar;
     let nlambda = lambda.len();
-    let mut beta_scaled = Array1::zeros(p);
+    let mut beta_scaled: Array1<Scalar> = Array1::zeros(p);
     let mut intercept_scaled = logit(clamp_probability(prepared.y_mean));
     let mut beta_path = Array2::zeros((p, nlambda));
     let mut intercept_path = Array1::zeros(nlambda);
@@ -246,16 +247,54 @@ pub fn binomial_lasso_path(
     let mut n_computed = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
-        binomial_coordinate_descent_step(
-            x_scaled,
-            y_raw,
-            &mut beta_scaled,
-            &mut intercept_scaled,
-            lambda_value,
-            config.alpha,
-            config.tolerance,
-            config.max_iter,
-        );
+        // Strong rule screening for binomial: use gradient from log-likelihood
+        // gradient_j = X_j^T (y - prob) / n
+        let mut candidate: Vec<bool> = if lambda_index == 0 {
+            vec![true; p]
+        } else {
+            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
+            let threshold = 2.0 * lambda_value - prev_lambda;
+            let eta = x_scaled.dot(&beta_scaled).mapv(|v| v + intercept_scaled);
+            let working_residual = y_raw - &eta.mapv(sigmoid);
+            (0..p)
+                .map(|j| {
+                    beta_scaled[j].abs() > 0.0
+                        || (x_scaled.column(j).dot(&working_residual) / n_f).abs() >= threshold
+                })
+                .collect()
+        };
+
+        // Strong rule + KKT check loop
+        loop {
+            binomial_coordinate_descent_step(
+                x_scaled,
+                y_raw,
+                &mut beta_scaled,
+                &mut intercept_scaled,
+                lambda_value,
+                config.alpha,
+                config.tolerance,
+                config.max_iter,
+                &candidate,
+            );
+
+            // Check KKT on excluded coordinates
+            let eta = x_scaled.dot(&beta_scaled).mapv(|v| v + intercept_scaled);
+            let working_residual = y_raw - &eta.mapv(sigmoid);
+            let mut kkt_violated = false;
+            for j in 0..p {
+                if !candidate[j] {
+                    let grad = (x_scaled.column(j).dot(&working_residual) / n_f).abs();
+                    if grad > lambda_value * config.alpha {
+                        candidate[j] = true;
+                        kkt_violated = true;
+                    }
+                }
+            }
+            if !kkt_violated {
+                break;
+            }
+        }
 
         let beta_original = &beta_scaled / &prepared.column_scale;
         let intercept_value = intercept_scaled - prepared.x_mean.dot(&beta_original);
@@ -968,6 +1007,7 @@ fn sweep_coordinates(
 /// Each outer iteration computes sigmoid/weights ONCE, then solves a weighted
 /// least-squares subproblem via coordinate descent. This reduces sigmoid
 /// evaluations from O(n × p × CD_iters) to O(n × Newton_iters).
+#[allow(clippy::too_many_arguments)]
 fn binomial_coordinate_descent_step(
     x: &Array2<Scalar>,
     y: &Array1<Scalar>,
@@ -977,16 +1017,17 @@ fn binomial_coordinate_descent_step(
     alpha: Scalar,
     tolerance: Scalar,
     max_iter: usize,
+    candidate: &[bool],
 ) {
     let n = x.nrows();
-    let p = x.ncols();
     let n_f = n as Scalar;
     let mut eta = x.dot(&*beta);
     eta += *intercept;
-    let mut active = beta
+    let mut active: Vec<bool> = beta
         .iter()
-        .map(|value| value.abs() > 0.0)
-        .collect::<Vec<_>>();
+        .zip(candidate.iter())
+        .map(|(value, &cand)| cand && value.abs() > 0.0)
+        .collect();
 
     for _ in 0..max_iter {
         // --- IRLS outer step: compute working quantities ONCE ---
@@ -994,8 +1035,11 @@ fn binomial_coordinate_descent_step(
         let weights = prob.mapv(|p_val| (p_val * (1.0 - p_val)).max(MIN_PROBABILITY));
         let working_response = &eta + &((y - &prob) / &weights);
 
-        // Precompute weighted column squared norms
-        let weighted_col_sq_norm = Array1::from_iter((0..p).map(|j| {
+        // Precompute weighted column squared norms (only for candidate coordinates)
+        let weighted_col_sq_norm = Array1::from_iter((0..candidate.len()).map(|j| {
+            if !candidate[j] {
+                return 0.0;
+            }
             let col = x.column(j);
             Zip::from(&weights)
                 .and(&col)
@@ -1046,24 +1090,23 @@ fn binomial_coordinate_descent_step(
             }
         }
 
-        // Full sweep
-        let full_set = vec![true; p];
-        let full_change = sweep_weighted_coordinates(
+        // Candidate set sweep (replaces full sweep — only sweep strong rule survivors)
+        let candidate_change = sweep_weighted_coordinates(
             x,
             &weights,
             &weighted_col_sq_norm,
             beta,
             &mut w_residual,
-            &full_set,
+            candidate,
             lambda,
             alpha,
             n_f,
         );
         for (index, value) in beta.iter().copied().enumerate() {
-            active[index] = value.abs() > 0.0;
+            active[index] = candidate[index] && value.abs() > 0.0;
         }
 
-        max_change = max_change.max(full_change);
+        max_change = max_change.max(candidate_change);
 
         // Recompute eta (avoids numerical drift from incremental updates)
         eta = x.dot(&*beta);
