@@ -271,26 +271,70 @@ pub fn knockoff_filter_voting(
     validate_voting_inputs(x, y, config)?;
     let cache = prepare_knockoff_cache(x, &config.knockoff_method)?;
     let (n, p) = x.shape();
+
+    // Seed offset for column swap RNG, distinct from knockoff sampling seeds.
+    const SWAP_SEED_OFFSET: u64 = 1_000_000;
+
     let selected_list: Vec<Vec<usize>> = (0..config.niter)
         .into_par_iter()
         .map_init(
             || {
-                // Per-thread: pre-allocate augmented buffer, fill X portion once
+                // Per-thread: pre-allocate augmented buffer as Matrix, fill X once
                 let mut buf = Array2::zeros((n, 2 * p));
-                buf.columns_mut().into_iter().zip(x.as_ndarray().columns()).for_each(
-                    |(mut dst, src)| dst.assign(&src),
-                );
-                buf
+                buf.columns_mut()
+                    .into_iter()
+                    .zip(x.as_ndarray().columns())
+                    .for_each(|(mut dst, src)| dst.assign(&src));
+                Matrix::from_ndarray(buf)
             },
-            |buf, iteration| {
+            |augmented, iteration| {
                 let x_tilde = cache.sample(config.base_seed + (iteration as u64));
-                // Fill X_tilde portion into pre-allocated buffer
+                let buf = augmented.as_ndarray_mut();
+
+                // Fill X_tilde portion into right half of buffer
                 for (j, src_col) in x_tilde.as_ndarray().columns().into_iter().enumerate() {
                     buf.column_mut(p + j).assign(&src_col);
                 }
-                let augmented = Matrix::from_ndarray(buf.clone());
-                let w = compute_statistic_prebuilt(&augmented, p, y, config)?;
-                knockoff_filter(&w, config.fdr, config.knockoff_offset)
+
+                // Column swap: randomly swap X[j] ↔ X_tilde[j] to enforce knockoff symmetry
+                let mut rng = StdRng::seed_from_u64(
+                    config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
+                );
+                let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
+                for j in 0..p {
+                    if swap[j] {
+                        for i in 0..n {
+                            buf.swap((i, j), (i, p + j));
+                        }
+                    }
+                }
+
+                // Compute statistic (borrows augmented immutably via as_ndarray)
+                let w = compute_statistic_prebuilt(augmented, p, y, config)?;
+
+                // Un-swap to restore X columns for next iteration
+                let buf = augmented.as_ndarray_mut();
+                for j in 0..p {
+                    if swap[j] {
+                        for i in 0..n {
+                            buf.swap((i, j), (i, p + j));
+                        }
+                    }
+                }
+
+                // Correct W-statistic signs for swapped columns
+                let mut w_array = w.into_ndarray();
+                for j in 0..p {
+                    if swap[j] {
+                        w_array[j] = -w_array[j];
+                    }
+                }
+
+                knockoff_filter(
+                    &Vector::from_ndarray(w_array),
+                    config.fdr,
+                    config.knockoff_offset,
+                )
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
