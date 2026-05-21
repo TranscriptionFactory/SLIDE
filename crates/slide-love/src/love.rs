@@ -85,7 +85,7 @@ impl Default for LoveConfig {
             pure_homo: false,
             diagonal: false,
             delta: None,
-            merge_strategy: MergeStrategy::Intersection,
+            merge_strategy: MergeStrategy::Union,
             rep_cv: 50,
             ndelta: 50,
             q: ScoreNorm::L2,
@@ -123,6 +123,16 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
         .collect::<std::collections::BTreeSet<_>>();
     gamma_hat.mapv_inplace(|value| if value < 0.0 { 1.0e-2 } else { value });
 
+    // When pure_homo is enabled and the user hasn't explicitly chosen a non-pure
+    // estimation method, Python/R force Dantzig instead of HardThreshold.
+    let effective_non_pure_method = if config.pure_homo
+        && config.est_non_pure_row == NonPureMethod::HardThreshold
+    {
+        NonPureMethod::Dantzig
+    } else {
+        config.est_non_pure_row
+    };
+
     let (group, omega) = if i_hat.len() == p {
         (i_hat_part.clone(), None)
     } else {
@@ -133,6 +143,7 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
             &i_hat,
             &se_est,
             opt_delta,
+            effective_non_pure_method,
             config,
         )?
     };
@@ -410,6 +421,7 @@ fn estimate_non_pure_rows(
     pure_vec: &[usize],
     se_est: &Array1<Scalar>,
     opt_delta: Scalar,
+    method: NonPureMethod,
     config: &LoveConfig,
 ) -> Result<(Vec<SignedPureGroup>, Option<Matrix>), LoveError> {
     let sigma = Matrix::from_ndarray(sample_covariance(x.as_ndarray()));
@@ -422,7 +434,7 @@ fn estimate_non_pure_rows(
         .filter(|index| !pure_set.contains(index))
         .collect::<Vec<_>>();
 
-    let (aj, omega) = match config.est_non_pure_row {
+    let (aj, omega) = match method {
         NonPureMethod::Dantzig => {
             let ai_abs = a_hat
                 .as_ndarray()
@@ -476,7 +488,7 @@ fn estimate_non_pure_rows(
                     .axis_iter(Axis(0))
                     .map(|row| row.iter().copied().map(Scalar::abs).sum())
                     .fold(0.0, Scalar::max);
-            let aj = match config.est_non_pure_row {
+            let aj = match method {
                 NonPureMethod::HardThreshold => Matrix::from_ndarray(thresh_a(
                     &(omega.as_ndarray().dot(y.as_ndarray())).t().to_owned(),
                     threshold,
