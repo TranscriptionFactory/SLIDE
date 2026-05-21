@@ -523,20 +523,13 @@ fn fit_augmented_path(
 }
 
 fn augment_features(x: &Matrix, x_tilde: &Matrix) -> Matrix {
-    let x_array = x.as_ndarray();
-    let x_tilde_array = x_tilde.as_ndarray();
-    let n = x_array.nrows();
-    let p = x_array.ncols();
-    let mut augmented = Array2::zeros((n, p + x_tilde_array.ncols()));
-    for row in 0..n {
-        for col in 0..p {
-            augmented[(row, col)] = x_array[(row, col)];
-        }
-        for col in 0..x_tilde_array.ncols() {
-            augmented[(row, p + col)] = x_tilde_array[(row, col)];
-        }
-    }
-    Matrix::from_ndarray(augmented)
+    Matrix::from_ndarray(
+        ndarray::concatenate(
+            Axis(1),
+            &[x.as_ndarray().view(), x_tilde.as_ndarray().view()],
+        )
+        .unwrap_or_else(|_| unreachable!("validated matching row counts")),
+    )
 }
 
 fn entry_lambda(beta: &Array2<Scalar>, lambda: &Array1<Scalar>) -> Array1<Scalar> {
