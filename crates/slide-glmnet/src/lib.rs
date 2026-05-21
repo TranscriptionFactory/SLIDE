@@ -113,27 +113,67 @@ pub fn gaussian_lasso_path(
         )?,
     };
 
-    let n = prepared.x_scaled.nrows();
-    let p = prepared.x_scaled.ncols();
+    let x_array = prepared.x_scaled.as_ndarray();
+    let y_array = prepared.y_centered.as_ndarray();
+    let n = x_array.nrows();
+    let p = x_array.ncols();
+    let n_f = n as Scalar;
     let nlambda = lambda.len();
-    let mut beta_scaled = Array1::zeros(p);
+    let mut beta_scaled: Array1<Scalar> = Array1::zeros(p);
     let mut beta_path = Array2::zeros((p, nlambda));
     let mut intercept = Array1::zeros(nlambda);
+    // Maintain residual across lambda steps (avoids recomputing y - X*beta each step)
+    let mut residual = y_array.to_owned();
 
-    let null_deviance = prepared.y_centered.as_ndarray().dot(prepared.y_centered.as_ndarray());
+    let null_deviance = y_array.dot(y_array);
     let mut n_computed = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
-        coordinate_descent_step(
-            &prepared.x_scaled,
-            &prepared.y_centered,
-            &prepared.column_sq_norm,
-            &mut beta_scaled,
-            lambda_value,
-            config.alpha,
-            config.tolerance,
-            config.max_iter,
-        );
+        // Strong rule screening: skip coordinates guaranteed to remain zero.
+        // At lambda_k, if |X_j^T r / n| < 2*lambda_k - lambda_{k-1}, then
+        // coordinate j will stay zero (given it was zero at lambda_{k-1}).
+        let mut candidate: Vec<bool> = if lambda_index == 0 {
+            vec![true; p] // no screening on first lambda
+        } else {
+            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
+            let threshold = 2.0 * lambda_value - prev_lambda;
+            (0..p)
+                .map(|j| {
+                    beta_scaled[j].abs() > 0.0
+                        || (x_array.column(j).dot(&residual) / n_f).abs() >= threshold
+                })
+                .collect()
+        };
+
+        // Strong rule + KKT check loop
+        loop {
+            coordinate_descent_step(
+                x_array,
+                &prepared.column_sq_norm,
+                &mut beta_scaled,
+                &mut residual,
+                lambda_value,
+                config.alpha,
+                config.tolerance,
+                config.max_iter,
+                &candidate,
+            );
+
+            // Check KKT conditions on excluded coordinates
+            let mut kkt_violated = false;
+            for j in 0..p {
+                if !candidate[j] {
+                    let grad = (x_array.column(j).dot(&residual) / n_f).abs();
+                    if grad > lambda_value * config.alpha {
+                        candidate[j] = true;
+                        kkt_violated = true;
+                    }
+                }
+            }
+            if !kkt_violated {
+                break;
+            }
+        }
 
         let beta_original = &beta_scaled / &prepared.column_scale;
         let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
@@ -147,8 +187,6 @@ pub fn gaussian_lasso_path(
             break;
         }
         if null_deviance > 0.0 {
-            let residual = prepared.y_centered.as_ndarray()
-                - &prepared.x_scaled.as_ndarray().dot(&beta_scaled);
             let rss = residual.dot(&residual);
             let dev_ratio = 1.0 - rss / null_deviance;
             if dev_ratio > DEVMAX {
@@ -316,6 +354,9 @@ pub fn stat_glmnet_lambdasmax(
 }
 
 /// Compute lambdasmax statistic from a pre-built augmented matrix `[X | X_tilde]`.
+///
+/// Uses a coarser lambda grid (100 instead of 250) since only the entry lambda
+/// per coefficient is needed — the entry point is insensitive to grid resolution.
 pub fn stat_glmnet_lambdasmax_prebuilt(
     augmented: &Matrix,
     p: usize,
@@ -323,9 +364,14 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
+    const KNOCKOFF_NLAMBDA: usize = 100;
+    let knockoff_config = GaussianLassoPathConfig {
+        nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
+        ..config.clone()
+    };
     let path = match family {
-        GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, config)?,
-        GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, config)?,
+        GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, &knockoff_config)?,
+        GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, &knockoff_config)?,
     };
     let beta = path.beta.as_ndarray();
     let lambda = path.lambda.as_ndarray();
@@ -807,35 +853,40 @@ impl PreparedData {
     }
 }
 
+/// Coordinate descent on a candidate set (strong rule screened).
+///
+/// The `residual` is maintained incrementally (y - X*beta) and persists across
+/// lambda steps. The `candidate` mask restricts which coordinates are considered
+/// (replacing the old "full sweep over all p" with "sweep over strong set").
+#[allow(clippy::too_many_arguments)]
 fn coordinate_descent_step(
-    x: &Matrix,
-    y: &Vector,
+    x: &Array2<Scalar>,
     column_sq_norm: &Array1<Scalar>,
     beta: &mut Array1<Scalar>,
+    residual: &mut Array1<Scalar>,
     lambda: Scalar,
     alpha: Scalar,
     tolerance: Scalar,
     max_iter: usize,
+    candidate: &[bool],
 ) {
-    let x_array = x.as_ndarray();
-    let y_array = y.as_ndarray();
-    let n = x_array.nrows();
-    let p = x_array.ncols();
+    let n = x.nrows();
 
-    let mut residual = y_array.to_owned() - &x_array.dot(beta);
-    let mut active = beta
+    // Active set: non-zero betas within the candidate set
+    let mut active: Vec<bool> = beta
         .iter()
-        .map(|value| value.abs() > 0.0)
-        .collect::<Vec<_>>();
+        .zip(candidate.iter())
+        .map(|(value, &cand)| cand && value.abs() > 0.0)
+        .collect();
 
     for _ in 0..max_iter {
         let mut max_change = 0.0;
         if active.iter().any(|&flag| flag) {
             max_change = sweep_coordinates(
-                x_array,
+                x,
                 column_sq_norm,
                 beta,
-                &mut residual,
+                residual,
                 &active,
                 lambda,
                 alpha,
@@ -846,23 +897,23 @@ fn coordinate_descent_step(
             }
         }
 
-        let full_set = vec![true; p];
-        let full_change = sweep_coordinates(
-            x_array,
+        // Sweep the full candidate set (not all p coordinates)
+        let candidate_change = sweep_coordinates(
+            x,
             column_sq_norm,
             beta,
-            &mut residual,
-            &full_set,
+            residual,
+            candidate,
             lambda,
             alpha,
             n,
         );
 
         for (index, value) in beta.iter().copied().enumerate() {
-            active[index] = value.abs() > 0.0;
+            active[index] = candidate[index] && value.abs() > 0.0;
         }
 
-        if full_change.max(max_change) <= tolerance {
+        if candidate_change.max(max_change) <= tolerance {
             break;
         }
     }
