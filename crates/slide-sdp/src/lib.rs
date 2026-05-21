@@ -77,7 +77,7 @@ pub fn default_solver_settings() -> SdpSettings {
 
 pub fn create_solve_equi(sigma: &Matrix) -> Result<Vector, SdpError> {
     let normalized = normalize_covariance(sigma)?;
-    let lambda_min = minimum_eigenvalue(&normalized.correlation)?;
+    let lambda_min = minimum_eigenvalue(&normalized.correlation);
     let scalar = (2.0 * lambda_min).clamp(0.0, 1.0);
     Ok(Vector::from_ndarray(Array1::from_vec(
         normalized
@@ -285,15 +285,15 @@ fn normalize_covariance(sigma: &Matrix) -> Result<NormalizedCovariance, SdpError
     })
 }
 
-fn minimum_eigenvalue(matrix: &Matrix) -> Result<Scalar, SdpError> {
-    let decomposition = matrix.symmetric_eigendecomposition()?;
-    Ok(decomposition
+fn minimum_eigenvalue(matrix: &Matrix) -> Scalar {
+    let decomposition = matrix.symmetric_eigendecomposition_unchecked();
+    decomposition
         .eigenvalues()
         .as_ndarray()
         .iter()
         .copied()
         .min_by(Scalar::total_cmp)
-        .unwrap_or(0.0))
+        .unwrap_or(0.0)
 }
 
 fn enforce_correlation_feasibility(
@@ -322,13 +322,13 @@ fn enforce_feasibility(
     solution: &mut [Scalar],
     clip_to_unit: bool,
 ) -> Result<(), SdpError> {
-    let shifted_min = minimum_eigenvalue_of_shifted_matrix(matrix, solution)?;
+    let shifted_min = minimum_eigenvalue_of_shifted_matrix(matrix, solution);
     if shifted_min >= FEASIBILITY_FLOOR {
         return Ok(());
     }
 
     // λ_min(2·matrix) = 2·λ_min(matrix), avoiding a second eigendecomposition
-    let unshifted_min = 2.0 * minimum_eigenvalue(matrix)?;
+    let unshifted_min = 2.0 * minimum_eigenvalue(matrix);
 
     let gamma = if unshifted_min > shifted_min {
         ((unshifted_min - FEASIBILITY_FLOOR) / (unshifted_min - shifted_min)).clamp(0.0, 1.0)
@@ -348,7 +348,7 @@ fn enforce_feasibility(
 fn minimum_eigenvalue_of_shifted_matrix(
     matrix: &Matrix,
     diagonal_shift: &[Scalar],
-) -> Result<Scalar, SdpError> {
+) -> Scalar {
     let mut shifted = matrix.to_nalgebra();
     for (index, value) in diagonal_shift.iter().copied().enumerate() {
         shifted[(index, index)] = (2.0 * shifted[(index, index)]) - value;
@@ -538,8 +538,7 @@ mod tests {
         let min_eig = minimum_eigenvalue_of_shifted_matrix(
             &sigma,
             solution.as_ndarray().as_slice().unwrap_or(&[]),
-        )
-        .unwrap_or_else(|error| panic!("feasibility check failed: {error}"));
+        );
 
         assert!(solution
             .as_ndarray()
@@ -563,8 +562,7 @@ mod tests {
         let min_eig = minimum_eigenvalue_of_shifted_matrix(
             &sigma,
             solution.as_ndarray().as_slice().unwrap_or(&[]),
-        )
-        .unwrap_or_else(|error| panic!("feasibility check failed: {error}"));
+        );
 
         assert!(min_eig >= FEASIBILITY_FLOOR - 1.0e-8);
     }

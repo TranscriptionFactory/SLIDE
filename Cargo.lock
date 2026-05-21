@@ -1606,6 +1606,7 @@ dependencies = [
  "nalgebra",
  "ndarray",
  "rand",
+ "rand_distr",
  "rayon",
  "serde",
  "slide-glmnet",

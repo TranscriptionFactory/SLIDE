@@ -467,25 +467,31 @@ pub fn find_interaction_lfs(
         })
         .collect::<Result<Vec<_>, SlideCoreError>>()?;
 
-    // Sequential post-processing: flatten into interaction_pairs, interaction_columns
+    // Sequential post-processing: count total interactions, pre-allocate matrix
     let mut interaction_pairs = Vec::new();
-    let mut interaction_columns = Vec::new();
     let mut voting_results = Vec::new();
+    let flattened: Vec<_> = results.into_iter().flatten().collect();
+    let total_interactions: usize = flattened.iter().map(|r| r.selected_interactors.len()).sum();
 
-    for result in results.into_iter().flatten() {
+    let nrows = z.nrows();
+    let mut interaction_matrix = Array2::zeros((nrows, total_interactions));
+    let mut col_idx = 0;
+
+    for result in flattened {
         for &interactor in &result.selected_interactors {
             interaction_pairs.push((result.marginal_lf, interactor));
-            interaction_columns.push(
-                (&z.as_ndarray().column(result.marginal_lf) * &z.as_ndarray().column(interactor))
-                    .to_owned(),
-            );
+            let marginal_col = z.as_ndarray().column(result.marginal_lf);
+            let interactor_col = z.as_ndarray().column(interactor);
+            let mut dst = interaction_matrix.column_mut(col_idx);
+            ndarray::azip!((d in &mut dst, &m in &marginal_col, &i in &interactor_col) *d = m * i);
+            col_idx += 1;
         }
         voting_results.push(result);
     }
 
     Ok(InteractionLfSelection {
         sig_interacts: interaction_pairs,
-        interaction_terms: columns_to_matrix(z.nrows(), interaction_columns),
+        interaction_terms: Matrix::from_ndarray(interaction_matrix),
         voting: voting_results,
     })
 }
@@ -578,25 +584,31 @@ fn find_interaction_lfs_with_progress(
         })
         .collect::<Result<Vec<_>, SlideCoreError>>()?;
 
-    // Sequential post-processing: flatten into interaction_pairs, interaction_columns
+    // Sequential post-processing: count total interactions, pre-allocate matrix
     let mut interaction_pairs = Vec::new();
-    let mut interaction_columns = Vec::new();
     let mut voting_results = Vec::new();
+    let flattened: Vec<_> = results.into_iter().flatten().collect();
+    let total_interactions: usize = flattened.iter().map(|r| r.selected_interactors.len()).sum();
 
-    for result in results.into_iter().flatten() {
+    let nrows = z.nrows();
+    let mut interaction_matrix = Array2::zeros((nrows, total_interactions));
+    let mut col_idx = 0;
+
+    for result in flattened {
         for &interactor in &result.selected_interactors {
             interaction_pairs.push((result.marginal_lf, interactor));
-            interaction_columns.push(
-                (&z.as_ndarray().column(result.marginal_lf) * &z.as_ndarray().column(interactor))
-                    .to_owned(),
-            );
+            let marginal_col = z.as_ndarray().column(result.marginal_lf);
+            let interactor_col = z.as_ndarray().column(interactor);
+            let mut dst = interaction_matrix.column_mut(col_idx);
+            ndarray::azip!((d in &mut dst, &m in &marginal_col, &i in &interactor_col) *d = m * i);
+            col_idx += 1;
         }
         voting_results.push(result);
     }
 
     Ok(InteractionLfSelection {
         sig_interacts: interaction_pairs,
-        interaction_terms: columns_to_matrix(z.nrows(), interaction_columns),
+        interaction_terms: Matrix::from_ndarray(interaction_matrix),
         voting: voting_results,
     })
 }
@@ -1035,18 +1047,6 @@ fn build_interaction_terms(z: &Matrix, marginal_lf: usize, candidate_lfs: &[usiz
     Matrix::from_ndarray(interactions)
 }
 
-fn columns_to_matrix(nrows: usize, columns: Vec<Array1<Scalar>>) -> Matrix {
-    if columns.is_empty() {
-        return Matrix::from_ndarray(Array2::zeros((nrows, 0)));
-    }
-
-    let ncols = columns.len();
-    let mut matrix = Array2::zeros((nrows, ncols));
-    for (col_index, column) in columns.into_iter().enumerate() {
-        matrix.column_mut(col_index).assign(&column);
-    }
-    Matrix::from_ndarray(matrix)
-}
 
 fn score_selected_model(
     z: &Matrix,

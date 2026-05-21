@@ -3,6 +3,7 @@
 
 use ndarray::{Array1, Array2, Axis};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand_distr::{Distribution, StandardNormal};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_glmnet::{
@@ -77,9 +78,6 @@ impl Default for KnockoffConfig {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct KnockoffCache {
-    pub mu: Vector,
-    pub sigma: Matrix,
-    pub diag_s: Vector,
     pub mu_k: Matrix,
     pub l_trans: Matrix,
 }
@@ -143,8 +141,7 @@ impl KnockoffCache {
     pub fn sample(&self, seed: u64) -> Matrix {
         let (n, p) = self.mu_k.shape();
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut spare = None;
-        let z = Array2::from_shape_fn((n, p), |_| sample_standard_normal(&mut rng, &mut spare));
+        let z = Array2::from_shape_fn((n, p), |_| StandardNormal.sample(&mut rng));
         let sampled = z.dot(self.l_trans.as_ndarray()) + self.mu_k.as_ndarray();
         Matrix::from_ndarray(sampled)
     }
@@ -469,13 +466,7 @@ fn build_knockoff_cache(
     let mu_k = compute_mu_k(x, mu, &sigma_inv_diag_s)?;
     let l_trans = compute_l_trans(diag_s, &sigma_inv_diag_s)?;
 
-    Ok(KnockoffCache {
-        mu: mu.clone(),
-        sigma: sigma.clone(),
-        diag_s: diag_s.clone(),
-        mu_k,
-        l_trans,
-    })
+    Ok(KnockoffCache { mu_k, l_trans })
 }
 
 fn build_voting_result(
@@ -596,7 +587,7 @@ fn estimate_covariance(x: &Matrix) -> Result<Matrix, KnockoffError> {
     }
 
     let needs_shrinkage =
-        n <= p || minimum_eigenvalue(&Matrix::from_ndarray(sigma.clone()))? <= 0.0;
+        n <= p || minimum_eigenvalue(&Matrix::from_ndarray(sigma.clone())) <= 0.0;
     if needs_shrinkage {
         let trace = sigma.diag().iter().copied().sum::<Scalar>();
         let shrinkage = ((p as Scalar) / (n as Scalar)).clamp(0.0, 1.0);
@@ -618,7 +609,7 @@ fn solve_diag_s(sigma: &Matrix, method: &KnockoffMethod) -> Result<Vector, Knock
 
 fn solve_sigma_inv_diag_s(sigma: &Matrix, diag_s: &Vector) -> Result<Matrix, KnockoffError> {
     let diag_s_matrix = Array2::from_diag(diag_s.as_ndarray());
-    if let Ok(cholesky) = sigma.cholesky("sigma") {
+    if let Ok(cholesky) = sigma.cholesky_unchecked("sigma") {
         return Ok(cholesky.solve_matrix(&Matrix::from_ndarray(diag_s_matrix), "sigma")?);
     }
 
@@ -656,7 +647,7 @@ fn regularized_cholesky(mut matrix: Array2<Scalar>) -> Result<Array2<Scalar>, Kn
 
     for _ in 0..10 {
         let candidate = Matrix::from_ndarray(symmetrize(matrix.clone()));
-        if let Ok(cholesky) = candidate.cholesky("sigma_k") {
+        if let Ok(cholesky) = candidate.cholesky_unchecked("sigma_k") {
             return Ok(cholesky.lower_factor().into_ndarray());
         }
 
@@ -667,7 +658,7 @@ fn regularized_cholesky(mut matrix: Array2<Scalar>) -> Result<Array2<Scalar>, Kn
     }
 
     let candidate = Matrix::from_ndarray(matrix);
-    Ok(candidate.cholesky("sigma_k")?.lower_factor().into_ndarray())
+    Ok(candidate.cholesky_unchecked("sigma_k")?.lower_factor().into_ndarray())
 }
 
 fn validate_feature_matrix(x: &Matrix) -> Result<(), KnockoffError> {
@@ -776,15 +767,15 @@ fn sorted_unique(mut values: Vec<usize>) -> Vec<usize> {
     values
 }
 
-fn minimum_eigenvalue(matrix: &Matrix) -> Result<Scalar, KnockoffError> {
-    Ok(matrix
-        .symmetric_eigendecomposition()?
+fn minimum_eigenvalue(matrix: &Matrix) -> Scalar {
+    matrix
+        .symmetric_eigendecomposition_unchecked()
         .eigenvalues()
         .as_ndarray()
         .iter()
         .copied()
         .min_by(Scalar::total_cmp)
-        .unwrap_or_else(|| unreachable!("validated square matrix has eigenvalues")))
+        .unwrap_or_else(|| unreachable!("validated square matrix has eigenvalues"))
 }
 
 fn symmetrize(matrix: Array2<Scalar>) -> Array2<Scalar> {
@@ -814,23 +805,6 @@ fn select_column_range(x: &Matrix, start: usize, stop: usize) -> Array2<Scalar> 
     selected
 }
 
-fn sample_standard_normal(rng: &mut StdRng, spare: &mut Option<Scalar>) -> Scalar {
-    if let Some(value) = spare.take() {
-        return value;
-    }
-
-    let u1 = loop {
-        let draw = rng.gen::<Scalar>();
-        if draw > 0.0 {
-            break draw;
-        }
-    };
-    let u2 = rng.gen::<Scalar>();
-    let radius = (-2.0 * u1.ln()).sqrt();
-    let theta = 2.0 * std::f64::consts::PI * u2;
-    *spare = Some(radius * theta.sin());
-    radius * theta.cos()
-}
 
 #[cfg(test)]
 mod tests {
