@@ -51,6 +51,9 @@ pub struct KnockoffConfig {
     pub slide_selection: bool,
     pub f_size: Option<usize>,
     pub family: GlmnetFamily,
+    /// Whether to use rayon parallelism for the voting iterations.
+    /// Set to `false` when called from an outer parallel context.
+    pub parallel: bool,
 }
 
 impl Default for KnockoffConfig {
@@ -67,6 +70,7 @@ impl Default for KnockoffConfig {
             slide_selection: false,
             f_size: None,
             family: GlmnetFamily::Gaussian,
+            parallel: true,
         }
     }
 }
@@ -275,69 +279,78 @@ pub fn knockoff_filter_voting(
     // Seed offset for column swap RNG, distinct from knockoff sampling seeds.
     const SWAP_SEED_OFFSET: u64 = 1_000_000;
 
-    let selected_list: Vec<Vec<usize>> = (0..config.niter)
-        .into_par_iter()
-        .map_init(
-            || {
-                // Per-thread: pre-allocate augmented buffer as Matrix, fill X once
-                let mut buf = Array2::zeros((n, 2 * p));
-                buf.columns_mut()
-                    .into_iter()
-                    .zip(x.as_ndarray().columns())
-                    .for_each(|(mut dst, src)| dst.assign(&src));
-                Matrix::from_ndarray(buf)
-            },
-            |augmented, iteration| {
-                let x_tilde = cache.sample(config.base_seed + (iteration as u64));
-                let buf = augmented.as_ndarray_mut();
+    let run_iteration = |augmented: &mut Matrix, iteration: usize| {
+        let x_tilde = cache.sample(config.base_seed + (iteration as u64));
+        let buf = augmented.as_ndarray_mut();
 
-                // Fill X_tilde portion into right half of buffer
-                for (j, src_col) in x_tilde.as_ndarray().columns().into_iter().enumerate() {
-                    buf.column_mut(p + j).assign(&src_col);
+        // Fill X_tilde portion into right half of buffer
+        for (j, src_col) in x_tilde.as_ndarray().columns().into_iter().enumerate() {
+            buf.column_mut(p + j).assign(&src_col);
+        }
+
+        // Column swap: randomly swap X[j] ↔ X_tilde[j] to enforce knockoff symmetry
+        let mut rng = StdRng::seed_from_u64(
+            config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
+        );
+        let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                for i in 0..n {
+                    buf.swap((i, j), (i, p + j));
                 }
+            }
+        }
 
-                // Column swap: randomly swap X[j] ↔ X_tilde[j] to enforce knockoff symmetry
-                let mut rng = StdRng::seed_from_u64(
-                    config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
-                );
-                let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
-                for (j, &swapped) in swap.iter().enumerate() {
-                    if swapped {
-                        for i in 0..n {
-                            buf.swap((i, j), (i, p + j));
-                        }
-                    }
+        // Compute statistic (borrows augmented immutably via as_ndarray)
+        let w = compute_statistic_prebuilt(augmented, p, y, config)?;
+
+        // Un-swap to restore X columns for next iteration
+        let buf = augmented.as_ndarray_mut();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                for i in 0..n {
+                    buf.swap((i, j), (i, p + j));
                 }
+            }
+        }
 
-                // Compute statistic (borrows augmented immutably via as_ndarray)
-                let w = compute_statistic_prebuilt(augmented, p, y, config)?;
+        // Correct W-statistic signs for swapped columns
+        let mut w_array = w.into_ndarray();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                w_array[j] = -w_array[j];
+            }
+        }
 
-                // Un-swap to restore X columns for next iteration
-                let buf = augmented.as_ndarray_mut();
-                for (j, &swapped) in swap.iter().enumerate() {
-                    if swapped {
-                        for i in 0..n {
-                            buf.swap((i, j), (i, p + j));
-                        }
-                    }
-                }
-
-                // Correct W-statistic signs for swapped columns
-                let mut w_array = w.into_ndarray();
-                for (j, &swapped) in swap.iter().enumerate() {
-                    if swapped {
-                        w_array[j] = -w_array[j];
-                    }
-                }
-
-                knockoff_filter(
-                    &Vector::from_ndarray(w_array),
-                    config.fdr,
-                    config.knockoff_offset,
-                )
-            },
+        knockoff_filter(
+            &Vector::from_ndarray(w_array),
+            config.fdr,
+            config.knockoff_offset,
         )
-        .collect::<Result<Vec<_>, _>>()?;
+    };
+
+    let init_augmented = || {
+        let mut buf = Array2::zeros((n, 2 * p));
+        buf.columns_mut()
+            .into_iter()
+            .zip(x.as_ndarray().columns())
+            .for_each(|(mut dst, src)| dst.assign(&src));
+        Matrix::from_ndarray(buf)
+    };
+
+    let selected_list: Vec<Vec<usize>> = if config.parallel {
+        (0..config.niter)
+            .into_par_iter()
+            .map_init(init_augmented, |augmented, iteration| {
+                run_iteration(augmented, iteration)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let mut augmented = init_augmented();
+        (0..config.niter)
+            .map(|iteration| run_iteration(&mut augmented, iteration))
+            .collect::<Result<Vec<_>, _>>()?
+    };
 
     build_voting_result(x.ncols(), config, selected_list, None)
 }
@@ -402,7 +415,6 @@ pub fn select_short_freq(
     let feature_split = p.div_ceil(n_splits);
 
     let chunk_results: Vec<Vec<usize>> = (0..n_splits)
-        .into_par_iter()
         .map(|chunk_index| {
             let start = chunk_index * feature_split;
             let stop = (start + feature_split).min(p);

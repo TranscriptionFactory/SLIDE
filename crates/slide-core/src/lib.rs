@@ -73,6 +73,7 @@ impl MarginalLfSelectionConfig {
             slide_selection: self.slide_selection,
             f_size: self.f_size,
             family: self.family,
+            parallel: true,
         }
     }
 }
@@ -434,7 +435,10 @@ pub fn find_interaction_lfs(
         })
         .collect();
 
-    let knockoff_config = config.to_knockoff_config();
+    let knockoff_config = KnockoffConfig {
+        parallel: false, // outer par_iter handles parallelism
+        ..config.to_knockoff_config()
+    };
 
     // Run all marginal iterations in parallel
     let results: Vec<Option<InteractionVotingResult>> = sig_lfs
@@ -532,7 +536,10 @@ fn find_interaction_lfs_with_progress(
         })
         .collect();
 
-    let knockoff_config = config.to_knockoff_config();
+    let knockoff_config = KnockoffConfig {
+        parallel: false, // outer par_iter handles parallelism
+        ..config.to_knockoff_config()
+    };
     let completed = std::sync::atomic::AtomicUsize::new(0);
 
     // Run all marginal iterations in parallel
