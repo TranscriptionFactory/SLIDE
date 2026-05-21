@@ -3,7 +3,7 @@
 
 use nalgebra::{DMatrix, DVector};
 use nalgebra_lapack::{Cholesky as LapackCholesky, SymmetricEigen, SVD as LapackSvd};
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, ShapeBuilder};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -95,16 +95,12 @@ impl Matrix {
     #[must_use]
     pub fn from_nalgebra(matrix: DMatrix<Scalar>) -> Self {
         let (nrows, ncols) = matrix.shape();
-        let mut data = Vec::with_capacity(nrows * ncols);
-        for row in 0..nrows {
-            for col in 0..ncols {
-                data.push(matrix[(row, col)]);
-            }
-        }
-        Self(
-            Array2::from_shape_vec((nrows, ncols), data)
-                .unwrap_or_else(|_| unreachable!("row-major matrix data matches its shape")),
-        )
+        let data = matrix.as_slice().to_vec();
+        let col_major = Array2::from_shape_vec((nrows, ncols).f(), data)
+            .unwrap_or_else(|_| unreachable!("column-major matrix data matches its shape"));
+        let mut row_major = Array2::zeros((nrows, ncols));
+        row_major.assign(&col_major);
+        Self(row_major)
     }
 
     /// Build a matrix from row-major nested vectors.
@@ -143,8 +139,12 @@ impl Matrix {
     /// Convert into a nalgebra dense matrix.
     #[must_use]
     pub fn to_nalgebra(&self) -> DMatrix<Scalar> {
-        let data: Vec<_> = self.0.iter().copied().collect();
-        DMatrix::from_row_slice(self.nrows(), self.ncols(), &data)
+        let (rows, cols) = self.shape();
+        let mut data = Vec::with_capacity(rows * cols);
+        for c in 0..cols {
+            data.extend(self.0.column(c).iter().copied());
+        }
+        DMatrix::from_vec(rows, cols, data)
     }
 
     /// Compute a deterministic symmetric eigendecomposition.
