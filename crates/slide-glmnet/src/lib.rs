@@ -23,6 +23,9 @@ pub struct GaussianLassoPathConfig {
     pub nlambda: usize,
     pub cv_folds: usize,
     pub lambda: Option<Vector>,
+    /// Stop the path early once every coefficient has been non-zero at least once.
+    /// Useful for `lambdasmax` which only needs entry lambdas.
+    pub early_stop_all_entered: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +94,7 @@ impl Default for GaussianLassoPathConfig {
             nlambda: DEFAULT_NLAMBDA,
             cv_folds: 5,
             lambda: None,
+            early_stop_all_entered: false,
         }
     }
 }
@@ -127,6 +131,9 @@ pub fn gaussian_lasso_path(
 
     let null_deviance = y_array.dot(y_array);
     let mut n_computed = 0usize;
+    // Track which coefficients have ever been non-zero (for early_stop_all_entered)
+    let mut ever_nonzero = vec![false; p];
+    let mut n_ever_nonzero = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         // Strong rule screening: skip coordinates guaranteed to remain zero.
@@ -180,6 +187,19 @@ pub fn gaussian_lasso_path(
         beta_path.column_mut(lambda_index).assign(&beta_original);
         intercept[lambda_index] = intercept_value;
         n_computed = lambda_index + 1;
+
+        // Track entry for early_stop_all_entered mode
+        if config.early_stop_all_entered {
+            for (j, &b) in beta_scaled.iter().enumerate() {
+                if !ever_nonzero[j] && b.abs() > 1e-10 {
+                    ever_nonzero[j] = true;
+                    n_ever_nonzero += 1;
+                }
+            }
+            if n_ever_nonzero >= p {
+                break;
+            }
+        }
 
         // Early stopping: saturated model or near-perfect fit
         let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
@@ -245,6 +265,8 @@ pub fn binomial_lasso_path(
         * (y_mean_clamped * y_mean_clamped.ln()
             + (1.0 - y_mean_clamped) * (1.0 - y_mean_clamped).ln());
     let mut n_computed = 0usize;
+    let mut ever_nonzero = vec![false; p];
+    let mut n_ever_nonzero = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         // Strong rule screening for binomial: use gradient from log-likelihood
@@ -301,6 +323,19 @@ pub fn binomial_lasso_path(
         beta_path.column_mut(lambda_index).assign(&beta_original);
         intercept_path[lambda_index] = intercept_value;
         n_computed = lambda_index + 1;
+
+        // Track entry for early_stop_all_entered mode
+        if config.early_stop_all_entered {
+            for (j, &b) in beta_scaled.iter().enumerate() {
+                if !ever_nonzero[j] && b.abs() > 1e-10 {
+                    ever_nonzero[j] = true;
+                    n_ever_nonzero += 1;
+                }
+            }
+            if n_ever_nonzero >= p {
+                break;
+            }
+        }
 
         // Early stopping: saturated model or near-perfect fit
         let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
@@ -406,6 +441,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     const KNOCKOFF_NLAMBDA: usize = 100;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
+        early_stop_all_entered: true,
         ..config.clone()
     };
     let path = match family {
