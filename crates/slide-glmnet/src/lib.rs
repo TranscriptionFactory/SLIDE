@@ -12,6 +12,7 @@ const DEFAULT_NLAMBDA: usize = 250;
 const MIN_LAMBDA_FLOOR: Scalar = 1.0e-12;
 const MIN_PROBABILITY: Scalar = 1.0e-5;
 const MAX_ETA: Scalar = 30.0;
+const DEVMAX: Scalar = 0.9999;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GaussianLassoPathConfig {
@@ -112,11 +113,15 @@ pub fn gaussian_lasso_path(
         )?,
     };
 
+    let n = prepared.x_scaled.nrows();
     let p = prepared.x_scaled.ncols();
     let nlambda = lambda.len();
     let mut beta_scaled = Array1::zeros(p);
     let mut beta_path = Array2::zeros((p, nlambda));
     let mut intercept = Array1::zeros(nlambda);
+
+    let null_deviance = prepared.y_centered.as_ndarray().dot(prepared.y_centered.as_ndarray());
+    let mut n_computed = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         coordinate_descent_step(
@@ -134,7 +139,30 @@ pub fn gaussian_lasso_path(
         let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
         beta_path.column_mut(lambda_index).assign(&beta_original);
         intercept[lambda_index] = intercept_value;
+        n_computed = lambda_index + 1;
+
+        // Early stopping: saturated model or near-perfect fit
+        let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
+        if nnz >= n {
+            break;
+        }
+        if null_deviance > 0.0 {
+            let residual = prepared.y_centered.as_ndarray()
+                - &prepared.x_scaled.as_ndarray().dot(&beta_scaled);
+            let rss = residual.dot(&residual);
+            let dev_ratio = 1.0 - rss / null_deviance;
+            if dev_ratio > DEVMAX {
+                break;
+            }
+        }
     }
+
+    // Truncate to actually computed lambdas
+    let beta_path = truncate_path(beta_path, n_computed);
+    let intercept = Array1::from_vec(intercept.iter().copied().take(n_computed).collect());
+    let lambda = Vector::from_ndarray(Array1::from_vec(
+        lambda.as_ndarray().iter().copied().take(n_computed).collect(),
+    ));
 
     Ok(GaussianLassoPathResult {
         beta: Matrix::from_ndarray(beta_path),
@@ -164,12 +192,20 @@ pub fn binomial_lasso_path(
 
     let x_scaled = prepared.x_scaled.as_ndarray();
     let y_raw = prepared.y_raw.as_ndarray();
+    let n = x_scaled.nrows();
     let p = x_scaled.ncols();
     let nlambda = lambda.len();
     let mut beta_scaled = Array1::zeros(p);
     let mut intercept_scaled = logit(clamp_probability(prepared.y_mean));
     let mut beta_path = Array2::zeros((p, nlambda));
     let mut intercept_path = Array1::zeros(nlambda);
+
+    let y_mean_clamped = clamp_probability(prepared.y_mean);
+    let null_deviance = -2.0
+        * (n as Scalar)
+        * (y_mean_clamped * y_mean_clamped.ln()
+            + (1.0 - y_mean_clamped) * (1.0 - y_mean_clamped).ln());
+    let mut n_computed = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         binomial_coordinate_descent_step(
@@ -187,7 +223,35 @@ pub fn binomial_lasso_path(
         let intercept_value = intercept_scaled - prepared.x_mean.dot(&beta_original);
         beta_path.column_mut(lambda_index).assign(&beta_original);
         intercept_path[lambda_index] = intercept_value;
+        n_computed = lambda_index + 1;
+
+        // Early stopping: saturated model or near-perfect fit
+        let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
+        if nnz >= n {
+            break;
+        }
+        if null_deviance > 0.0 {
+            let eta = x_scaled.dot(&beta_scaled).mapv(|v| v + intercept_scaled);
+            let deviance = -2.0
+                * Zip::from(y_raw)
+                    .and(&eta)
+                    .fold(0.0, |acc, &yi, &ei| {
+                        let pi = sigmoid(ei);
+                        acc + yi * pi.ln() + (1.0 - yi) * (1.0 - pi).ln()
+                    });
+            let dev_ratio = 1.0 - deviance / null_deviance;
+            if dev_ratio > DEVMAX {
+                break;
+            }
+        }
     }
+
+    // Truncate to actually computed lambdas
+    let beta_path = truncate_path(beta_path, n_computed);
+    let intercept_path = Array1::from_vec(intercept_path.iter().copied().take(n_computed).collect());
+    let lambda = Vector::from_ndarray(Array1::from_vec(
+        lambda.as_ndarray().iter().copied().take(n_computed).collect(),
+    ));
 
     Ok(BinomialLassoPathResult {
         beta: Matrix::from_ndarray(beta_path),
@@ -344,7 +408,7 @@ pub fn cross_validated_lambda(
         }
     };
     let folds = build_cv_folds(y, family, config.cv_folds);
-    let mut loss_sums = Array1::zeros(lambda.len());
+    let mut loss_sums: Array1<Scalar> = Array1::zeros(lambda.len());
 
     for validation_indices in &folds {
         let training_indices = complement_indices(sample_count, validation_indices);
@@ -361,7 +425,16 @@ pub fn cross_validated_lambda(
             GlmnetFamily::Binomial => binomial_lasso_path(&x_train, &y_train, &fold_config)?,
         };
         let fold_losses = validation_losses(&path, &x_valid, &y_valid, family);
-        loss_sums += &fold_losses;
+        // Early stopping may truncate path; pad with Inf so truncated lambdas
+        // are never selected as optimal.
+        let n_lambda = lambda.len();
+        let n_computed = fold_losses.len();
+        for (i, &loss) in fold_losses.iter().enumerate() {
+            loss_sums[i] += loss;
+        }
+        for i in n_computed..n_lambda {
+            loss_sums[i] += Scalar::INFINITY;
+        }
     }
 
     let mean_deviance = loss_sums.mapv(|value| value / (config.cv_folds as Scalar));
@@ -1019,6 +1092,16 @@ fn soft_threshold(value: Scalar, penalty: Scalar) -> Scalar {
     } else {
         0.0
     }
+}
+
+/// Truncate a (p x nlambda) beta path to the first `n_computed` columns.
+fn truncate_path(path: Array2<Scalar>, n_computed: usize) -> Array2<Scalar> {
+    let p = path.nrows();
+    let mut truncated = Array2::zeros((p, n_computed));
+    for col in 0..n_computed {
+        truncated.column_mut(col).assign(&path.column(col));
+    }
+    truncated
 }
 
 fn clamp_probability(value: Scalar) -> Scalar {
