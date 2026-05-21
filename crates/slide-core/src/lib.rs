@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use thiserror::Error;
 
 const LOGISTIC_PROBABILITY_EPSILON: Scalar = 1.0e-8;
@@ -952,12 +953,16 @@ fn run_slide_evaluation(
         phase,
     };
 
+    let eval_start = Instant::now();
+
     write_progress(progress_path, &mk(Phase::Love));
     let mut love_config = config.love.clone();
     love_config.delta = Some(Vector::from_ndarray(Array1::from_vec(vec![delta])));
     love_config.lbd = Vector::from_ndarray(Array1::from_vec(vec![lambda]));
 
     let love_result = love(standardized_x, &love_config)?;
+    let love_elapsed = eval_start.elapsed();
+    eprintln!("[SLIDE timing] LOVE: {:.2}s (K={})", love_elapsed.as_secs_f64(), love_result.k);
 
     // Write live sidecar so the TUI can display LOVE results immediately.
     write_live_evaluation(
@@ -971,16 +976,21 @@ fn run_slide_evaluation(
     );
 
     write_progress(progress_path, &mk(Phase::ZMap));
+    let stage_start = Instant::now();
     let z = compute_z_map(
         standardized_x,
         &love_result.a,
         &love_result.gamma,
         &love_result.c,
     )?;
+    eprintln!("[SLIDE timing] Z-map: {:.2}s", stage_start.elapsed().as_secs_f64());
 
     write_progress(progress_path, &mk(Phase::KnockoffMarginal));
+    let stage_start = Instant::now();
     let marginal = find_standalone_lfs(&z, y, &config.knockoff)?;
+    eprintln!("[SLIDE timing] Knockoff marginal: {:.2}s ({} sig LFs)", stage_start.elapsed().as_secs_f64(), marginal.sig_lfs.len());
 
+    let stage_start = Instant::now();
     let interactions = if config.do_interacts && !marginal.sig_lfs.is_empty() {
         find_interaction_lfs_with_progress(
             &z,
@@ -997,8 +1007,10 @@ fn run_slide_evaluation(
             voting: Vec::new(),
         }
     };
+    eprintln!("[SLIDE timing] Knockoff interactions: {:.2}s ({} sig interacts)", stage_start.elapsed().as_secs_f64(), interactions.sig_interacts.len());
 
     write_progress(progress_path, &mk(Phase::Scoring));
+    let stage_start = Instant::now();
     let score = score_selected_model(
         &z,
         &interactions.interaction_terms,
@@ -1006,6 +1018,8 @@ fn run_slide_evaluation(
         &marginal.sig_lfs,
         config.response_type,
     )?;
+    eprintln!("[SLIDE timing] Scoring: {:.2}s", stage_start.elapsed().as_secs_f64());
+    eprintln!("[SLIDE timing] TOTAL: {:.2}s (delta={}, lambda={})", eval_start.elapsed().as_secs_f64(), delta, lambda);
 
     Ok(SlideRunResult {
         delta,
