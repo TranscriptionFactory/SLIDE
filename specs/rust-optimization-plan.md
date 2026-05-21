@@ -448,7 +448,7 @@ Actually, the most efficient approach:
 
 ---
 
-## Phase 2: High-impact performance fixes
+## Phase 2: High-impact performance fixes ✅ COMPLETED
 
 ### Step 2.1: Add early stopping to lasso path
 
@@ -625,7 +625,7 @@ pub fn knockoff_filter_voting(
 
 ---
 
-## Phase 3: Polish
+## Phase 3: Polish ✅ COMPLETED
 
 ### Step 3.1: Remove redundant validation in decomposition inner loops
 
@@ -728,6 +728,29 @@ tests pass.
 8. Full SSc benchmark (all 4 configs) — expect all configs faster than R
 9. Profile with `perf` or `flamegraph` to confirm no remaining hot spots
 
+### Phase 3 completion notes:
+
+**Step 3.1 (unchecked decompositions):** Added `symmetric_eigendecomposition_unchecked()`
+and `cholesky_unchecked()` to `Matrix` that skip square/symmetry validation. Original
+methods now delegate to `_unchecked` after validation. Callers in slide-sdp
+(`minimum_eigenvalue`, `minimum_eigenvalue_of_shifted_matrix`), slide-knockoff
+(`minimum_eigenvalue`, `regularized_cholesky`), and slide-love (`est_k`) switched
+to `_unchecked` variants.
+
+**Step 3.2 (Ziggurat sampling):** Removed hand-rolled `sample_standard_normal()`
+(Box-Muller with spare value caching). Replaced with `rand_distr::StandardNormal`
+(Ziggurat algorithm) via `Array2::from_shape_fn`. Added `rand_distr = "0.4"` to
+`slide-knockoff/Cargo.toml`.
+
+**Step 3.3 (cache trim):** Removed `mu`, `sigma`, `diag_s` from `KnockoffCache`
+struct. Only `mu_k` and `l_trans` are retained — the only fields needed for
+knockoff sampling. Saves ~3 matrix clones per cache construction.
+
+**Step 3.4 (interaction alloc):** Pre-allocate `Array2::zeros((nrows, total_interactions))`
+and fill columns in-place with `ndarray::azip!` instead of collecting `Vec<Array1>`
+and assembling via `columns_to_matrix()`. Removed the now-dead `columns_to_matrix`
+helper.
+
 ### After Phase 3:
 
 10. Final benchmark + memory profiling (`heaptrack`)
@@ -771,10 +794,10 @@ Phase 3 (polish) — steps are independent
 | 1.3 | Sigmoid per coordinate | ~70x fewer sigmoid calls | slide-glmnet | ✅ done |
 | 1.4 | Augmented clone | ~80 MB/call saved | slide-knockoff | ✅ done |
 | 1.5 | Missing column swap | correctness | slide-knockoff | ✅ done |
-| 2.1 | No early stopping | ~2x on glmnet | slide-glmnet | pending |
-| 2.2 | Slow nalgebra conversion | ~10x per conversion | slide-types | pending |
-| 2.3 | Nested rayon | ~20-30% overall | slide-knockoff, slide-core | pending |
-| 3.1 | Redundant validation | 5-10% on decomp paths | slide-types | pending |
-| 3.2 | Box-Muller sampling | ~40% on RNG | slide-knockoff | pending |
-| 3.3 | Cache bloat | memory savings | slide-knockoff | pending |
-| 3.4 | Interaction alloc | minor | slide-core | pending |
+| 2.1 | No early stopping | ~2x on glmnet | slide-glmnet | ✅ done |
+| 2.2 | Slow nalgebra conversion | ~10x per conversion | slide-types | ✅ done |
+| 2.3 | Nested rayon | ~20-30% overall | slide-knockoff, slide-core | ✅ done |
+| 3.1 | Redundant validation | 5-10% on decomp paths | slide-types | ✅ done |
+| 3.2 | Box-Muller sampling | ~40% on RNG | slide-knockoff | ✅ done |
+| 3.3 | Cache bloat | memory savings | slide-knockoff | ✅ done |
+| 3.4 | Interaction alloc | minor | slide-core | ✅ done |
