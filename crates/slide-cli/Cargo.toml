@@ -1,17 +1,18 @@
 [package]
-name = "slide-cli"
+name = "SLIDE-rs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "CLI for the SLIDE (Statistical Learning for Integrative Data Exploration) pipeline"
 
 [lints.rust]
 unsafe_code = "forbid"
 
 [[bin]]
-name = "slide-cli"
+name = "slide"
 path = "src/main.rs"
 
 [dependencies]

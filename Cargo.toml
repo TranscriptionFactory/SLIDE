@@ -19,8 +19,8 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.79"
 license = "MIT"
-authors = ["SLIDE contributors"]
-repository = "https://github.com/alw399/SLIDE_py"
+authors = ["Aaron BIR", "Hanxi Xiao"]
+repository = "https://github.com/TranscriptionFactory/SLIDE-rs"
 
 [workspace.dependencies]
 anyhow = "1.0"
