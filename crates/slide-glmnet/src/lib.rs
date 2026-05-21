@@ -107,149 +107,6 @@ pub fn gaussian_lasso_path(
     validate_inputs(x, y, config)?;
 
     let prepared = PreparedData::from_inputs(x, y, config.standardize);
-    let n = prepared.x_scaled.as_ndarray().nrows();
-    let p = prepared.x_scaled.as_ndarray().ncols();
-
-    if n < 2 * p {
-        gaussian_lasso_path_gram(&prepared, config)
-    } else {
-        gaussian_lasso_path_residual(&prepared, config)
-    }
-}
-
-/// Gram-matrix (covariance update) path for the n < p regime.
-///
-/// Precomputes G = X^T X / n and Xy = X^T y / n via BLAS dgemm/dgemv (p > 32),
-/// then maintains grad_cache = Xy - G @ beta so the CD inner loop uses only
-/// p-dimensional operations instead of n-dimensional ones.
-fn gaussian_lasso_path_gram(
-    prepared: &PreparedData,
-    config: &GaussianLassoPathConfig,
-) -> Result<GaussianLassoPathResult, GlmnetError> {
-    let lambda = match &config.lambda {
-        Some(lambda) => validate_lambda_grid(lambda)?,
-        None => build_lambda_grid(
-            &prepared.x_scaled,
-            &prepared.y_centered,
-            config.nlambda,
-            config.alpha,
-        )?,
-    };
-
-    let x_array = prepared.x_scaled.as_ndarray();
-    let y_array = prepared.y_centered.as_ndarray();
-    let n = x_array.nrows();
-    let p = x_array.ncols();
-    let n_f = n as Scalar;
-    let nlambda = lambda.len();
-
-    // One-time BLAS dgemm: G = X^T X / n — O(n*p^2), amortized across all lambdas
-    let gram = x_array.t().dot(x_array).mapv(|v| v / n_f);
-    // One-time BLAS dgemv: Xy = X^T y / n
-    let xy = x_array.t().dot(y_array).mapv(|v| v / n_f);
-    // y^T y / n for deviance ratio computation
-    let yty = y_array.dot(y_array) / n_f;
-
-    let mut beta_scaled: Array1<Scalar> = Array1::zeros(p);
-    let mut beta_path = Array2::zeros((p, nlambda));
-    let mut intercept = Array1::zeros(nlambda);
-    // grad_cache = Xy - G @ beta; initially Xy since beta = 0
-    let mut grad_cache = xy.clone();
-
-    let null_deviance = y_array.dot(y_array);
-    let mut n_computed = 0usize;
-    let mut ever_nonzero = vec![false; p];
-    let mut n_ever_nonzero = 0usize;
-
-    for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
-        // Strong rule screening using grad_cache (no X^T @ residual needed)
-        let mut candidate: Vec<bool> = if lambda_index == 0 {
-            vec![true; p]
-        } else {
-            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
-            let threshold = 2.0 * lambda_value - prev_lambda;
-            (0..p)
-                .map(|j| beta_scaled[j].abs() > 0.0 || grad_cache[j].abs() >= threshold)
-                .collect()
-        };
-
-        // Strong rule + KKT check loop
-        loop {
-            gram_coordinate_descent_step(
-                &gram,
-                &mut beta_scaled,
-                &mut grad_cache,
-                lambda_value,
-                config.alpha,
-                config.tolerance,
-                config.max_iter,
-                &candidate,
-            );
-
-            // Check KKT on excluded coordinates using grad_cache directly
-            let mut kkt_violated = false;
-            for j in 0..p {
-                if !candidate[j] && grad_cache[j].abs() > lambda_value * config.alpha {
-                    candidate[j] = true;
-                    kkt_violated = true;
-                }
-            }
-            if !kkt_violated {
-                break;
-            }
-        }
-
-        let beta_original = &beta_scaled / &prepared.column_scale;
-        let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
-        beta_path.column_mut(lambda_index).assign(&beta_original);
-        intercept[lambda_index] = intercept_value;
-        n_computed = lambda_index + 1;
-
-        if config.early_stop_all_entered {
-            for (j, &b) in beta_scaled.iter().enumerate() {
-                if !ever_nonzero[j] && b.abs() > 1e-10 {
-                    ever_nonzero[j] = true;
-                    n_ever_nonzero += 1;
-                }
-            }
-            if n_ever_nonzero >= p {
-                break;
-            }
-        }
-
-        let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
-        if nnz >= n {
-            break;
-        }
-        // Deviance ratio via quadratic form: RSS/n = y^Ty/n - 2*beta^T*Xy + beta^T*G*beta
-        if null_deviance > 0.0 {
-            let rss_over_n =
-                yty - 2.0 * beta_scaled.dot(&xy) + gram.dot(&beta_scaled).dot(&beta_scaled);
-            let dev_ratio = 1.0 - rss_over_n * n_f / null_deviance;
-            if dev_ratio > DEVMAX {
-                break;
-            }
-        }
-    }
-
-    let beta_path = truncate_path(beta_path, n_computed);
-    let intercept = Array1::from_vec(intercept.iter().copied().take(n_computed).collect());
-    let lambda = Vector::from_ndarray(Array1::from_vec(
-        lambda.as_ndarray().iter().copied().take(n_computed).collect(),
-    ));
-
-    Ok(GaussianLassoPathResult {
-        beta: Matrix::from_ndarray(beta_path),
-        intercept: Vector::from_ndarray(intercept),
-        lambda,
-    })
-}
-
-/// Standard residual-based path for the n >= p regime.
-fn gaussian_lasso_path_residual(
-    prepared: &PreparedData,
-    config: &GaussianLassoPathConfig,
-) -> Result<GaussianLassoPathResult, GlmnetError> {
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
         None => build_lambda_grid(
@@ -269,16 +126,21 @@ fn gaussian_lasso_path_residual(
     let mut beta_scaled: Array1<Scalar> = Array1::zeros(p);
     let mut beta_path = Array2::zeros((p, nlambda));
     let mut intercept = Array1::zeros(nlambda);
+    // Maintain residual across lambda steps (avoids recomputing y - X*beta each step)
     let mut residual = y_array.to_owned();
 
     let null_deviance = y_array.dot(y_array);
     let mut n_computed = 0usize;
+    // Track which coefficients have ever been non-zero (for early_stop_all_entered)
     let mut ever_nonzero = vec![false; p];
     let mut n_ever_nonzero = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
+        // Strong rule screening: skip coordinates guaranteed to remain zero.
+        // At lambda_k, if |X_j^T r / n| < 2*lambda_k - lambda_{k-1}, then
+        // coordinate j will stay zero (given it was zero at lambda_{k-1}).
         let mut candidate: Vec<bool> = if lambda_index == 0 {
-            vec![true; p]
+            vec![true; p] // no screening on first lambda
         } else {
             let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
             let threshold = 2.0 * lambda_value - prev_lambda;
@@ -290,6 +152,7 @@ fn gaussian_lasso_path_residual(
                 .collect()
         };
 
+        // Strong rule + KKT check loop
         loop {
             coordinate_descent_step(
                 x_array,
@@ -303,6 +166,7 @@ fn gaussian_lasso_path_residual(
                 &candidate,
             );
 
+            // Check KKT conditions on excluded coordinates
             let mut kkt_violated = false;
             for j in 0..p {
                 if !candidate[j] {
@@ -324,6 +188,7 @@ fn gaussian_lasso_path_residual(
         intercept[lambda_index] = intercept_value;
         n_computed = lambda_index + 1;
 
+        // Track entry for early_stop_all_entered mode
         if config.early_stop_all_entered {
             for (j, &b) in beta_scaled.iter().enumerate() {
                 if !ever_nonzero[j] && b.abs() > 1e-10 {
@@ -336,6 +201,7 @@ fn gaussian_lasso_path_residual(
             }
         }
 
+        // Early stopping: saturated model or near-perfect fit
         let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
         if nnz >= n {
             break;
@@ -349,6 +215,7 @@ fn gaussian_lasso_path_residual(
         }
     }
 
+    // Truncate to actually computed lambdas
     let beta_path = truncate_path(beta_path, n_computed);
     let intercept = Array1::from_vec(intercept.iter().copied().take(n_computed).collect());
     let lambda = Vector::from_ndarray(Array1::from_vec(
@@ -1059,94 +926,6 @@ impl PreparedData {
             column_sq_norm,
         }
     }
-}
-
-/// Gram-based coordinate descent on a candidate set.
-///
-/// Uses precomputed G = X^T X / n and maintains grad_cache = Xy - G @ beta.
-/// The inner loop operates on p-dimensional vectors (hitting BLAS for p >= 32)
-/// instead of n-dimensional vectors.
-#[allow(clippy::too_many_arguments)]
-fn gram_coordinate_descent_step(
-    gram: &Array2<Scalar>,
-    beta: &mut Array1<Scalar>,
-    grad_cache: &mut Array1<Scalar>,
-    lambda: Scalar,
-    alpha: Scalar,
-    tolerance: Scalar,
-    max_iter: usize,
-    candidate: &[bool],
-) {
-    let mut active: Vec<bool> = beta
-        .iter()
-        .zip(candidate.iter())
-        .map(|(value, &cand)| cand && value.abs() > 0.0)
-        .collect();
-
-    for _ in 0..max_iter {
-        let mut max_change = 0.0;
-        if active.iter().any(|&flag| flag) {
-            max_change =
-                gram_sweep_coordinates(gram, beta, grad_cache, &active, lambda, alpha);
-            if max_change > tolerance {
-                continue;
-            }
-        }
-
-        let candidate_change =
-            gram_sweep_coordinates(gram, beta, grad_cache, candidate, lambda, alpha);
-
-        for (index, value) in beta.iter().copied().enumerate() {
-            active[index] = candidate[index] && value.abs() > 0.0;
-        }
-
-        if candidate_change.max(max_change) <= tolerance {
-            break;
-        }
-    }
-}
-
-fn gram_sweep_coordinates(
-    gram: &Array2<Scalar>,
-    beta: &mut Array1<Scalar>,
-    grad_cache: &mut Array1<Scalar>,
-    active: &[bool],
-    lambda: Scalar,
-    alpha: Scalar,
-) -> Scalar {
-    let p = beta.len();
-    let mut max_change: Scalar = 0.0;
-    for j in 0..p {
-        if !active[j] {
-            continue;
-        }
-        let gjj = gram[(j, j)];
-        if gjj == 0.0 {
-            beta[j] = 0.0;
-            continue;
-        }
-
-        let old_beta = beta[j];
-        // Partial gradient (with j removed): grad_cache[j] + G[j,j] * beta[j]
-        let gradient = grad_cache[j] + gjj * old_beta;
-        let new_beta = soft_threshold(gradient, lambda * alpha) / (gjj + lambda * (1.0 - alpha));
-        let delta = new_beta - old_beta;
-
-        if delta != 0.0 {
-            beta[j] = new_beta;
-            // Update grad_cache: grad_cache -= delta * G[:,j]
-            let g_col = gram.column(j);
-            Zip::from(grad_cache.view_mut())
-                .and(&g_col)
-                .for_each(|gc, &g| *gc -= delta * g);
-        }
-
-        let change = delta.abs();
-        if change > max_change {
-            max_change = change;
-        }
-    }
-    max_change
 }
 
 /// Coordinate descent on a candidate set (strong rule screened).
