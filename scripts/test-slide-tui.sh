@@ -20,7 +20,7 @@ Builds the Rust SLIDE CLI, runs focused TUI/core tests, creates a small
 final-CV checkpoint, then opens the TUI on that checkpoint.
 
 Options:
-  --release  Build and run target/release/slide-cli instead of debug.
+  --release  Build and run target/release/slide instead of debug.
   --no-tui   Stop after creating and validating the checkpoint.
   --reuse    Reuse the existing checkpoint/config in .tmp/tui-smoke.
 
@@ -57,16 +57,16 @@ CARGO_PROFILE_FLAG=()
 if [[ "${PROFILE}" == "release" ]]; then
   CARGO_PROFILE_FLAG=(--release)
 fi
-BIN="${ROOT}/target/${PROFILE}/slide-cli"
+BIN="${ROOT}/target/${PROFILE}/slide"
 
 cd "${ROOT}"
 
 echo "==> Running focused tests"
-cargo test -p slide-cli
+cargo test -p slide-rs
 cargo test -p slide-core --lib
 
-echo "==> Building slide-cli (${PROFILE})"
-cargo build -p slide-cli "${CARGO_PROFILE_FLAG[@]}"
+echo "==> Building slide (${PROFILE})"
+cargo build -p slide-rs "${CARGO_PROFILE_FLAG[@]}"
 
 mkdir -p "${WORKDIR}"
 if [[ "${FRESH}" -eq 1 ]]; then

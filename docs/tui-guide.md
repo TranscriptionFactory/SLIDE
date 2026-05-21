@@ -87,6 +87,41 @@ Optional flags:
 
 ---
 
+## Release Screenshots
+
+The repo includes a scripted VHS tape for repeatable screenshots of the
+Ratatui dashboard. It builds a deterministic smoke-test checkpoint, launches
+`slide tui --no-follow`, navigates through the release-worthy tabs/views,
+and writes PNG screenshots plus an animated GIF.
+
+```bash
+scripts/capture-tui-screenshots.sh
+```
+
+Outputs are written under `docs/assets/tui/`:
+
+- `overview.png`
+- `love-diagnostics.png`
+- `love-loading-matrix.png`
+- `factors.png`
+- `slide-selection.png`
+- `performance.png`
+- `tui-demo.gif`
+
+If you only want to regenerate the fixture before manually opening the TUI:
+
+```bash
+scripts/capture-tui-screenshots.sh --prepare-only
+./target/debug/slide tui \
+  --checkpoint .tmp/tui-smoke/tui-smoke-checkpoint.json \
+  --config .tmp/tui-smoke/tui-smoke.yaml \
+  --no-follow
+```
+
+VHS install options are documented at <https://github.com/charmbracelet/vhs>.
+
+---
+
 ## Config File
 
 The YAML config tells the pipeline where data lives and what hyperparameters to
