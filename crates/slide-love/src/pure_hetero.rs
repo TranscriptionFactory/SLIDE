@@ -327,7 +327,7 @@ pub fn est_k(x: &Matrix, l_hat: &[usize], gamma_ll: &Vector) -> Result<usize, Pu
     let gamma_diag = diagonal_matrix(gamma_ll.as_ndarray());
     let m1 = select_submatrix(&r1, &l_hat_vec) - &gamma_diag;
     let m2 = select_submatrix(&r2, &l_hat_vec) - &gamma_diag;
-    let decomposition = Matrix::from_ndarray(m1.clone()).symmetric_eigendecomposition()?;
+    let decomposition = Matrix::from_ndarray(m1.clone()).symmetric_eigendecomposition_unchecked();
     let eigenvalues = decomposition.eigenvalues().as_ndarray();
     let eigenvectors = decomposition.eigenvectors().as_ndarray();
 

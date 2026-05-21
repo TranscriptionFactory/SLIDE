@@ -18,6 +18,7 @@ path = "src/lib.rs"
 nalgebra.workspace = true
 ndarray.workspace = true
 rand.workspace = true
+rand_distr = "0.4"
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true

@@ -156,7 +156,13 @@ impl Matrix {
     pub fn symmetric_eigendecomposition(&self) -> Result<EigenDecomposition, LinearAlgebraError> {
         self.validate_square("eigendecomposition")?;
         self.validate_symmetric("eigendecomposition")?;
+        Ok(self.symmetric_eigendecomposition_unchecked())
+    }
 
+    /// Like [`symmetric_eigendecomposition`](Self::symmetric_eigendecomposition)
+    /// but skips square/symmetry validation. Use from internal code paths where
+    /// the matrix is known to be valid.
+    pub fn symmetric_eigendecomposition_unchecked(&self) -> EigenDecomposition {
         let decomposition = SymmetricEigen::new(self.to_nalgebra());
         let dimension = decomposition.eigenvalues.len();
         let mut order: Vec<_> = (0..dimension).collect();
@@ -174,10 +180,10 @@ impl Matrix {
             eigenvectors.set_column(target_col, &column);
         }
 
-        Ok(EigenDecomposition {
+        EigenDecomposition {
             eigenvalues: Vector::from_nalgebra(DVector::from_vec(eigenvalues)),
             eigenvectors: Matrix::from_nalgebra(eigenvectors),
-        })
+        }
     }
 
     /// Compute a Cholesky factorization.
@@ -186,7 +192,15 @@ impl Matrix {
     /// On failure (non-positive-definite input), returns `NotPositiveDefinite`.
     pub fn cholesky(&self, matrix_name: &str) -> Result<CholeskyDecomposition, LinearAlgebraError> {
         self.validate_square("cholesky")?;
+        self.cholesky_unchecked(matrix_name)
+    }
 
+    /// Like [`cholesky`](Self::cholesky) but skips square validation.
+    /// Use from internal code paths where the matrix is known to be square.
+    pub fn cholesky_unchecked(
+        &self,
+        matrix_name: &str,
+    ) -> Result<CholeskyDecomposition, LinearAlgebraError> {
         let factor = LapackCholesky::new(self.to_nalgebra()).ok_or_else(|| {
             LinearAlgebraError::NotPositiveDefinite {
                 matrix_name: matrix_name.to_owned(),
