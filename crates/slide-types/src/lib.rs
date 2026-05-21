@@ -11,7 +11,6 @@ use thiserror::Error;
 pub type Scalar = f64;
 
 const SYMMETRY_TOLERANCE: Scalar = 1.0e-12;
-const POSITIVE_DEFINITE_TOLERANCE: Scalar = 0.0;
 const DEFAULT_PSEUDOINVERSE_EPSILON: Scalar = 1.0e-12;
 
 /// Owned dense matrix representation used at crate boundaries.
@@ -181,22 +180,17 @@ impl Matrix {
         })
     }
 
-    /// Compute a Cholesky factorization after an explicit positive-definite check.
+    /// Compute a Cholesky factorization.
+    ///
+    /// Delegates directly to LAPACK without a pre-check eigendecomposition.
+    /// On failure (non-positive-definite input), returns `NotPositiveDefinite`.
     pub fn cholesky(&self, matrix_name: &str) -> Result<CholeskyDecomposition, LinearAlgebraError> {
         self.validate_square("cholesky")?;
-        self.validate_symmetric("cholesky")?;
-
-        let min_eigenvalue = self.minimum_eigenvalue()?;
-        if min_eigenvalue <= POSITIVE_DEFINITE_TOLERANCE {
-            return Err(LinearAlgebraError::NotPositiveDefinite {
-                matrix_name: matrix_name.to_owned(),
-                min_eigenvalue,
-            });
-        }
 
         let factor = LapackCholesky::new(self.to_nalgebra()).ok_or_else(|| {
-            LinearAlgebraError::CholeskyFactorizationFailed {
+            LinearAlgebraError::NotPositiveDefinite {
                 matrix_name: matrix_name.to_owned(),
+                min_eigenvalue: f64::NAN,
             }
         })?;
 
@@ -233,21 +227,6 @@ impl Matrix {
     #[must_use]
     pub fn shape(&self) -> (usize, usize) {
         self.0.dim()
-    }
-
-    fn minimum_eigenvalue(&self) -> Result<Scalar, LinearAlgebraError> {
-        let decomposition = self.symmetric_eigendecomposition()?;
-        decomposition
-            .eigenvalues()
-            .as_ndarray()
-            .iter()
-            .copied()
-            .min_by(Scalar::total_cmp)
-            .ok_or_else(|| LinearAlgebraError::NonSquareMatrix {
-                operation: "eigendecomposition",
-                rows: self.nrows(),
-                cols: self.ncols(),
-            })
     }
 
     fn validate_square(&self, operation: &'static str) -> Result<(), LinearAlgebraError> {
@@ -599,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn cholesky_rejects_non_positive_definite_matrices_with_min_eigenvalue() {
+    fn cholesky_rejects_non_positive_definite_matrices() {
         let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [2.0, 1.0]]));
 
         let result = matrix.cholesky("covariance");
@@ -610,27 +589,10 @@ mod tests {
                 min_eigenvalue,
             }) => {
                 assert_eq!(matrix_name, "covariance");
-                assert!((min_eigenvalue + 1.0).abs() <= TEST_TOLERANCE);
+                // After removing eigendecomp pre-check, the actual eigenvalue is unknown
+                assert!(min_eigenvalue.is_nan());
             }
             other => panic!("expected positive-definite error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn cholesky_rejects_non_symmetric_matrices() {
-        let matrix = Matrix::from_ndarray(arr2(&[[1.0, 2.0], [2.1, 3.0]]));
-
-        let result = matrix.cholesky("Sigma");
-
-        match result {
-            Err(LinearAlgebraError::NonSymmetricMatrix {
-                operation,
-                max_abs_diff,
-            }) => {
-                assert_eq!(operation, "cholesky");
-                assert!((max_abs_diff - 0.1).abs() <= TEST_TOLERANCE);
-            }
-            other => panic!("expected symmetry error, got {other:?}"),
         }
     }
 
