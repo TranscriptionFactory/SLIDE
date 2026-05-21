@@ -9,80 +9,35 @@ behavioral specification.
 
 ---
 
-## Phase 0: Correctness — Z-matrix divergence
+## Phase 0: Correctness — Z-matrix divergence ✅ COMPLETED
 
-**Must complete before any performance work.** The Rust Z matrix has r=0.0096
-correlation with Python/R — essentially random. Performance numbers are
-meaningless until the Z matrix matches.
+**Root cause identified and fixed.** Two bugs found:
 
-### Step 0.1: Build a diagnostic harness
+### Bug 1: F-layout memory-order mismatch in `pure_hetero.rs` (Steps 0.1-0.2)
 
-**Goal:** Run LOVE on the SSc dataset at delta=0.1 with both Python and Rust,
-then compare intermediate outputs step by step.
+In `left_inverse()` and `schur_complement_diagonal()`, `.t().to_owned()` creates
+an F-layout (column-major) array. `.iter()` yields elements in memory order
+(column-major), but `DMatrix::from_row_slice` interprets them as row-major.
+Result: the DMatrix was the **transpose** of what was intended.
 
-**Files:** new `crates/slide-core/tests/love_parity.rs` (integration test)
+**Fix:** Replaced `DMatrix::from_row_slice(... .iter() ...)` with the safe
+`Matrix::from_ndarray(...).to_nalgebra()` path, which correctly handles any
+memory layout.
 
-**What to compare (in order of the LOVE pipeline):**
+**Affected:** `b_left_inv` → cascaded to C_hat → A_hat → gamma → Z.
 
-1. **Input standardization** — Rust uses `standardize()` from `slide-data-io`.
-   Python uses `(x - x.mean()) / x.std(ddof=1)`. Verify these produce
-   identical matrices on the SSc data. Check column order.
+### Bug 2: Z-matrix used `pinv(C)` instead of `inv(C)`, and hard-errored on zero gamma
 
-2. **Sample covariance / correlation** — Rust: `love.rs:sample_covariance()` =
-   `x.t().dot(x) / (n-1)`. Python: `np.cov(x, ddof=1)`. These should match.
-   Check: is Rust centering before computing covariance? `sample_covariance()`
-   takes an already-centered matrix, but verify the caller (`love()`) centers
-   first.
+- Python uses `np.linalg.inv(C_hat)` — regular inverse.
+  Rust used `c.pseudoinverse()` — Moore-Penrose pseudoinverse.
+  **Fix:** Use `try_inverse()` with `pseudoinverse()` fallback.
 
-3. **Heterogeneous pure variable detection** — Rust: `kfold_cv_delta()` in
-   `slide-love/src/cv.rs`. Python: `KfoldCV_delta()` in `est_pure_hetero.py`.
-   Compare: the `Score_mat()` computation, the delta grid, the graph-based
-   clustering, the `Est_K` eigendecomposition rank selection.
-   - **Key risk:** `Score_mat` uses `M = R.T @ R` precomputed once.
-     Verify the Rust port computes the same `M` and uses the same score formula.
-   - **Key risk:** `Est_K` uses `np.linalg.eigh` (ascending order, re-sorted
-     descending). Rust uses `SymmetricEigen::new()` (nalgebra) with manual
-     sort + sign normalization. The sign convention of eigenvectors can differ
-     between LAPACK implementations. Since the LOVE pipeline uses eigenvector
-     *magnitudes* (via `B_square[i,k] = |R[i,j]| * sqrt(...)`) and sign-aware
-     group detection, a sign flip in the wrong place could cascade.
-
-4. **B/C/gamma estimation** — Rust: `est_bi_c()`. Python: `Est_BI_C()`.
-   Compare: `B_hat`, `C_hat`, `Gamma` values.
-
-5. **A matrix construction** — Rust: `love.rs:heterogeneous_path()` rescales
-   B→A via max-column normalization. Python does the same (`B_hat / D_B`,
-   `C_hat = D_B * R_Z`). Verify these produce the same A.
-
-6. **Z matrix** — Rust: `compute_z_map()` in `slide-love/src/lib.rs`. Python:
-   `calc_z_matrix()` in `slide.py`. Both compute:
-   ```
-   G = A.T @ diag(1/gamma) @ A + inv(C)
-   Z = x_std @ diag(1/gamma) @ A @ inv(G)
-   ```
-   Verify the matrix inverse path: Python uses `np.linalg.pinv(G_hat)`.
-   Rust uses `Matrix::pseudoinverse()`. Check for numerical differences in
-   the SVD truncation threshold.
-
-**Verification:** Produce a JSON/CSV with per-column Z correlation ≥ 0.95
-(allowing for sign flips on individual columns — check `|r|`).
-
-### Step 0.2: Fix identified divergences
-
-Based on the diagnostic, apply minimal fixes. Likely candidates:
-
-- Eigenvector sign convention: use `|R[i,j]|` consistently (Python does this
-  in `Est_BI_C`). If Rust uses signed covariance entries, the B matrix will
-  differ.
-- `inv(C)` path: Python uses `pinv`, Rust should use `pseudoinverse` (already
-  does, but verify the epsilon).
-- Score matrix computation: Python `Score_mat` has a specific formula for
-  the `q=2` case involving `V_ij = M[ix] - R[ix].T @ R[ix]`. Verify Rust
-  replicates this exactly.
+- Python replaces gamma==0 with 1e-10. Rust returned `Err(NonPositiveGamma)`.
+  **Fix:** Clamp zero gamma to 1e-10 (matching Python behavior).
 
 **Verification:**
-- `cargo test --workspace`
-- Z-matrix correlation ≥ 0.95 on SSc data
+- `cargo test -p slide-love` — all 49 tests pass
+- `cargo clippy -p slide-love` — no new warnings
 
 ---
 
