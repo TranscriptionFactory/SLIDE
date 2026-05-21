@@ -15,7 +15,6 @@ use thiserror::Error;
 
 const FEASIBILITY_FLOOR: Scalar = 1.0e-10;
 const SYMMETRY_TOLERANCE: Scalar = 1.0e-12;
-const MAX_BINARY_SEARCH_STEPS: usize = 64;
 const MAX_CLUSTER_SEARCH_STEPS: usize = 32;
 const CLIP_TOLERANCE: Scalar = 1.0e-12;
 
@@ -301,33 +300,47 @@ fn enforce_correlation_feasibility(
     correlation: &Matrix,
     solution: &mut [Scalar],
 ) -> Result<(), SdpError> {
-    let min_eigenvalue = minimum_eigenvalue_of_shifted_matrix(correlation, solution)?;
-    if min_eigenvalue >= FEASIBILITY_FLOOR {
-        return Ok(());
-    }
-
-    let gamma = binary_search_feasible_scale(|scale| {
-        minimum_eigenvalue_of_shifted_matrix(correlation, &scale_solution(solution, scale))
-    })?;
-
-    for value in solution.iter_mut() {
-        *value = clip_unit_interval(*value * gamma);
-    }
-    Ok(())
+    enforce_feasibility(correlation, solution, true)
 }
 
 fn enforce_covariance_feasibility(sigma: &Matrix, diag_s: &mut [Scalar]) -> Result<(), SdpError> {
-    let min_eigenvalue = minimum_eigenvalue_of_shifted_matrix(sigma, diag_s)?;
-    if min_eigenvalue >= FEASIBILITY_FLOOR {
+    enforce_feasibility(sigma, diag_s, false)
+}
+
+/// Closed-form feasibility enforcement.
+///
+/// Computes the minimum eigenvalue of the shifted matrix `2*matrix - diag(solution)`
+/// and, if infeasible, scales `solution` by a factor `γ` derived from:
+///   `λ_min(2Σ - γ·diag(s)) = (1-γ)·λ_min(2Σ) + γ·λ_min(2Σ - diag(s))`
+/// solving for `γ` such that the result equals `FEASIBILITY_FLOOR`.
+///
+/// This replaces a 64-iteration binary search (each requiring an eigendecomposition)
+/// with at most 2 eigendecompositions (1 shifted + 1 unshifted, where the unshifted
+/// eigenvalue is `2 * λ_min(matrix)`).
+fn enforce_feasibility(
+    matrix: &Matrix,
+    solution: &mut [Scalar],
+    clip_to_unit: bool,
+) -> Result<(), SdpError> {
+    let shifted_min = minimum_eigenvalue_of_shifted_matrix(matrix, solution)?;
+    if shifted_min >= FEASIBILITY_FLOOR {
         return Ok(());
     }
 
-    let gamma = binary_search_feasible_scale(|scale| {
-        minimum_eigenvalue_of_shifted_matrix(sigma, &scale_solution(diag_s, scale))
-    })?;
+    // λ_min(2·matrix) = 2·λ_min(matrix), avoiding a second eigendecomposition
+    let unshifted_min = 2.0 * minimum_eigenvalue(matrix)?;
 
-    for value in diag_s.iter_mut() {
+    let gamma = if unshifted_min > shifted_min {
+        ((unshifted_min - FEASIBILITY_FLOOR) / (unshifted_min - shifted_min)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    for value in solution.iter_mut() {
         *value *= gamma;
+        if clip_to_unit {
+            *value = clip_unit_interval(*value);
+        }
     }
     Ok(())
 }
@@ -348,23 +361,6 @@ fn minimum_eigenvalue_of_shifted_matrix(
         }
     }
     minimum_eigenvalue(&Matrix::from_nalgebra(shifted))
-}
-
-fn binary_search_feasible_scale<F>(mut min_eig: F) -> Result<Scalar, SdpError>
-where
-    F: FnMut(Scalar) -> Result<Scalar, SdpError>,
-{
-    let mut low = 0.0;
-    let mut high = 1.0;
-    for _ in 0..MAX_BINARY_SEARCH_STEPS {
-        let mid = 0.5 * (low + high);
-        if min_eig(mid)? >= FEASIBILITY_FLOOR {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    Ok(low)
 }
 
 fn partition_correlation_blocks(correlation: &Matrix, max_block_size: usize) -> Vec<Vec<usize>> {
@@ -449,10 +445,6 @@ fn rescale_solution(solution: &[Scalar], diagonal: &[Scalar]) -> Vec<Scalar> {
         .zip(diagonal.iter())
         .map(|(value, diagonal)| value * diagonal)
         .collect()
-}
-
-fn scale_solution(solution: &[Scalar], scale: Scalar) -> Vec<Scalar> {
-    solution.iter().map(|value| value * scale).collect()
 }
 
 fn clip_unit_interval(value: Scalar) -> Scalar {
