@@ -1,6 +1,6 @@
 # SLIDE TUI Guide
 
-The `slide-cli` binary provides four subcommands for running and monitoring
+The `slide-rs` binary provides four subcommands for running and monitoring
 SLIDE optimization pipelines.
 
 ## Subcommands
@@ -10,7 +10,7 @@ SLIDE optimization pipelines.
 Execute the SLIDE optimization pipeline directly.
 
 ```bash
-slide-cli run --config config.yaml --checkpoint ckpt.json
+slide-rs run --config config.yaml --checkpoint ckpt.json
 ```
 
 ### `tui`
@@ -20,10 +20,10 @@ inspecting a completed or in-progress run.
 
 ```bash
 # Follow a live run
-slide-cli tui --checkpoint ckpt.json --config config.yaml
+slide-rs tui --checkpoint ckpt.json --config config.yaml
 
 # View a finished run (no polling)
-slide-cli tui --checkpoint ckpt.json --no-follow
+slide-rs tui --checkpoint ckpt.json --no-follow
 ```
 
 **Flags:**
@@ -44,7 +44,7 @@ pipeline's stdout/stderr are redirected to a `.log` file next to the
 checkpoint. Pressing `q` in the TUI kills the child process.
 
 ```bash
-slide-cli monitor --config config.yaml --checkpoint ckpt.json
+slide-rs monitor --config config.yaml --checkpoint ckpt.json
 ```
 
 ### `submit`
@@ -54,7 +54,7 @@ watch progress. Designed for HPC clusters where the pipeline runs as a
 scheduled job.
 
 ```bash
-slide-cli submit --script job.sh --checkpoint ckpt.json --config config.yaml
+slide-rs submit --script job.sh --checkpoint ckpt.json --config config.yaml
 ```
 
 **Flags:**
