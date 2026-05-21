@@ -301,8 +301,8 @@ pub fn knockoff_filter_voting(
                     config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
                 );
                 let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
-                for j in 0..p {
-                    if swap[j] {
+                for (j, &swapped) in swap.iter().enumerate() {
+                    if swapped {
                         for i in 0..n {
                             buf.swap((i, j), (i, p + j));
                         }
@@ -314,8 +314,8 @@ pub fn knockoff_filter_voting(
 
                 // Un-swap to restore X columns for next iteration
                 let buf = augmented.as_ndarray_mut();
-                for j in 0..p {
-                    if swap[j] {
+                for (j, &swapped) in swap.iter().enumerate() {
+                    if swapped {
                         for i in 0..n {
                             buf.swap((i, j), (i, p + j));
                         }
@@ -324,8 +324,8 @@ pub fn knockoff_filter_voting(
 
                 // Correct W-statistic signs for swapped columns
                 let mut w_array = w.into_ndarray();
-                for j in 0..p {
-                    if swap[j] {
+                for (j, &swapped) in swap.iter().enumerate() {
+                    if swapped {
                         w_array[j] = -w_array[j];
                     }
                 }
