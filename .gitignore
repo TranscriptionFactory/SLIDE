@@ -12,6 +12,13 @@ archive/
 .pytest_cache/
 *.egg-info/
 **/**output*/**
+
+# SLIDE run outputs (all implementations)
+**/*.png
+**/*.pkl
+**/*.rds
+**/*.RData
+**/*.parquet
 .conda*/
 conda_envs/
 .pixi/
