@@ -4,11 +4,22 @@
 #SBATCH --mem=150G
 #SBATCH --cpus-per-task=4
 #SBATCH --cluster=htc
-#SBATCH --output=benchmark_results/%x-%A_%a.out
 #SBATCH --export=ALL
 #SBATCH --array=0-2
 
 set -euo pipefail
+
+# ── Timestamped output directory ──────────────────────────────────────────
+# Pass BENCH_OUT_DIR via:  sbatch --export=ALL,BENCH_OUT_DIR=<path> ...
+# If not set, generates a timestamped dir automatically.
+if [ -z "${BENCH_OUT_DIR:-}" ]; then
+    BENCH_OUT_DIR="benchmark_results/$(date +%Y-%m-%d_%H%M%S)"
+fi
+export BENCH_OUT_DIR
+mkdir -p "$BENCH_OUT_DIR"
+
+# Redirect SLURM output into the timestamped directory
+exec > "${BENCH_OUT_DIR}/slide-bench-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.out" 2>&1
 
 # Activate pixi dev environment directly
 export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH"
@@ -31,6 +42,7 @@ BACKENDS=(python r_knockoffs rust)
 BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
 
 echo "Running backend: $BACKEND (array task $SLURM_ARRAY_TASK_ID)"
+echo "Output directory: $BENCH_OUT_DIR"
 
 # Build rust binary before benchmarking (only for rust task, but
 # --rust-bin ensures the benchmark uses the prebuilt binary)
@@ -58,10 +70,10 @@ python benchmarks/benchmark_backends.py \
     --lam 0.1 1.0 \
     --niter 500 \
     --threads 4 \
-    --out-dir benchmark_results \
+    --out-dir "$BENCH_OUT_DIR" \
     "${RUST_BIN_ARGS[@]}"
 
 echo ""
 echo "=== Generating visualizations ==="
-python benchmarks/visualize_results.py --out-dir benchmark_results
-echo "Figures saved to: benchmark_results/figures/"
+python benchmarks/visualize_results.py --out-dir "$BENCH_OUT_DIR"
+echo "Figures saved to: ${BENCH_OUT_DIR}/figures/"
