@@ -1,7 +1,6 @@
-use crate::glasso::default_solver_settings;
 use clarabel::{
     algebra::CscMatrix,
-    solver::{DefaultSolver, IPSolver, NonnegativeConeT, SolverStatus},
+    solver::{DefaultSettings, DefaultSolver, IPSolver, NonnegativeConeT, SolverStatus},
 };
 use ndarray::{Array1, Array2};
 use slide_types::{Matrix, Scalar, Vector};
@@ -257,13 +256,31 @@ fn build_dantzig_lp(
     (CscMatrix::from(&rows), rhs)
 }
 
+fn dantzig_solver_settings() -> DefaultSettings<f64> {
+    DefaultSettings {
+        verbose: false,
+        tol_gap_abs: 1e-8,
+        tol_gap_rel: 1e-8,
+        tol_feas: 1e-8,
+        tol_infeas_abs: 1e-8,
+        tol_infeas_rel: 1e-8,
+        reduced_tol_gap_abs: 1e-9,
+        reduced_tol_gap_rel: 1e-9,
+        reduced_tol_feas: 1e-9,
+        reduced_tol_infeas_abs: 1e-9,
+        reduced_tol_infeas_rel: 1e-9,
+        presolve_enable: false,
+        ..DefaultSettings::default()
+    }
+}
+
 fn solve_lp(
     nvars: usize,
     objective: Vec<Scalar>,
     constraint_matrix: CscMatrix<Scalar>,
     rhs: Vec<Scalar>,
 ) -> Result<Option<Vec<Scalar>>, NonPureError> {
-    let settings = default_solver_settings();
+    let settings = dantzig_solver_settings();
     let quadratic = CscMatrix::<f64>::zeros((nvars, nvars));
     let cones = vec![NonnegativeConeT(rhs.len())];
     let mut solver = DefaultSolver::new(
