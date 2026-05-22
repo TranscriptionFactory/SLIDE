@@ -60,3 +60,8 @@ python benchmarks/benchmark_backends.py \
     --threads 4 \
     --out-dir benchmark_results \
     "${RUST_BIN_ARGS[@]}"
+
+echo ""
+echo "=== Generating visualizations ==="
+python benchmarks/visualize_results.py --out-dir benchmark_results
+echo "Figures saved to: benchmark_results/figures/"

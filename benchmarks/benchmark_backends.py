@@ -218,6 +218,35 @@ def submit_slurm(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Backend runners
 # ---------------------------------------------------------------------------
+def _save_timing(record: TimingRecord, out_dir: Path) -> None:
+    """Persist a single timing record to a per-backend JSON file."""
+    timing_dir = out_dir / record.backend
+    timing_dir.mkdir(parents=True, exist_ok=True)
+    path = timing_dir / "timings.json"
+    existing: list[dict] = []
+    if path.exists():
+        with path.open() as f:
+            existing = json.load(f)
+    # Replace any existing entry for the same (delta, lam)
+    existing = [
+        t for t in existing
+        if not (abs(t["delta"] - record.delta) < 1e-9 and abs(t["lam"] - record.lam) < 1e-9)
+    ]
+    existing.append(dataclasses.asdict(record))
+    with path.open("w") as f:
+        json.dump(existing, f, indent=2)
+
+
+def _load_saved_timings(out_dir: Path) -> list[TimingRecord]:
+    """Load all persisted timing records from per-backend JSON files."""
+    records = []
+    for timing_path in sorted(out_dir.glob("*/timings.json")):
+        with timing_path.open() as f:
+            for entry in json.load(f):
+                records.append(TimingRecord(**entry))
+    return records
+
+
 def run_python_backend(
     args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
 ) -> TimingRecord:
@@ -621,10 +650,18 @@ def main(argv: list[str] | None = None) -> int:
                     record = run_python_backend(args, backend, delta, lam, backend_dir)
 
                 timings.append(record)
+                _save_timing(record, out_dir)
                 log.info(
                     "%s delta=%s lam=%s: %.2fs (%s)",
                     backend, delta, lam, record.wall_seconds, record.status,
                 )
+
+    # Load saved timings from previous runs (complements current-run timings)
+    saved_timings = _load_saved_timings(out_dir)
+    seen = {(t.backend, t.delta, t.lam) for t in timings}
+    for st in saved_timings:
+        if (st.backend, st.delta, st.lam) not in seen:
+            timings.append(st)
 
     # Load results
     results: dict[tuple[str, float, float], BackendResult] = {}
