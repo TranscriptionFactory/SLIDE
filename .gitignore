@@ -18,7 +18,8 @@ conda_envs/
 # Test conda environment
 tests/test_env/
 runs/hiv_runner/native_R
-
+**/love_result.pkl
+**/checkpoint.json
 # Byte-compiled / optimized / DLL files
 **/__pycache__/**
 *.py[codz]
