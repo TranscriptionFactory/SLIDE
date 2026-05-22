@@ -19,7 +19,6 @@ python benchmarks/benchmark_backends.py \
     --backends python r_knockoffs rust \
     --delta 0.01 0.1 \
     --lam 0.1 1.0 \
-    --skip-run \
     --out-dir benchmark_results
 
 echo ""

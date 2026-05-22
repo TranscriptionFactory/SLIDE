@@ -22,8 +22,7 @@ python3 benchmarks/benchmark_backends.py \
     --delta 0.01 0.05 0.1 \
     --lam 0.1 0.5 1.0 \
     --rust-bin "${PROJECT_DIR}/target/release/slide" \
-    --out-dir "$OUT_DIR" \
-    --skip-run
+    --out-dir "$OUT_DIR"
 
 echo ""
 echo "=== GENERATING VISUALIZATIONS ==="
