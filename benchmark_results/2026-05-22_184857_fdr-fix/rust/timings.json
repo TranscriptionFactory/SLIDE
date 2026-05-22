@@ -14,5 +14,21 @@
     "wall_seconds": 145.65085946023464,
     "status": "success",
     "error": ""
+  },
+  {
+    "backend": "rust",
+    "delta": 0.1,
+    "lam": 0.1,
+    "wall_seconds": 184.0038991086185,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "rust",
+    "delta": 0.1,
+    "lam": 1.0,
+    "wall_seconds": 207.47818872332573,
+    "status": "success",
+    "error": ""
   }
 ]
