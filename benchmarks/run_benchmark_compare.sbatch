@@ -21,3 +21,14 @@ python benchmarks/benchmark_backends.py \
     --lam 0.1 1.0 \
     --skip-run \
     --out-dir benchmark_results
+
+echo ""
+echo "=== Generating visualizations ==="
+python benchmarks/visualize_results.py --out-dir benchmark_results
+
+echo ""
+echo "=== Comparison report ==="
+cat benchmark_results/comparison_report.md
+echo ""
+echo "Figures saved to: benchmark_results/figures/"
+ls -la benchmark_results/figures/
