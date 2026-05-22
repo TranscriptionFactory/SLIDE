@@ -111,11 +111,12 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
     let centered_x = Matrix::from_ndarray(center_columns(x.as_ndarray()));
     let se_est = sample_standard_deviations(centered_x.as_ndarray());
 
-    let (mut a_hat, i_hat, i_hat_part, mut c_hat, mut gamma_hat, opt_delta) = if config.pure_homo {
-        homogeneous_path(&centered_x, &se_est, config)?
-    } else {
-        heterogeneous_path(&centered_x, config)?
-    };
+    let (mut a_hat, i_hat, i_hat_part, mut c_hat, mut gamma_hat, opt_delta, sigma) =
+        if config.pure_homo {
+            homogeneous_path(&centered_x, &se_est, config)?
+        } else {
+            heterogeneous_path(&centered_x, config)?
+        };
 
     let pure_set = i_hat
         .iter()
@@ -137,6 +138,7 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
         (i_hat_part.clone(), None)
     } else {
         estimate_non_pure_rows(
+            &sigma,
             &centered_x,
             &mut a_hat,
             &c_hat,
@@ -152,11 +154,10 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
         .filter(|index| !pure_set.contains(index))
         .collect::<Vec<_>>();
     if !non_pure.is_empty() {
-        let sigma = sample_covariance(centered_x.as_ndarray());
         let a_j = a_hat.as_ndarray().select(Axis(0), &non_pure);
         let fitted_diag = diagonal_of_product(&a_j.dot(c_hat.as_ndarray()).dot(&a_j.t()));
         for (offset, &index) in non_pure.iter().enumerate() {
-            gamma_hat[index] = sigma[(index, index)] - fitted_diag[offset];
+            gamma_hat[index] = sigma.as_ndarray()[(index, index)] - fitted_diag[offset];
             if gamma_hat[index] < 0.0 {
                 gamma_hat[index] = 1.0e2;
             }
@@ -192,6 +193,7 @@ fn homogeneous_path(
         Matrix,
         Array1<Scalar>,
         Scalar,
+        Matrix,
     ),
     LoveError,
 > {
@@ -264,6 +266,7 @@ fn homogeneous_path(
         c_hat,
         gamma_hat,
         opt_delta,
+        sigma,
     ))
 }
 
@@ -337,6 +340,7 @@ fn heterogeneous_path(
         Matrix,
         Array1<Scalar>,
         Scalar,
+        Matrix,
     ),
     LoveError,
 > {
@@ -411,10 +415,12 @@ fn heterogeneous_path(
         c_hat,
         gamma_hat,
         cv_res.delta_min,
+        sigma,
     ))
 }
 
 fn estimate_non_pure_rows(
+    sigma: &Matrix,
     x: &Matrix,
     a_hat: &mut Matrix,
     c_hat: &Matrix,
@@ -424,8 +430,7 @@ fn estimate_non_pure_rows(
     method: NonPureMethod,
     config: &LoveConfig,
 ) -> Result<(Vec<SignedPureGroup>, Option<Matrix>), LoveError> {
-    let sigma = Matrix::from_ndarray(sample_covariance(x.as_ndarray()));
-    let y = est_y(&sigma, a_hat, pure_vec)?;
+    let y = est_y(sigma, a_hat, pure_vec)?;
     let pure_set = pure_vec
         .iter()
         .copied()
