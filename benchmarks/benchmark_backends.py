@@ -396,17 +396,17 @@ def load_rust_result(delta: float, lam: float, out_dir: Path) -> BackendResult |
         f"Z{p[0]}:Z{p[1]}" for p in ev["interactions"]["sig_interacts"]
     }
 
-    # A matrix: column-major flat array, dim = [nfeatures, k]
+    # A matrix: row-major flat array, dim = [nfeatures, k]
     a_dim = ev["love"]["a"]["dim"]
     a_data = ev["love"]["a"]["data"]
     nrows_a, ncols_a = a_dim
-    a_matrix = np.array(a_data).reshape((ncols_a, nrows_a)).T
+    a_matrix = np.array(a_data).reshape((nrows_a, ncols_a))
 
-    # Z matrix: column-major flat array, dim = [nsamples, k]
+    # Z matrix: row-major flat array, dim = [nsamples, k]
     z_dim = ev["z"]["dim"]
     z_data = ev["z"]["data"]
     nrows_z, ncols_z = z_dim
-    z_matrix = np.array(z_data).reshape((ncols_z, nrows_z)).T
+    z_matrix = np.array(z_data).reshape((nrows_z, ncols_z))
     z_col_names = [f"Z{i}" for i in range(ncols_z)]
 
     return BackendResult(
