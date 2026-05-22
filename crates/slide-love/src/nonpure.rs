@@ -115,6 +115,7 @@ pub fn est_aj_inv(omega: &Matrix, y: &Matrix, lbd: Scalar) -> Result<Matrix, Non
     for response_index in 0..y.ncols() {
         let response = omega_array.dot(&y_array.column(response_index));
         let mut beta = lp(&Vector::from_ndarray(response), lbd)?.to_nalgebra();
+        threshold_near_zero(&mut beta);
         normalize_l1(&mut beta);
         aj.row_mut(response_index)
             .assign(&Array1::from_vec(beta.iter().copied().collect()));
@@ -172,6 +173,7 @@ pub fn est_aj_dant(
         };
 
         let mut beta = beta.to_nalgebra();
+        threshold_near_zero(&mut beta);
         normalize_l1(&mut beta);
         aj.row_mut(response_index)
             .assign(&Array1::from_vec(beta.iter().copied().collect()));
@@ -318,6 +320,23 @@ fn extract_beta(solution: &[Scalar], dimension: usize) -> Array1<Scalar> {
 
 fn soft_threshold(y: &Array1<Scalar>, lbd: Scalar) -> Array1<Scalar> {
     y.mapv(|value| value.signum() * (value.abs() - lbd).max(0.0))
+}
+
+/// Zero out near-zero entries produced by interior-point solvers.
+///
+/// Clarabel (interior-point) finds solutions in the interior of the feasible region,
+/// where all variables tend to be slightly nonzero (~1e-10). Simplex solvers (like
+/// Python's HiGHS) find vertex solutions where many variables are exactly zero.
+/// This threshold bridges that gap so that L1 normalization doesn't scale up
+/// negligible values and produce artificially dense A-matrices.
+const INTERIOR_POINT_ZERO_THRESHOLD: Scalar = 1e-8;
+
+fn threshold_near_zero(vector: &mut nalgebra::DVector<Scalar>) {
+    for value in vector.iter_mut() {
+        if value.abs() < INTERIOR_POINT_ZERO_THRESHOLD {
+            *value = 0.0;
+        }
+    }
 }
 
 fn normalize_l1(vector: &mut nalgebra::DVector<Scalar>) {
