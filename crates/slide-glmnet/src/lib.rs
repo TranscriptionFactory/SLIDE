@@ -451,8 +451,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
-    const KNOCKOFF_MAX_ITER: usize = 100_000;
+    // Lambdasmax only detects whether a coefficient has entered (nonzero) at
+    // each lambda — not its precise value.  Looser tolerance is sufficient for
+    // entry detection and dramatically reduces CD iterations per lambda step.
+    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
+    const KNOCKOFF_MAX_ITER: usize = 1_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
         tolerance: KNOCKOFF_TOLERANCE,
