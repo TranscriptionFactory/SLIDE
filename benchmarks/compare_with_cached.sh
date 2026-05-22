@@ -31,7 +31,7 @@ for backend in python r_knockoffs; do
     dst="${OUT_DIR}/${backend}"
     if [ "$src" != "$dst" ] && [ -d "$src" ]; then
         echo "Copying cached ${backend} results from ${CACHED_DIR}/"
-        cp -r "$src" "$dst"
+        rsync -a "$src/" "$dst/"
     fi
 done
 
