@@ -15,7 +15,7 @@ use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use thiserror::Error;
 
 const COVARIANCE_EPSILON: Scalar = 1.0e-10;
-const DEFAULT_MAX_BLOCK_SIZE: usize = 100;
+const DEFAULT_MAX_BLOCK_SIZE: usize = 500;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum KnockoffMethod {
@@ -574,29 +574,126 @@ fn estimate_mean(x: &Matrix) -> Vector {
     Vector::from_ndarray(mean)
 }
 
+/// Estimate a shrinkage-regularised covariance matrix using the Schäfer-Strimmer
+/// (2005) method, matching R's `corpcor::cov.shrink` and our Python implementation
+/// in `_cov_shrink_corpcor`. Variances are shrunk toward the median variance and
+/// correlations toward the identity matrix, with data-adaptive intensities.
 fn estimate_covariance(x: &Matrix) -> Result<Matrix, KnockoffError> {
     let (n, p) = x.shape();
-    let mean = estimate_mean(x).into_ndarray();
-    let centered = x.as_ndarray() - &mean.insert_axis(Axis(0));
-    let mut sigma = centered.t().dot(&centered) / ((n - 1) as Scalar);
+    let nf = n as Scalar;
 
-    for index in 0..p {
-        if sigma[(index, index)] <= 0.0 {
-            sigma[(index, index)] = COVARIANCE_EPSILON;
+    // Uniform weights: w_i = 1/n
+    let w2 = 1.0 / nf; // sum(w^2)
+    let h1 = 1.0 / (1.0 - w2); // n/(n-1)
+    let h1w2 = w2 / (1.0 - w2); // 1/(n-1)
+
+    let x_nd = x.as_ndarray();
+    let wm = x_nd
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+
+    // Centered data
+    let xc = x_nd - &wm.clone().insert_axis(Axis(0));
+
+    // Weighted variance = sample variance (ddof=1)
+    let x2_mean = x_nd
+        .mapv(|v| v * v)
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    let wv = (&x2_mean - &wm.mapv(|v| v * v)).mapv(|v| (v * h1).max(0.0));
+
+    // ── Variance shrinkage intensity (lambda_var) ──
+    let zz = xc.mapv(|v| v * v);
+    let q1 = zz
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    let zz2_mean = zz
+        .mapv(|v| v * v)
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    let q2 = &zz2_mean - &q1.mapv(|v| v * v);
+
+    let target_var = median_scalar(&wv);
+    let num_var: Scalar = q2.sum();
+    let den_var: Scalar = (&q1 - target_var / h1).mapv(|v| v * v).sum();
+    let lambda_var = if den_var != 0.0 {
+        (num_var / den_var * h1w2).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    // Shrunk variances and standard deviations
+    let vs = wv.mapv(|v| lambda_var * target_var + (1.0 - lambda_var) * v);
+    let sc_shrunk = vs.mapv(Scalar::sqrt);
+
+    // ── Correlation shrinkage intensity (lambda_cor) ──
+    // Standardise with ORIGINAL sample sd (not shrunk), matching R's estimate.lambda
+    let sc_orig = wv.mapv(Scalar::sqrt);
+    let sc_safe = sc_orig.mapv(|v| if v > 0.0 { v } else { 1.0 });
+
+    let mut xs = &xc / &sc_safe.insert_axis(Axis(0));
+    // Zero out columns where original variance was zero
+    for j in 0..p {
+        if sc_orig[j] == 0.0 {
+            xs.column_mut(j).fill(0.0);
         }
     }
 
-    let needs_shrinkage =
-        n <= p || minimum_eigenvalue(&Matrix::from_ndarray(sigma.clone())) <= 0.0;
-    if needs_shrinkage {
-        let trace = sigma.diag().iter().copied().sum::<Scalar>();
-        let shrinkage = ((p as Scalar) / (n as Scalar)).clamp(0.0, 1.0);
-        let identity_scale = trace / (p as Scalar);
-        let identity = Array2::from_diag(&Array1::from_elem(p, identity_scale));
-        sigma = ((1.0 - shrinkage) * sigma) + (shrinkage * identity);
+    let sw_val = (1.0 / nf).sqrt();
+    let xsw = &xs * sw_val; // xs * sqrt(w), shape (n, p)
+
+    // sE2R = ||S||_F^2 - sum(diag(S)^2)  where S = xsw^T @ xsw
+    // This equals the sum of squared off-diagonal elements of the Gram matrix.
+    let s_gram = xsw.t().dot(&xsw);
+    let s_frob_sq: Scalar = s_gram.iter().map(|v| v * v).sum();
+    let s_diag_sq: Scalar = (0..p).map(|i| s_gram[(i, i)] * s_gram[(i, i)]).sum();
+    let s_e2r = s_frob_sq - s_diag_sq;
+
+    // sER2 = sum(rowsums^2) - ||xs2w||_F^2  where xs2w = xs^2 * sqrt(w)
+    let xs2w = xs.mapv(|v| v * v) * sw_val;
+    let row_sums = xs2w.sum_axis(Axis(1));
+    let ser2_term1: Scalar = row_sums.iter().map(|v| v * v).sum();
+    let ser2_term2: Scalar = xs2w.iter().map(|v| v * v).sum();
+    let s_er2 = ser2_term1 - ser2_term2;
+
+    let den_cor = s_e2r;
+    let num_cor = s_er2 - s_e2r;
+    let lambda_cor = if den_cor != 0.0 {
+        (num_cor / den_cor * h1w2).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    // Shrunk correlation: R_shrunk = (1 - lambda_cor) * R_sample + lambda_cor * I
+    // where R_sample = h1 * (xsw^T @ xsw)
+    let mut r_shrunk = &s_gram * (h1 * (1.0 - lambda_cor));
+    for i in 0..p {
+        r_shrunk[(i, i)] = 1.0;
+    }
+
+    // Combine: Sigma_shrunk = diag(sc_shrunk) @ R_shrunk @ diag(sc_shrunk)
+    let mut sigma = Array2::zeros((p, p));
+    for i in 0..p {
+        for j in 0..p {
+            sigma[(i, j)] = r_shrunk[(i, j)] * sc_shrunk[i] * sc_shrunk[j];
+        }
     }
 
     Ok(Matrix::from_ndarray(symmetrize(sigma)))
+}
+
+fn median_scalar(arr: &Array1<Scalar>) -> Scalar {
+    let mut sorted: Vec<Scalar> = arr.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = sorted.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
 }
 
 fn solve_diag_s(sigma: &Matrix, method: &KnockoffMethod) -> Result<Vector, KnockoffError> {
