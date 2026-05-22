@@ -16,6 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 clarabel = "0.11.1"
+highs = "2.1"
 log = "0.4"
 nalgebra.workspace = true
 ndarray.workspace = true

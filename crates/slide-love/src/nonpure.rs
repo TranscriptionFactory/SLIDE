@@ -1,7 +1,4 @@
-use clarabel::{
-    algebra::CscMatrix,
-    solver::{DefaultSettings, DefaultSolver, IPSolver, NonnegativeConeT, SolverStatus},
-};
+use highs::{ColProblem, HighsModelStatus, Sense};
 use ndarray::{Array1, Array2};
 use slide_types::{Matrix, Scalar, Vector};
 use std::collections::BTreeSet;
@@ -115,7 +112,6 @@ pub fn est_aj_inv(omega: &Matrix, y: &Matrix, lbd: Scalar) -> Result<Matrix, Non
     for response_index in 0..y.ncols() {
         let response = omega_array.dot(&y_array.column(response_index));
         let mut beta = lp(&Vector::from_ndarray(response), lbd)?.to_nalgebra();
-        threshold_near_zero(&mut beta);
         normalize_l1(&mut beta);
         aj.row_mut(response_index)
             .assign(&Array1::from_vec(beta.iter().copied().collect()));
@@ -173,7 +169,6 @@ pub fn est_aj_dant(
         };
 
         let mut beta = beta.to_nalgebra();
-        threshold_near_zero(&mut beta);
         normalize_l1(&mut beta);
         aj.row_mut(response_index)
             .assign(&Array1::from_vec(beta.iter().copied().collect()));
@@ -199,10 +194,10 @@ pub fn dantzig(c_hat: &Matrix, y: &Vector, lbd: Scalar) -> Result<Option<Vector>
     Ok(solution.map(|solution| Vector::from_ndarray(extract_beta(&solution, dimension))))
 }
 
-fn build_soft_threshold_lp(y: &Array1<Scalar>, lbd: Scalar) -> (CscMatrix<Scalar>, Vec<Scalar>) {
+fn build_soft_threshold_lp(y: &Array1<Scalar>, lbd: Scalar) -> (Vec<Vec<f64>>, Vec<Scalar>) {
     let dimension = y.len();
     let nvars = 2 * dimension;
-    let nconstraints = (2 * dimension) + nvars;
+    let nconstraints = 2 * dimension;
     let mut rows = vec![vec![0.0; nvars]; nconstraints];
     let mut rhs = vec![0.0; nconstraints];
 
@@ -217,22 +212,17 @@ fn build_soft_threshold_lp(y: &Array1<Scalar>, lbd: Scalar) -> (CscMatrix<Scalar
         rhs[reflected_row] = lbd - y[row_index];
     }
 
-    let nonnegative_offset = 2 * dimension;
-    for variable_index in 0..nvars {
-        rows[nonnegative_offset + variable_index][variable_index] = -1.0;
-    }
-
-    (CscMatrix::from(&rows), rhs)
+    (rows, rhs)
 }
 
 fn build_dantzig_lp(
     c_hat: &Array2<Scalar>,
     y: &Array1<Scalar>,
     lbd: Scalar,
-) -> (CscMatrix<Scalar>, Vec<Scalar>) {
+) -> (Vec<Vec<f64>>, Vec<Scalar>) {
     let dimension = y.len();
     let nvars = 2 * dimension;
-    let nconstraints = (2 * dimension) + nvars;
+    let nconstraints = 2 * dimension;
     let mut rows = vec![vec![0.0; nvars]; nconstraints];
     let mut rhs = vec![0.0; nconstraints];
 
@@ -250,65 +240,48 @@ fn build_dantzig_lp(
         rhs[row_index + dimension] = lbd - y[row_index];
     }
 
-    let nonnegative_offset = 2 * dimension;
-    for variable_index in 0..nvars {
-        rows[nonnegative_offset + variable_index][variable_index] = -1.0;
-    }
-
-    (CscMatrix::from(&rows), rhs)
-}
-
-fn dantzig_solver_settings() -> DefaultSettings<f64> {
-    DefaultSettings {
-        verbose: false,
-        tol_gap_abs: 1e-8,
-        tol_gap_rel: 1e-8,
-        tol_feas: 1e-8,
-        tol_infeas_abs: 1e-8,
-        tol_infeas_rel: 1e-8,
-        reduced_tol_gap_abs: 1e-9,
-        reduced_tol_gap_rel: 1e-9,
-        reduced_tol_feas: 1e-9,
-        reduced_tol_infeas_abs: 1e-9,
-        reduced_tol_infeas_rel: 1e-9,
-        presolve_enable: false,
-        ..DefaultSettings::default()
-    }
+    (rows, rhs)
 }
 
 fn solve_lp(
     nvars: usize,
     objective: Vec<Scalar>,
-    constraint_matrix: CscMatrix<Scalar>,
+    rows: Vec<Vec<f64>>,
     rhs: Vec<Scalar>,
 ) -> Result<Option<Vec<Scalar>>, NonPureError> {
-    let settings = dantzig_solver_settings();
-    let quadratic = CscMatrix::<f64>::zeros((nvars, nvars));
-    let cones = vec![NonnegativeConeT(rhs.len())];
-    let mut solver = DefaultSolver::new(
-        &quadratic,
-        &objective,
-        &constraint_matrix,
-        &rhs,
-        &cones,
-        settings,
-    )
-    .map_err(|error| NonPureError::SolverInitialization {
-        message: error.to_string(),
-    })?;
-    solver.solve();
+    let mut pb = ColProblem::new();
 
-    Ok(
-        if matches!(
-            solver.solution.status,
-            SolverStatus::Solved | SolverStatus::AlmostSolved
-        ) && solver.solution.x.len() == nvars
-        {
-            Some(solver.solution.x)
-        } else {
-            None
-        },
-    )
+    // Add constraint rows first (HiGHS column-oriented API requires rows before columns)
+    let row_refs: Vec<_> = rhs.iter().map(|&r| pb.add_row(..=r)).collect();
+
+    // Add variables: each with its objective coefficient, bounds [0, +inf),
+    // and its coefficients in each constraint row
+    for col_index in 0..nvars {
+        let row_factors: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row[col_index] != 0.0)
+            .map(|(row_index, row)| (row_refs[row_index], row[col_index]))
+            .collect();
+        pb.add_column(objective[col_index], 0.0.., &row_factors);
+    }
+
+    let solved = pb.optimise(Sense::Minimise).solve();
+
+    match solved.status() {
+        HighsModelStatus::Optimal => {
+            let solution = solved.get_solution();
+            if solution.columns().len() == nvars {
+                Ok(Some(solution.columns().to_vec()))
+            } else {
+                Ok(None)
+            }
+        }
+        HighsModelStatus::Infeasible | HighsModelStatus::Unbounded => Ok(None),
+        status => Err(NonPureError::SolverInitialization {
+            message: format!("HiGHS returned unexpected status: {status:?}"),
+        }),
+    }
 }
 
 fn extract_beta(solution: &[Scalar], dimension: usize) -> Array1<Scalar> {
@@ -320,23 +293,6 @@ fn extract_beta(solution: &[Scalar], dimension: usize) -> Array1<Scalar> {
 
 fn soft_threshold(y: &Array1<Scalar>, lbd: Scalar) -> Array1<Scalar> {
     y.mapv(|value| value.signum() * (value.abs() - lbd).max(0.0))
-}
-
-/// Zero out near-zero entries produced by interior-point solvers.
-///
-/// Clarabel (interior-point) finds solutions in the interior of the feasible region,
-/// where all variables tend to be slightly nonzero (~1e-10). Simplex solvers (like
-/// Python's HiGHS) find vertex solutions where many variables are exactly zero.
-/// This threshold bridges that gap so that L1 normalization doesn't scale up
-/// negligible values and produce artificially dense A-matrices.
-const INTERIOR_POINT_ZERO_THRESHOLD: Scalar = 1e-8;
-
-fn threshold_near_zero(vector: &mut nalgebra::DVector<Scalar>) {
-    for value in vector.iter_mut() {
-        if value.abs() < INTERIOR_POINT_ZERO_THRESHOLD {
-            *value = 0.0;
-        }
-    }
 }
 
 fn normalize_l1(vector: &mut nalgebra::DVector<Scalar>) {
