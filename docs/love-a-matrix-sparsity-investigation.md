@@ -1,122 +1,115 @@
-# LOVE A-Matrix Sparsity Mismatch: Investigation Results
+# LOVE A-Matrix Sparsity Mismatch: Investigation & Resolution
 
-## Root Cause
+## Summary
 
-**Rust's Dantzig LP solver (Clarabel) is an interior-point method that produces dense solutions.
-Python's LP solver (HiGHS via scipy) uses simplex, which produces sparse vertex solutions.**
+Two root causes were identified and fixed, eliminating all A-matrix NNZ divergence
+between Rust and Python/R:
+
+1. **Interior-point vs simplex LP solver** — Clarabel (interior-point) produced dense
+   solutions; replaced with HiGHS (simplex) to match Python's scipy/HiGHS.
+2. **Un-thresholded sigma in non-pure estimation** — Rust recomputed a fresh sigma
+   without FDR thresholding for `estimate_non_pure_rows`, while R and Python reuse the
+   same FDR-thresholded sigma throughout the LOVE pipeline.
+
+## Results After Both Fixes
+
+| Config (delta, lambda) | Python A NNZ | Rust A NNZ | A max diff | Z max diff |
+|------------------------|-------------|------------|-----------|-----------|
+| d=0.01, l=0.1          | 72,534      | 72,534     | 6.8e-14   | 4.4e-13   |
+| d=0.01, l=1.0          | 66,434      | 66,434     | 2.1e-13   | 4.1e-13   |
+| d=0.1, l=0.1           | 19,969      | 19,969     | 4.3e-14   | 1.8e-12   |
+| d=0.1, l=1.0           | 2,269       | 2,269      | 4.8e-15   | 6.2e-12   |
+
+All differences are at machine epsilon. A nonzero Jaccard = 1.0 across all configs.
+
+---
+
+## Root Cause 1: Interior-Point vs Simplex LP Solver
+
+**Commit:** `15e94b4` — Replace Clarabel with HiGHS simplex solver in nonpure.rs
 
 Interior-point solvers find solutions in the *interior* of the feasible region, where all
 variables tend to be slightly nonzero (~1e-10). Simplex solvers find solutions at *vertices*
-of the feasible polytope, where many variables are exactly zero. After L1 normalization
-(`normalize_l1`), those tiny interior-point values get scaled up relative to each other,
-preserving all nonzeros regardless of lambda.
+of the feasible polytope, where many variables are exactly zero. After L1 normalization,
+interior-point artifacts get scaled up, preserving all nonzeros regardless of lambda.
 
-## Why Rust's A nonzeros are lambda-independent
+An intermediate fix (`97cd476`) thresholded near-zero values before L1 normalization,
+which partially addressed this, but switching to HiGHS was the proper solution.
 
-Both implementations use the Dantzig method when `pure_homo=True` (benchmarks set this).
-Both override HT→Dantzig for `pure_homo=True`:
-- Python: `love.py:210-211` — `if pure_homo and est_non_pure_row == "HT": actual_est_method = "Dantzig"`
-- Rust: `love.rs:128-131` — `if config.pure_homo && ... == HardThreshold { Dantzig }`
+## Root Cause 2: Un-thresholded Sigma in Non-Pure Estimation
 
-The Dantzig LP per non-pure row:
-```
-min sum(beta_pos + beta_neg)
-s.t. C_hat @ (beta_pos - beta_neg) - y <= lbd
-     -C_hat @ (beta_pos - beta_neg) + y <= lbd
-     beta_pos >= 0, beta_neg >= 0
-```
+**Commit:** `d6b3603` — Use FDR-thresholded sigma for non-pure row estimation
 
-Where `lbd = config.lbd[0] * opt_delta * sigma_bar_sup * se_est_J[i]`
-
-**With a simplex solver (Python/HiGHS):** increasing lambda relaxes constraints → more
-variables become exactly zero at the vertex solution → A is sparser.
-
-**With an interior-point solver (Rust/Clarabel):** increasing lambda relaxes constraints →
-variables become *smaller* but never exactly zero → after L1 normalization, all variables
-remain nonzero → A nonzero count is constant.
-
-## Evidence
-
-| Config (delta, lambda) | Python A nnz | Rust A nnz | Pattern match |
-|------------------------|-------------|------------|---------------|
-| d=0.01, l=0.1          | 72,534      | 73,821     | 99.1%         |
-| d=0.01, l=1.0          | 66,434      | 73,821     | 94.7%         |
-| d=0.1, l=0.1           | 19,969      | 27,861     | 88.9%         |
-| d=0.1, l=1.0           | 2,269       | 27,861     | 63.8%         |
-
-Rust constant per-delta: 73,821 (d=0.01), 27,861 (d=0.1) — lambda has no effect.
-Python varies: 72,534→66,434 (d=0.01), 19,969→2,269 (d=0.1) — lambda drives sparsity.
-
-## Code Flow (Both Implementations)
-
-### 1. Lambda enters LOVE
-- **Python**: `call_love(lbd=...)` → `LOVE(lbd=lbd)` → `love.py:326`: `lbd * optDelta * sigma_bar_sup`
-- **Rust**: `run_slide_evaluation()` → `lib.rs:983`: `love_config.lbd = vec![lambda]` → `love.rs:456`: `config.lbd[0] * opt_delta * sigma_bar_sup`
-
-### 2. Dantzig LP per non-pure row
-- **Python**: `EstAJDant()` → `Dantzig(C_hat, y, lbd * se_est_J[i])` → `linprog(method='highs')` — **simplex** (`est_nonpure.py:242`)
-- **Rust**: `est_aj_dant()` → `dantzig(c_hat, y, lbd * se[i])` → Clarabel `DefaultSolver` — **interior point** (`nonpure.rs:286-297`)
-
-### 3. L1 normalization (identical)
-- **Python**: `est_nonpure.py:187-188` — `if sum(|AJ[i]|) > 1: AJ[i] /= sum(|AJ[i]|)`
-- **Rust**: `nonpure.rs:323-327` — `if l1_norm > 1.0 { vector /= l1_norm }`
-
-### 4. Hard Threshold path (NOT taken in benchmarks)
-Both implementations have an identical HT path (`love.py:363-364`, `love.rs:492-496`) that
-computes `threshold = mu * optDelta * max(sum(|Omega|))` and zeros entries ≤ threshold.
-This path IS lambda-sensitive in both, but it's bypassed when `pure_homo=True`.
-
-## Fix Options (Prioritized)
-
-### Option 1: Post-LP sparsification threshold (Recommended)
-Add a small-value threshold after `extract_beta()` in Rust's `dantzig()` or `est_aj_dant()`.
-Zero out entries with |value| < epsilon (e.g., 1e-8) before L1 normalization.
-
-**Location**: `crates/slide-love/src/nonpure.rs`, after line 314 (`extract_beta`)
-or before line 175 (`normalize_l1`).
-
-**Pros**: Minimal change, preserves Clarabel's speed, matches simplex behavior.
-**Cons**: Introduces a threshold parameter. Need to validate epsilon choice.
-
+In `love.rs`, `estimate_non_pure_rows()` recomputed sigma from scratch:
 ```rust
-// In est_aj_dant, after extract_beta, before normalize_l1:
-let mut beta = beta.to_nalgebra();
-// Threshold near-zero entries from interior-point solver
-for value in beta.iter_mut() {
-    if value.abs() < 1e-8 {
-        *value = 0.0;
-    }
-}
-normalize_l1(&mut beta);
+// BEFORE (bug): recomputed un-thresholded sigma
+let sigma = Matrix::from_ndarray(sample_covariance(x.as_ndarray()));
+let y = est_y(&sigma, a_hat, pure_vec)?;
 ```
 
-### Option 2: Switch LP solver to simplex-based
-Replace Clarabel with a simplex solver (e.g., `highs` Rust bindings, `minilp`, or `good_lp`).
+Both R (`getLatentFactors.R:139`) and Python (`love.py:325`) reuse the same
+FDR-thresholded sigma that was computed earlier in the pipeline:
+```r
+# R: sigma was thresholded at line 67, reused at line 139
+sigma_TJ <- estSigmaTJ(sigma = sigma, AI = A_hat, pure_vec = result_AI$pure_vec)
+```
+```python
+# Python: Sigma was thresholded at line 199, reused at line 325
+AJ = EstAJDant(C_hat, EstY(Sigma, A_hat, I_hat), ...)
+```
 
-**Pros**: Exact parity with Python. No threshold parameter needed.
-**Cons**: Larger dependency change. Clarabel is used elsewhere (glasso, hetero_cv).
-Simplex may be slower for some problem sizes.
+FDR thresholding zeros out statistically insignificant off-diagonal entries in sigma.
+Without it, the Dantzig LP response vector `y` (computed by `est_y`) has more non-zero
+structure, leading to denser LP solutions and ultimately denser A non-pure rows.
 
-### Option 3: Apply threshold in `dantzig()` function
-Same as Option 1 but inside `dantzig()` itself, applied to the raw LP solution before
-`extract_beta()`.
+**Fix:** Thread the thresholded sigma from `homogeneous_path`/`heterogeneous_path`
+through to `estimate_non_pure_rows`, matching R and Python behavior.
 
-**Location**: `nonpure.rs:197`, threshold `solution` values < 1e-8 to zero.
+### Divergence chain (before fix):
 
-**Pros**: Catches near-zero values at the source.
-**Cons**: Thresholding `beta_pos` and `beta_neg` separately vs. thresholding `beta_pos - beta_neg` gives subtly different results.
+```
+un-thresholded sigma (Rust) vs thresholded sigma (Python/R)
+  → different est_y / sigma_tj response matrix
+    → different Dantzig LP solutions
+      → different A non-pure rows (Py: 2,269 NNZ vs Rust: 13,157 for d=0.1,l=1.0)
+        → different Gamma (max diff: 0.51)
+          → different Z (max diff: 21.6)
+```
+
+### What was verified as identical (before fix 2):
+
+| Component | Status |
+|-----------|--------|
+| K (latent factors) | Identical |
+| pure_vec | Jaccard = 1.0 |
+| C matrix | max diff = 1.3e-15 |
+| Pure A rows | max diff = 0.0 |
+| Pure Gamma | max diff = 0.0 |
+| est_y/sigma_tj logic | Mathematically identical |
+| c_hat, se_est_j, sigma_bar_sup | Mathematically identical |
+| Dantzig LP formulation | Mathematically identical |
+| Z-matrix formula | Mathematically identical |
+
+---
 
 ## Key File References
 
 | File | Lines | What |
 |------|-------|------|
-| `crates/slide-love/src/love.rs` | 128-131 | HT→Dantzig override for pure_homo |
-| `crates/slide-love/src/love.rs` | 453-458 | Lambda passed to Dantzig |
-| `crates/slide-love/src/nonpure.rs` | 140-181 | `est_aj_dant` — Dantzig + L1 norm |
-| `crates/slide-love/src/nonpure.rs` | 183-198 | `dantzig` — LP formulation |
-| `crates/slide-love/src/nonpure.rs` | 277-310 | `solve_lp` — Clarabel interior point |
-| `crates/slide-love/src/nonpure.rs` | 312-317 | `extract_beta` — beta_pos - beta_neg |
-| `crates/slide-love/src/nonpure.rs` | 323-328 | `normalize_l1` — L1 normalization |
-| `src/loveslide/love_python/love/est_nonpure.py` | 155-190 | Python `EstAJDant` |
-| `src/loveslide/love_python/love/est_nonpure.py` | 193-251 | Python `Dantzig` (scipy/HiGHS) |
-| `src/loveslide/love.py` | 207-213 | Python HT→Dantzig override |
+| `crates/slide-love/src/love.rs` | 114-118 | Sigma returned from path functions |
+| `crates/slide-love/src/love.rs` | 139-149 | Sigma passed to estimate_non_pure_rows |
+| `crates/slide-love/src/love.rs` | 421-431 | estimate_non_pure_rows receives sigma |
+| `crates/slide-love/src/nonpure.rs` | 180-244 | Dantzig LP (HiGHS simplex) |
+| `crates/slide-love/src/nonpure.rs` | 140-181 | est_aj_dant + L1 normalization |
+| `src/loveslide/love_python/love/love.py` | 192-202 | Python sigma + FDR thresholding |
+| `src/loveslide/love_python/love/love.py` | 325 | Python reuses thresholded Sigma |
+| `../SLIDE/R/getLatentFactors.R` | 45-71 | R sigma (cor + FDR threshold) |
+| `../SLIDE/R/getLatentFactors.R` | 139 | R reuses thresholded sigma |
+
+## Benchmark Details
+
+Benchmark run: `benchmark_results/2026-05-22_184857_fdr-fix/`
+
+Rust is ~3.9x faster than Python overall with identical LOVE results.
+Remaining sig LF count differences at d=0.1 are in the knockoff filtering
+stage (separate pipeline, not related to LOVE).
