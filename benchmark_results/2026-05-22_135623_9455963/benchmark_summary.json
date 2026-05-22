@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-05-22T18:37:35.210685+00:00",
+  "timings": [
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 716.007936664857,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 660.1673115435988,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 722.0820699064061,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 371.54788536578417,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 698.2062262874097,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 686.3997131278738,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 586.6940304078162,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 100.54461188428104,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "r_knockoffs_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z73"
+      ],
+      "n_sig_interacts": 18,
+      "score": null
+    },
+    "r_knockoffs_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 6,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z57",
+        "Z73"
+      ],
+      "n_sig_interacts": 10,
+      "score": null
+    },
+    "r_knockoffs_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 8,
+      "sig_lfs": [
+        "Z25",
+        "Z32",
+        "Z33",
+        "Z38",
+        "Z44",
+        "Z5",
+        "Z53",
+        "Z78"
+      ],
+      "n_sig_interacts": 22,
+      "score": null
+    },
+    "r_knockoffs_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z33",
+        "Z44",
+        "Z69"
+      ],
+      "n_sig_interacts": 8,
+      "score": null
+    }
+  }
+}
