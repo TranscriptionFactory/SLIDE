@@ -2,7 +2,7 @@
 
 Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 
-**Status:** Rust is slower than expected — needs profiling and optimization.
+**Status (2026-05-22):** Rust is 6-15x faster than Python/R. Correctness diverges on knockoff variable selection — Z/A matrices need investigation.
 
 ## Setup
 
@@ -11,7 +11,7 @@ Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 - **Knockoff iterations:** 500
 - **Threads:** 4
 - **Cluster:** htc (CRC), 150 GB RAM, 4 CPUs per task
-- **Date:** 2026-05-21
+- **SLURM job:** 9447800 (2026-05-22)
 
 ### Backend descriptions
 
@@ -25,64 +25,68 @@ Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 
 ### Per-combination wall time (seconds)
 
-| delta | lambda | python | r_knockoffs | rust |
-|------:|-------:|-------:|------------:|-----:|
-| 0.01 | 0.1 | 1012.6 | 699.9 | >1320 (still running at 22 min) |
-| 0.01 | 1.0 | 984.5 | 671.7 | TBD |
-| 0.1 | 0.1 | TBD | 236.2 | TBD |
-| 0.1 | 1.0 | TBD | 367.0 | TBD |
+| delta | lambda | Python | R knockoffs | Rust | Rust speedup (vs Python) |
+|------:|-------:|-------:|------------:|-----:|-------------------------:|
+| 0.01  | 0.1    | 689    | 713         | 106  | 6.5x                    |
+| 0.01  | 1.0    | 651    | 701         | 107  | 6.1x                    |
+| 0.1   | 0.1    | 530    | 663         | 43   | 12.3x                   |
+| 0.1   | 1.0    | 550    | 130         | 41   | 13.4x                   |
 
-### Totals (completed combos)
+### Totals
 
-| Backend | Combos done | Total (s) | Mean per combo (s) |
-|---------|:-----------:|----------:|--------------------:|
-| python | 2/4 | 1997.1 | 998.6 (~16.6 min) |
-| r_knockoffs | 4/4 | 1974.8 | 493.7 (~8.2 min) |
-| rust | 0/4 | — | >22 min on first combo |
+| Backend       | Total (s) | Mean per combo | Speedup vs Python |
+|---------------|----------:|---------------:|------------------:|
+| Python        | 2420      | 605s (~10 min) | 1.0x              |
+| R knockoffs   | 2206      | 552s (~9 min)  | 1.1x              |
+| Rust          | 298       | 75s (~1.2 min) | 8.1x              |
 
-### Key finding: Rust is NOT faster
+### Key findings
 
-The Rust backend has been running for 22+ minutes on (delta=0.01, lam=0.1)
-without completing, while:
-- Python finished the same combo in **1012s (~17 min)**
-- R knockoffs finished it in **700s (~12 min)**
-
-This means the Rust implementation is **slower than both Python and R** on
-the most expensive parameter combination. The bottleneck is likely in the
-knockoff iteration loop (500 iterations of SDP solve + glmnet), not in
-language overhead.
-
-### Other observations
-
-1. **R knockoffs are ~2x faster than pure Python** for the knockoff generation
-   step. The LOVE step is identical (both use Python LOVE).
-
-2. **delta=0.1 runs are much faster than delta=0.01** — smaller delta → higher
-   rank LOVE decomposition → more knockoff variables → more work per iteration.
-
-## Performance target
-
-For the Rust backend to be competitive, it should complete (delta=0.01,
-lam=0.1) on SSc UnTx in **under 700s** (matching R knockoffs). A minimal
-first milestone is **under 22 minutes** (matching current Python).
-
-### Quick smoke test for Rust performance
-
-```bash
-# Single-combo test: delta=0.01, lam=0.1 on SSc UnTx
-# Target: <22 min (parity with Python), stretch goal <12 min (parity with R)
-time target/release/slide run \
-    --config benchmark_results/rust/0.01_0.1_out/rust_config.yaml \
-    --checkpoint /tmp/bench_checkpoint.json \
-    --threads 4
-```
+1. **Rust is 6-15x faster** than Python/R across all parameter combinations.
+2. **Larger speedup at higher delta** (lower K): delta=0.1 (K=88) gives 12-13x vs delta=0.01 (K=172) gives 6x. Rust's knockoff implementation scales better with fewer latent factors.
+3. **Python vs R knockoffs are similar** overall. R is slightly slower at delta=0.01 but much faster at (0.1, 1.0) — likely due to the R `knockoff` package's optimized Lasso path for smaller problems.
 
 ## Correctness
 
-Pairwise correctness comparison (sig LF Jaccard, Z-matrix correlation,
-A-matrix nonzero overlap) will be generated automatically by the comparison
-job once all backends complete. Results will appear in
-`benchmark_results/comparison_report.md`.
+### Python vs R knockoffs (reference comparison)
+
+Near-perfect agreement — these share the same LOVE step (Python), so differences are only in knockoff sampling.
+
+| Metric | Range across param combos |
+|--------|--------------------------|
+| Z overall r | 1.000 |
+| Z median col r | 1.000 |
+| Z min col r | 1.000 |
+| A nonzero Jaccard | 1.000 |
+| Sig LF Jaccard | 0.25 – 1.00 |
+| K | Identical (172 / 88) |
+
+Sig LF variation is expected — knockoff selection is stochastic.
+
+### Rust vs Python/R
+
+| Metric | delta=0.01 | delta=0.1 | Notes |
+|--------|-----------|-----------|-------|
+| K | **Identical** (172 / 88) | **Identical** | LOVE rank agrees |
+| A nonzero Jaccard | 0.993 | 0.986–0.996 | High structural agreement |
+| Z overall r | 0.996–1.000 | 0.857–0.938 | Degrades at higher delta |
+| Z median col r | 0.999 | 0.956–0.990 | Most columns match well |
+| Z min col r | 0.979–0.999 | 0.560–0.793 | Some columns diverge significantly |
+| Sig LF Jaccard | 0.33–0.75 | 0.11–0.50 | Substantial disagreement |
+| Sig LF count | Rust: 2-3 | Rust: 2 | Rust is more conservative |
+| | Python: 4-5 | Python: 4-6 | |
+
+### Interpretation
+
+- **LOVE step is consistent:** Same K, high A-matrix overlap, good Z correlations at small delta.
+- **Knockoff selection diverges:** Rust finds fewer significant LFs and the sig LF overlap is poor, especially at delta=0.1.
+- **Root cause candidates:**
+  1. LOVE A-matrix differences (0.7–1.4% nonzero mismatch) propagate into Z = X × A
+  2. Different SDP solver (Rust custom vs Python/R ASDP) produces different knockoff covariance
+  3. Knockoff feature statistics (Lasso/Dantzig) differ in solver tolerance or path
+  4. FDR threshold boundary effects amplify small upstream differences
+
+**Next step:** Investigate where the Z/A divergence originates — LOVE decomposition vs knockoff sampling.
 
 ## How to reproduce
 
@@ -90,10 +94,23 @@ job once all backends complete. Results will appear in
 # Submit all 3 backends in parallel + comparison job
 sbatch benchmarks/run_benchmark.sbatch           # array job: tasks 0-2
 sbatch --dependency=afterok:<ARRAY_JOB_ID> \
-       benchmarks/run_benchmark_compare.sbatch    # comparison
+       benchmarks/run_benchmark_compare.sbatch    # comparison + viz
+
+# Timings are persisted to benchmark_results/{backend}/timings.json
+# Plots saved to benchmark_results/figures/
 ```
 
 Or run locally (sequential):
 ```bash
 pixi run -e dev python benchmarks/benchmark_backends.py
+```
+
+### Quick smoke test for Rust performance
+
+```bash
+# Single-combo test: delta=0.01, lam=0.1 on SSc UnTx
+time target/release/slide run \
+    --config benchmark_results/rust/0.01_0.1_out/rust_config.yaml \
+    --checkpoint /tmp/bench_checkpoint.json \
+    --threads 4
 ```
