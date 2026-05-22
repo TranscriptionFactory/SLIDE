@@ -1,0 +1,12 @@
+{
+  "grid_index": 0,
+  "total_grid": 1,
+  "delta": 0.1,
+  "lambda": 0.1,
+  "phase": {
+    "KnockoffInteraction": {
+      "marginal_lf": 12,
+      "total_marginals": 14
+    }
+  }
+}
