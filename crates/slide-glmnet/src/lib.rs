@@ -443,9 +443,6 @@ pub fn stat_glmnet_lambdasmax(
 }
 
 /// Compute lambdasmax statistic from a pre-built augmented matrix `[X | X_tilde]`.
-///
-/// Uses a coarser lambda grid (100 instead of 250) since only the entry lambda
-/// per coefficient is needed — the entry point is insensitive to grid resolution.
 pub fn stat_glmnet_lambdasmax_prebuilt(
     augmented: &Matrix,
     p: usize,
@@ -453,12 +450,9 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
-    const KNOCKOFF_NLAMBDA: usize = 100;
-    // Knockoff lambdasmax only needs to detect whether a coefficient has
-    // entered (non-zero) at each lambda — not its precise value. Looser
-    // tolerance (1e-4 vs 1e-7) dramatically reduces CD iterations per step.
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
-    const KNOCKOFF_MAX_ITER: usize = 1_000;
+    const KNOCKOFF_NLAMBDA: usize = 250;
+    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
+    const KNOCKOFF_MAX_ITER: usize = 100_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
         tolerance: KNOCKOFF_TOLERANCE,
@@ -747,7 +741,7 @@ fn build_geometric_lambda_grid(
 ) -> Result<Vector, GlmnetError> {
     let alpha_scale = if alpha > 0.0 { alpha } else { 1.0 };
     let lambda_max = (lambda_max_raw / alpha_scale).max(MIN_LAMBDA_FLOOR);
-    let lambda_min_ratio = if n > p { 1.0e-4 } else { 1.0e-2 };
+    let lambda_min_ratio = if n > p { 1.0e-4 } else { 1.0 / 2000.0 };
 
     if nlambda == 1 {
         return Ok(Vector::from_ndarray(Array1::from_vec(vec![lambda_max])));
