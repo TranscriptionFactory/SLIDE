@@ -1112,7 +1112,10 @@ impl HalfPreparedData {
         x_centered -= &x_mean.view().insert_axis(Axis(0));
 
         let mut column_scale = Array1::ones(p);
-        if standardize {
+        let mut column_sq_norm = if standardize {
+            // After standardizing, each column with positive variance has
+            // ||col||²/n = 1.0 by construction. Compute norms once during
+            // scaling and derive post-scale norms directly.
             for col in 0..p {
                 let sq = x_centered
                     .column(col)
@@ -1127,20 +1130,28 @@ impl HalfPreparedData {
                         .mapv_inplace(|value| value / scale);
                 }
             }
-        }
+            // Norms after scaling: 1.0 for scaled cols, 0.0 for zero-variance
+            Array1::from_iter(column_scale.iter().map(|&s| if s > 0.0 { 1.0 } else { 0.0 }))
+        } else {
+            // Without standardization, must compute norms explicitly
+            Array1::zeros(p) // placeholder, filled below after col-major copy
+        };
 
         // Column-major for contiguous column access (SIMD/BLAS)
         let mut x_col_major = Array2::zeros((n, p).f());
         x_col_major.assign(&x_centered);
 
-        let column_sq_norm = Array1::from_iter((0..p).map(|col| {
-            x_col_major
-                .column(col)
-                .iter()
-                .map(|value| value * value)
-                .sum::<Scalar>()
-                / (n as Scalar)
-        }));
+        if !standardize {
+            let n_f = n as Scalar;
+            for col in 0..p {
+                column_sq_norm[col] = x_col_major
+                    .column(col)
+                    .iter()
+                    .map(|value| value * value)
+                    .sum::<Scalar>()
+                    / n_f;
+            }
+        }
 
         let n_f = n as Scalar;
         let lambda_max_contrib = x_col_major
