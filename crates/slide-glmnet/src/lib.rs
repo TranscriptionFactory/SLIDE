@@ -252,6 +252,8 @@ pub fn gaussian_lasso_path_with_left_cache(
     tilde_cache: &HalfPreparedData,
     swap: &[bool],
     y: &Vector,
+    y_mean: Scalar,
+    y_centered: &Array1<Scalar>,
     config: &GaussianLassoPathConfig,
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
     let n = x_cache.x_scaled.nrows();
@@ -269,7 +271,7 @@ pub fn gaussian_lasso_path_with_left_cache(
         });
     }
 
-    let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y);
+    let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y, y_mean, y_centered);
 
     // Build lambda grid: compute max |col · y_centered| / n across all 2p columns
     let lambda = match &config.lambda {
@@ -645,6 +647,8 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     swap: &[bool],
     p: usize,
     y: &Vector,
+    y_mean: Scalar,
+    y_centered: &Array1<Scalar>,
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
@@ -660,12 +664,12 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     };
     let path = match family {
         GlmnetFamily::Gaussian => {
-            gaussian_lasso_path_with_left_cache(x_cache, tilde_cache, swap, y, &knockoff_config)?
+            gaussian_lasso_path_with_left_cache(x_cache, tilde_cache, swap, y, y_mean, y_centered, &knockoff_config)?
         }
         GlmnetFamily::Binomial => {
             // Binomial: assemble PreparedData from cached halves with swap,
             // then run binomial path on the pre-scaled matrix.
-            let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y);
+            let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y, y_mean, y_centered);
             binomial_lasso_path(&prepared.x_scaled, y, &knockoff_config)?
         }
     };
@@ -1254,12 +1258,11 @@ impl PreparedData {
         tilde_cache: &HalfPreparedData,
         swap: &[bool],
         y: &Vector,
+        y_mean: Scalar,
+        y_centered: &Array1<Scalar>,
     ) -> Self {
         let n = x_cache.x_scaled.nrows();
         let p = x_cache.x_scaled.ncols();
-        let y_array = y.as_ndarray();
-        let y_mean = y_array.iter().copied().sum::<Scalar>() / (n as Scalar);
-        let y_centered = y_array.mapv(|value| value - y_mean);
 
         // Assemble full n×2p column-major matrix with swaps applied
         let mut x_col_major = Array2::zeros((n, 2 * p).f());
@@ -1290,7 +1293,7 @@ impl PreparedData {
         Self {
             x_scaled: Matrix::from_ndarray(x_col_major),
             y_raw: y.clone(),
-            y_centered: Vector::from_ndarray(y_centered),
+            y_centered: Vector::from_ndarray(y_centered.clone()),
             x_mean,
             y_mean,
             column_scale,
