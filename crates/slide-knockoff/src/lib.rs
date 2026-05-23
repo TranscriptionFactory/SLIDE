@@ -69,7 +69,7 @@ impl Default for KnockoffConfig {
             statistic: KnockoffStatistic::GlmnetLambdasMax,
             nlambda: 250,
             base_seed: 42,
-            slide_selection: false,
+            slide_selection: true,
             f_size: None,
             family: GlmnetFamily::Gaussian,
             parallel: true,
@@ -167,12 +167,8 @@ pub fn knockoff_threshold(
 ) -> Result<Option<Scalar>, KnockoffError> {
     validate_threshold_inputs(q, offset)?;
 
-    let mut candidates: Vec<_> = w
-        .as_ndarray()
-        .iter()
-        .copied()
-        .map(Scalar::abs)
-        .filter(|value| *value > 0.0)
+    let mut candidates: Vec<_> = std::iter::once(0.0)
+        .chain(w.as_ndarray().iter().copied().map(Scalar::abs))
         .collect();
     candidates.sort_by(Scalar::total_cmp);
     candidates.dedup_by(|left, right| (*left - *right).abs() <= Scalar::EPSILON);
@@ -188,7 +184,7 @@ pub fn knockoff_threshold(
             .iter()
             .filter(|&&value| value >= threshold)
             .count();
-        let ratio = (negative as Scalar) / ((positive + offset).max(1) as Scalar);
+        let ratio = ((offset + negative) as Scalar) / (positive.max(1) as Scalar);
         if ratio <= q {
             return Ok(Some(threshold));
         }
@@ -232,8 +228,8 @@ pub fn find_opt_iter(selected_list: &[Vec<usize>], freq_selected: &[usize]) -> F
 
     if max_overlap == 0 {
         return FindOptIterResult {
-            selected: sorted_unique(selected_list[0].clone()),
-            optimal_iter: Some(0),
+            selected: sorted_unique(freq_selected.to_vec()),
+            optimal_iter: None,
         };
     }
 
@@ -1013,10 +1009,26 @@ mod tests {
         let w = Vector::from_ndarray(arr1(&[3.0, 2.0, -2.0, 0.5]));
         let threshold = knockoff_threshold(&w, 0.5, 0)
             .unwrap_or_else(|error| panic!("threshold failed: {error}"));
-        assert_eq!(threshold, Some(0.5));
+        assert_eq!(threshold, Some(0.0));
         let selected =
             knockoff_filter(&w, 0.5, 0).unwrap_or_else(|error| panic!("filter failed: {error}"));
         assert_eq!(selected, vec![0, 1, 3]);
+    }
+
+    #[test]
+    fn knockoff_threshold_applies_offset_to_numerator() {
+        let w = Vector::from_ndarray(arr1(&[5.0, 4.5, 4.0, 3.5, 3.0, 2.5, -0.1, -0.2]));
+        let threshold = knockoff_threshold(&w, 0.2, 1)
+            .unwrap_or_else(|error| panic!("threshold failed: {error}"));
+        assert_eq!(threshold, Some(2.5));
+    }
+
+    #[test]
+    fn knockoff_threshold_can_return_zero_candidate() {
+        let w = Vector::from_ndarray(arr1(&[1.0, 2.0, 3.0, 4.0, 5.0]));
+        let threshold = knockoff_threshold(&w, 0.2, 1)
+            .unwrap_or_else(|error| panic!("threshold failed: {error}"));
+        assert_eq!(threshold, Some(0.0));
     }
 
     #[test]
@@ -1028,11 +1040,11 @@ mod tests {
     }
 
     #[test]
-    fn find_opt_iter_returns_first_iteration_when_no_overlap() {
+    fn find_opt_iter_returns_freq_selected_when_no_overlap() {
         let selected_list = vec![vec![4, 5], vec![6], vec![7, 8]];
         let result = find_opt_iter(&selected_list, &[0, 1]);
-        assert_eq!(result.optimal_iter, Some(0));
-        assert_eq!(result.selected, vec![4, 5]);
+        assert_eq!(result.optimal_iter, None);
+        assert_eq!(result.selected, vec![0, 1]);
     }
 
     #[test]

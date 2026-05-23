@@ -61,6 +61,9 @@ pub struct RunConfig {
     pub slide_iter: Option<usize>,
 
     #[serde(default)]
+    pub slide_selection: Option<bool>,
+
+    #[serde(default)]
     pub cv: Option<RunCvConfig>,
 }
 
@@ -168,6 +171,9 @@ fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfi
     if let Some(v) = cfg.slide_iter {
         opt_config.knockoff.niter = v;
     }
+    if let Some(v) = cfg.slide_selection {
+        opt_config.knockoff.slide_selection = v;
+    }
 
     if let Some(cv) = &cfg.cv {
         if cv.enabled.unwrap_or(false) {
@@ -232,6 +238,25 @@ SLIDE_iter: 7
         assert_eq!(opt_config.knockoff.spec, 0.3);
         assert_eq!(opt_config.knockoff.fdr, 0.2);
         assert_eq!(opt_config.knockoff.niter, 7);
+        assert!(opt_config.knockoff.slide_selection);
+    }
+
+    #[test]
+    fn yaml_can_disable_slide_selection() {
+        let cfg = parse_config(
+            r#"
+x_path: x.csv
+y_path: y.csv
+delta: [0.1]
+lambda: [0.5]
+slide_selection: false
+"#,
+        );
+
+        let opt_config = optimize_config_from_run_config(&cfg)
+            .unwrap_or_else(|error| panic!("optimize config should build: {error}"));
+
+        assert!(!opt_config.knockoff.slide_selection);
     }
 
     #[test]
