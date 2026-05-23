@@ -117,131 +117,9 @@ pub fn gaussian_lasso_path(
         )?,
     };
 
-    let x_array = prepared.x_scaled.as_ndarray();
-    let y_array = prepared.y_centered.as_ndarray();
-    let n = x_array.nrows();
-    let p = x_array.ncols();
-    let n_f = n as Scalar;
-    let nlambda = lambda.len();
-    let mut beta_scaled: Array1<Scalar> = Array1::zeros(p);
-    let mut beta_path = Array2::zeros((p, nlambda));
-    let mut intercept = Array1::zeros(nlambda);
-    // Maintain residual across lambda steps (avoids recomputing y - X*beta each step)
-    let mut residual = y_array.to_owned();
-
-    let null_deviance = y_array.dot(y_array);
-    let mut n_computed = 0usize;
-    // Track which coefficients have ever been non-zero (for early_stop_all_entered)
-    let mut ever_nonzero = vec![false; p];
-    let mut n_ever_nonzero = 0usize;
-
-    // Dense index lists instead of boolean masks — eliminates branch misprediction
-    // overhead from `if !active[j] { continue; }` over sparse boolean arrays.
-    // Profiling showed 55% of cycles lost to bad speculation from this pattern.
-    let mut candidate_indices: Vec<usize> = Vec::with_capacity(p);
-    let mut active_indices: Vec<usize> = Vec::with_capacity(p);
-    // Boolean mask for fast KKT exclusion check (is coord in candidate set?)
-    let mut in_candidate = vec![false; p];
-
-    for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
-        // Strong rule screening: skip coordinates guaranteed to remain zero.
-        // At lambda_k, if |X_j^T r / n| < 2*lambda_k - lambda_{k-1}, then
-        // coordinate j will stay zero (given it was zero at lambda_{k-1}).
-        candidate_indices.clear();
-        if lambda_index == 0 {
-            candidate_indices.extend(0..p);
-            in_candidate.fill(true);
-        } else {
-            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
-            let threshold = 2.0 * lambda_value - prev_lambda;
-            in_candidate.fill(false);
-            for j in 0..p {
-                if beta_scaled[j].abs() > 0.0
-                    || (x_array.column(j).dot(&residual) / n_f).abs() >= threshold
-                {
-                    candidate_indices.push(j);
-                    in_candidate[j] = true;
-                }
-            }
-        }
-
-        // Strong rule + KKT check loop
-        loop {
-            coordinate_descent_step(
-                x_array,
-                &prepared.column_sq_norm,
-                &mut beta_scaled,
-                &mut residual,
-                lambda_value,
-                config.alpha,
-                config.tolerance,
-                config.max_iter,
-                &candidate_indices,
-                &mut active_indices,
-            );
-
-            // Check KKT conditions on excluded coordinates
-            let mut kkt_violated = false;
-            for j in 0..p {
-                if !in_candidate[j] {
-                    let grad = (x_array.column(j).dot(&residual) / n_f).abs();
-                    if grad > lambda_value * config.alpha {
-                        candidate_indices.push(j);
-                        in_candidate[j] = true;
-                        kkt_violated = true;
-                    }
-                }
-            }
-            if !kkt_violated {
-                break;
-            }
-        }
-
-        let beta_original = &beta_scaled / &prepared.column_scale;
-        let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
-        beta_path.column_mut(lambda_index).assign(&beta_original);
-        intercept[lambda_index] = intercept_value;
-        n_computed = lambda_index + 1;
-
-        // Track entry for early_stop_all_entered mode
-        if config.early_stop_all_entered {
-            for (j, &b) in beta_scaled.iter().enumerate() {
-                if !ever_nonzero[j] && b.abs() > 1e-10 {
-                    ever_nonzero[j] = true;
-                    n_ever_nonzero += 1;
-                }
-            }
-            if n_ever_nonzero >= p {
-                break;
-            }
-        }
-
-        // Early stopping: saturated model or near-perfect fit
-        let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
-        if nnz >= n {
-            break;
-        }
-        if null_deviance > 0.0 {
-            let rss = residual.dot(&residual);
-            let dev_ratio = 1.0 - rss / null_deviance;
-            if dev_ratio > DEVMAX {
-                break;
-            }
-        }
-    }
-
-    // Truncate to actually computed lambdas
-    let beta_path = truncate_path(beta_path, n_computed);
-    let intercept = Array1::from_vec(intercept.iter().copied().take(n_computed).collect());
-    let lambda = Vector::from_ndarray(Array1::from_vec(
-        lambda.as_ndarray().iter().copied().take(n_computed).collect(),
-    ));
-
-    Ok(GaussianLassoPathResult {
-        beta: Matrix::from_ndarray(beta_path),
-        intercept: Vector::from_ndarray(intercept),
-        lambda,
-    })
+    let (n, p) = (x.nrows(), x.ncols());
+    let mut ws = GaussianCdWorkspace::new(n, p);
+    Ok(run_gaussian_cd(&prepared, &lambda, config, &mut ws))
 }
 
 /// Like `gaussian_lasso_path` but reuses precomputed per-column stats for X
@@ -255,6 +133,7 @@ pub fn gaussian_lasso_path_with_left_cache(
     y_mean: Scalar,
     y_centered: &Array1<Scalar>,
     config: &GaussianLassoPathConfig,
+    ws: &mut GaussianCdWorkspace,
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
     let n = x_cache.x_scaled.nrows();
     let p = x_cache.x_scaled.ncols();
@@ -288,117 +167,7 @@ pub fn gaussian_lasso_path_with_left_cache(
         }
     };
 
-    // Run the same coordinate descent as gaussian_lasso_path
-    let x_array = prepared.x_scaled.as_ndarray();
-    let y_array = prepared.y_centered.as_ndarray();
-    let total_p = x_array.ncols();
-    let n_f = n as Scalar;
-    let nlambda = lambda.len();
-    let mut beta_scaled: Array1<Scalar> = Array1::zeros(total_p);
-    let mut beta_path = Array2::zeros((total_p, nlambda));
-    let mut intercept = Array1::zeros(nlambda);
-    let mut residual = y_array.to_owned();
-
-    let null_deviance = y_array.dot(y_array);
-    let mut n_computed = 0usize;
-    let mut ever_nonzero = vec![false; total_p];
-    let mut n_ever_nonzero = 0usize;
-
-    let mut candidate_indices: Vec<usize> = Vec::with_capacity(total_p);
-    let mut active_indices: Vec<usize> = Vec::with_capacity(total_p);
-    let mut in_candidate = vec![false; total_p];
-
-    for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
-        candidate_indices.clear();
-        if lambda_index == 0 {
-            candidate_indices.extend(0..total_p);
-            in_candidate.fill(true);
-        } else {
-            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
-            let threshold = 2.0 * lambda_value - prev_lambda;
-            in_candidate.fill(false);
-            for j in 0..total_p {
-                if beta_scaled[j].abs() > 0.0
-                    || (x_array.column(j).dot(&residual) / n_f).abs() >= threshold
-                {
-                    candidate_indices.push(j);
-                    in_candidate[j] = true;
-                }
-            }
-        }
-
-        loop {
-            coordinate_descent_step(
-                x_array,
-                &prepared.column_sq_norm,
-                &mut beta_scaled,
-                &mut residual,
-                lambda_value,
-                config.alpha,
-                config.tolerance,
-                config.max_iter,
-                &candidate_indices,
-                &mut active_indices,
-            );
-
-            let mut kkt_violated = false;
-            for j in 0..total_p {
-                if !in_candidate[j] {
-                    let grad = (x_array.column(j).dot(&residual) / n_f).abs();
-                    if grad > lambda_value * config.alpha {
-                        candidate_indices.push(j);
-                        in_candidate[j] = true;
-                        kkt_violated = true;
-                    }
-                }
-            }
-            if !kkt_violated {
-                break;
-            }
-        }
-
-        let beta_original = &beta_scaled / &prepared.column_scale;
-        let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
-        beta_path.column_mut(lambda_index).assign(&beta_original);
-        intercept[lambda_index] = intercept_value;
-        n_computed = lambda_index + 1;
-
-        if config.early_stop_all_entered {
-            for (j, &b) in beta_scaled.iter().enumerate() {
-                if !ever_nonzero[j] && b.abs() > 1e-10 {
-                    ever_nonzero[j] = true;
-                    n_ever_nonzero += 1;
-                }
-            }
-            if n_ever_nonzero >= total_p {
-                break;
-            }
-        }
-
-        let nnz = beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
-        if nnz >= n {
-            break;
-        }
-        if null_deviance > 0.0 {
-            let rss = residual.dot(&residual);
-            let dev_ratio = 1.0 - rss / null_deviance;
-            if dev_ratio > DEVMAX {
-                break;
-            }
-        }
-    }
-
-    let beta_path = truncate_path(beta_path, n_computed);
-    let intercept = Array1::from_vec(intercept.iter().copied().take(n_computed).collect());
-    let lambda = Vector::from_ndarray(Array1::from_vec(
-        lambda.as_ndarray().iter().copied().take(n_computed).collect(),
-    ));
-
-    Ok(GaussianLassoPathResult {
-        beta: Matrix::from_ndarray(beta_path),
-        intercept: Vector::from_ndarray(intercept),
-        lambda,
-    })
+    Ok(run_gaussian_cd(&prepared, &lambda, config, ws))
 }
 
 pub fn binomial_lasso_path(
@@ -651,6 +420,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     y_centered: &Array1<Scalar>,
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
+    ws: &mut GaussianCdWorkspace,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
     const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
@@ -664,7 +434,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     };
     let path = match family {
         GlmnetFamily::Gaussian => {
-            gaussian_lasso_path_with_left_cache(x_cache, tilde_cache, swap, y, y_mean, y_centered, &knockoff_config)?
+            gaussian_lasso_path_with_left_cache(x_cache, tilde_cache, swap, y, y_mean, y_centered, &knockoff_config, ws)?
         }
         GlmnetFamily::Binomial => {
             // Binomial: assemble PreparedData from cached halves with swap,
@@ -1299,6 +1069,158 @@ impl PreparedData {
             column_scale,
             column_sq_norm,
         }
+    }
+}
+
+/// Pre-allocated workspace for the Gaussian CD loop, reusable across
+/// iterations to avoid per-iteration heap allocation.
+pub struct GaussianCdWorkspace {
+    beta_scaled: Array1<Scalar>,
+    residual: Array1<Scalar>,
+    candidate_indices: Vec<usize>,
+    active_indices: Vec<usize>,
+    in_candidate: Vec<bool>,
+    ever_nonzero: Vec<bool>,
+}
+
+impl GaussianCdWorkspace {
+    /// Create a workspace sized for `total_p` columns and `n` rows.
+    pub fn new(n: usize, total_p: usize) -> Self {
+        Self {
+            beta_scaled: Array1::zeros(total_p),
+            residual: Array1::zeros(n),
+            candidate_indices: Vec::with_capacity(total_p),
+            active_indices: Vec::with_capacity(total_p),
+            in_candidate: vec![false; total_p],
+            ever_nonzero: vec![false; total_p],
+        }
+    }
+
+    /// Reset all state for a new CD run (does not reallocate).
+    fn reset(&mut self, y_centered: &Array1<Scalar>) {
+        self.beta_scaled.fill(0.0);
+        self.residual.assign(y_centered);
+        self.candidate_indices.clear();
+        self.active_indices.clear();
+        self.in_candidate.fill(false);
+        self.ever_nonzero.fill(false);
+    }
+}
+
+/// Run the Gaussian coordinate descent loop on prepared data with a lambda grid.
+/// Uses the provided workspace to avoid per-call allocation.
+#[allow(clippy::too_many_arguments)]
+fn run_gaussian_cd(
+    prepared: &PreparedData,
+    lambda: &Vector,
+    config: &GaussianLassoPathConfig,
+    ws: &mut GaussianCdWorkspace,
+) -> GaussianLassoPathResult {
+    let x_array = prepared.x_scaled.as_ndarray();
+    let y_array = prepared.y_centered.as_ndarray();
+    let n = x_array.nrows();
+    let total_p = x_array.ncols();
+    let n_f = n as Scalar;
+    let nlambda = lambda.len();
+
+    ws.reset(y_array);
+    let mut beta_path = Array2::zeros((total_p, nlambda));
+    let mut intercept = Array1::zeros(nlambda);
+
+    let null_deviance = y_array.dot(y_array);
+    let mut n_computed = 0usize;
+    let mut n_ever_nonzero = 0usize;
+
+    for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
+        ws.candidate_indices.clear();
+        if lambda_index == 0 {
+            ws.candidate_indices.extend(0..total_p);
+            ws.in_candidate.fill(true);
+        } else {
+            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
+            let threshold = 2.0 * lambda_value - prev_lambda;
+            ws.in_candidate.fill(false);
+            for j in 0..total_p {
+                if ws.beta_scaled[j].abs() > 0.0
+                    || (x_array.column(j).dot(&ws.residual) / n_f).abs() >= threshold
+                {
+                    ws.candidate_indices.push(j);
+                    ws.in_candidate[j] = true;
+                }
+            }
+        }
+
+        loop {
+            coordinate_descent_step(
+                x_array,
+                &prepared.column_sq_norm,
+                &mut ws.beta_scaled,
+                &mut ws.residual,
+                lambda_value,
+                config.alpha,
+                config.tolerance,
+                config.max_iter,
+                &ws.candidate_indices,
+                &mut ws.active_indices,
+            );
+
+            let mut kkt_violated = false;
+            for j in 0..total_p {
+                if !ws.in_candidate[j] {
+                    let grad = (x_array.column(j).dot(&ws.residual) / n_f).abs();
+                    if grad > lambda_value * config.alpha {
+                        ws.candidate_indices.push(j);
+                        ws.in_candidate[j] = true;
+                        kkt_violated = true;
+                    }
+                }
+            }
+            if !kkt_violated {
+                break;
+            }
+        }
+
+        let beta_original = &ws.beta_scaled / &prepared.column_scale;
+        let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
+        beta_path.column_mut(lambda_index).assign(&beta_original);
+        intercept[lambda_index] = intercept_value;
+        n_computed = lambda_index + 1;
+
+        if config.early_stop_all_entered {
+            for (j, &b) in ws.beta_scaled.iter().enumerate() {
+                if !ws.ever_nonzero[j] && b.abs() > 1e-10 {
+                    ws.ever_nonzero[j] = true;
+                    n_ever_nonzero += 1;
+                }
+            }
+            if n_ever_nonzero >= total_p {
+                break;
+            }
+        }
+
+        let nnz = ws.beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
+        if nnz >= n {
+            break;
+        }
+        if null_deviance > 0.0 {
+            let rss = ws.residual.dot(&ws.residual);
+            let dev_ratio = 1.0 - rss / null_deviance;
+            if dev_ratio > DEVMAX {
+                break;
+            }
+        }
+    }
+
+    let beta_path = truncate_path(beta_path, n_computed);
+    let intercept = Array1::from_vec(intercept.iter().copied().take(n_computed).collect());
+    let lambda = Vector::from_ndarray(Array1::from_vec(
+        lambda.as_ndarray().iter().copied().take(n_computed).collect(),
+    ));
+
+    GaussianLassoPathResult {
+        beta: Matrix::from_ndarray(beta_path),
+        intercept: Vector::from_ndarray(intercept),
+        lambda,
     }
 }
 
