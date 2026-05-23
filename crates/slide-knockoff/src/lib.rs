@@ -312,6 +312,8 @@ pub fn knockoff_filter_voting(
             &swap,
             p,
             y,
+            y_mean,
+            &y_centered,
             config.family,
             &glmnet_config,
         )?;
@@ -1183,7 +1185,7 @@ mod tests {
         let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
 
         let w_cached = stat_glmnet_lambdasmax_prebuilt_cached(
-            &x_cache, &tilde_cache, &swap, p, &y, GlmnetFamily::Gaussian, &config,
+            &x_cache, &tilde_cache, &swap, p, &y, y_mean, &y_centered, GlmnetFamily::Gaussian, &config,
         )
         .unwrap_or_else(|error| panic!("cached failed: {error}"));
 
