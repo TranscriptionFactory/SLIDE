@@ -8,7 +8,8 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_glmnet::{
     stat_glmnet_coefdiff_prebuilt, stat_glmnet_lambdadiff_prebuilt,
-    stat_glmnet_lambdasmax_prebuilt, GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
+    stat_glmnet_lambdasmax_prebuilt, stat_glmnet_lambdasmax_prebuilt_cached,
+    GaussianLassoPathConfig, GlmnetError, GlmnetFamily, HalfPreparedData,
 };
 use slide_sdp::{create_solve_asdp, create_solve_equi, create_solve_sdp, SdpError};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
@@ -276,7 +277,61 @@ pub fn knockoff_filter_voting(
     // Seed offset for column swap RNG, distinct from knockoff sampling seeds.
     const SWAP_SEED_OFFSET: u64 = 1_000_000;
 
-    let run_iteration = |augmented: &mut Matrix, iteration: usize| {
+    // Precompute X-half cache: centering, scaling, column norms, lambda_max.
+    // Reused across all iterations — only X_tilde is resampled.
+    let y_array = y.as_ndarray();
+    let y_mean = y_array.iter().copied().sum::<Scalar>() / (n as Scalar);
+    let y_centered = y_array.mapv(|value| value - y_mean);
+    let x_cache = HalfPreparedData::new(x, &y_centered, true);
+
+    // Check if we can use the cached path (lambdasmax only for now)
+    let use_cached_path = config.statistic == KnockoffStatistic::GlmnetLambdasMax;
+
+    let run_iteration_cached = |iteration: usize| {
+        let x_tilde = cache.sample(config.base_seed + (iteration as u64));
+
+        // Prepare X_tilde half (fresh each iteration)
+        let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
+
+        // Generate swap mask
+        let mut rng = StdRng::seed_from_u64(
+            config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
+        );
+        let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
+
+        // Compute statistic using precomputed column stats — no raw matrix
+        // assembly, centering, or scaling needed.
+        let glmnet_config = GaussianLassoPathConfig {
+            nlambda: config.nlambda,
+            cv_folds: n.clamp(2, 5),
+            ..GaussianLassoPathConfig::default()
+        };
+        let w = stat_glmnet_lambdasmax_prebuilt_cached(
+            &x_cache,
+            &tilde_cache,
+            &swap,
+            p,
+            y,
+            config.family,
+            &glmnet_config,
+        )?;
+
+        // Correct W-statistic signs for swapped columns
+        let mut w_array = w.into_ndarray();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                w_array[j] = -w_array[j];
+            }
+        }
+
+        knockoff_filter(
+            &Vector::from_ndarray(w_array),
+            config.fdr,
+            config.knockoff_offset,
+        )
+    };
+
+    let run_iteration_uncached = |augmented: &mut Matrix, swap_buf: &mut Vec<Scalar>, iteration: usize| {
         let x_tilde = cache.sample(config.base_seed + (iteration as u64));
         let buf = augmented.as_ndarray_mut();
 
@@ -285,7 +340,7 @@ pub fn knockoff_filter_voting(
             buf.column_mut(p + j).assign(&src_col);
         }
 
-        // Column swap: randomly swap X[j] ↔ X_tilde[j] to enforce knockoff symmetry
+        // Column swap using bulk copy via temp buffer
         let mut rng = StdRng::seed_from_u64(
             config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
         );
@@ -293,12 +348,17 @@ pub fn knockoff_filter_voting(
         for (j, &swapped) in swap.iter().enumerate() {
             if swapped {
                 for i in 0..n {
-                    buf.swap((i, j), (i, p + j));
+                    swap_buf[i] = buf[(i, j)];
+                }
+                for i in 0..n {
+                    buf[(i, j)] = buf[(i, p + j)];
+                }
+                for i in 0..n {
+                    buf[(i, p + j)] = swap_buf[i];
                 }
             }
         }
 
-        // Compute statistic (borrows augmented immutably via as_ndarray)
         let w = compute_statistic_prebuilt(augmented, p, y, config)?;
 
         // Un-swap to restore X columns for next iteration
@@ -306,7 +366,13 @@ pub fn knockoff_filter_voting(
         for (j, &swapped) in swap.iter().enumerate() {
             if swapped {
                 for i in 0..n {
-                    buf.swap((i, j), (i, p + j));
+                    swap_buf[i] = buf[(i, j)];
+                }
+                for i in 0..n {
+                    buf[(i, j)] = buf[(i, p + j)];
+                }
+                for i in 0..n {
+                    buf[(i, p + j)] = swap_buf[i];
                 }
             }
         }
@@ -335,17 +401,32 @@ pub fn knockoff_filter_voting(
         Matrix::from_ndarray(buf)
     };
 
-    let selected_list: Vec<Vec<usize>> = if config.parallel {
+    let selected_list: Vec<Vec<usize>> = if use_cached_path {
+        if config.parallel {
+            (0..config.niter)
+                .into_par_iter()
+                .map(|iteration| run_iteration_cached(iteration))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            (0..config.niter)
+                .map(|iteration| run_iteration_cached(iteration))
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    } else if config.parallel {
         (0..config.niter)
             .into_par_iter()
-            .map_init(init_augmented, |augmented, iteration| {
-                run_iteration(augmented, iteration)
-            })
+            .map_init(
+                || (init_augmented(), vec![0.0; n]),
+                |(augmented, swap_buf), iteration| {
+                    run_iteration_uncached(augmented, swap_buf, iteration)
+                },
+            )
             .collect::<Result<Vec<_>, _>>()?
     } else {
         let mut augmented = init_augmented();
+        let mut swap_buf = vec![0.0; n];
         (0..config.niter)
-            .map(|iteration| run_iteration(&mut augmented, iteration))
+            .map(|iteration| run_iteration_uncached(&mut augmented, &mut swap_buf, iteration))
             .collect::<Result<Vec<_>, _>>()?
     };
 
@@ -565,6 +646,7 @@ fn compute_statistic_prebuilt(
         )?),
     }
 }
+
 
 fn estimate_mean(x: &Matrix) -> Vector {
     let mean = x
@@ -1033,6 +1115,88 @@ mod tests {
         let union = result.stage_one_union.unwrap_or_default();
         for index in result.selected {
             assert!(union.binary_search(&index).is_ok());
+        }
+    }
+
+    #[test]
+    fn cached_lambdasmax_matches_uncached() {
+        use slide_glmnet::{
+            stat_glmnet_lambdasmax_prebuilt, stat_glmnet_lambdasmax_prebuilt_cached,
+            GaussianLassoPathConfig, HalfPreparedData,
+        };
+
+        let x = Matrix::from_ndarray(arr2(&[
+            [2.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, 1.0],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[3.0, 2.0, 0.5, 0.25, 0.1, 0.0]));
+        let p = 3;
+
+        let cache = prepare_knockoff_cache(&x, &KnockoffMethod::Equi)
+            .unwrap_or_else(|error| panic!("cache failed: {error}"));
+        let x_tilde = cache.sample(42);
+
+        // Build augmented matrix with a swap
+        let mut augmented = Array2::zeros((6, 6));
+        for j in 0..p {
+            augmented.column_mut(j).assign(&x.as_ndarray().column(j));
+        }
+        for j in 0..p {
+            augmented
+                .column_mut(p + j)
+                .assign(&x_tilde.as_ndarray().column(j));
+        }
+        // Apply a deterministic swap: swap column 1
+        let swap = vec![false, true, false];
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                for i in 0..6 {
+                    let tmp = augmented[(i, j)];
+                    augmented[(i, j)] = augmented[(i, p + j)];
+                    augmented[(i, p + j)] = tmp;
+                }
+            }
+        }
+        let augmented = Matrix::from_ndarray(augmented);
+
+        let config = GaussianLassoPathConfig {
+            nlambda: 40,
+            ..GaussianLassoPathConfig::default()
+        };
+
+        // Uncached path
+        let w_uncached = stat_glmnet_lambdasmax_prebuilt(
+            &augmented, p, &y, GlmnetFamily::Gaussian, &config,
+        )
+        .unwrap_or_else(|error| panic!("uncached failed: {error}"));
+
+        // Cached path
+        let n = 6usize;
+        let y_arr = y.as_ndarray();
+        let y_mean = y_arr.iter().copied().sum::<f64>() / (n as f64);
+        let y_centered = y_arr.mapv(|v| v - y_mean);
+        let x_cache = HalfPreparedData::new(&x, &y_centered, true);
+        let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
+
+        let w_cached = stat_glmnet_lambdasmax_prebuilt_cached(
+            &x_cache, &tilde_cache, &swap, p, &y, GlmnetFamily::Gaussian, &config,
+        )
+        .unwrap_or_else(|error| panic!("cached failed: {error}"));
+
+        // Results should match
+        for j in 0..p {
+            let diff = (w_uncached.as_ndarray()[j] - w_cached.as_ndarray()[j]).abs();
+            assert!(
+                diff < 1e-10,
+                "mismatch at j={}: uncached={}, cached={}",
+                j,
+                w_uncached.as_ndarray()[j],
+                w_cached.as_ndarray()[j],
+            );
         }
     }
 }

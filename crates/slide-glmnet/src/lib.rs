@@ -244,17 +244,18 @@ pub fn gaussian_lasso_path(
     })
 }
 
-/// Like `gaussian_lasso_path` but reuses precomputed left-half statistics,
-/// only preparing the right (X_tilde) half from scratch.
+/// Like `gaussian_lasso_path` but reuses precomputed per-column stats for X
+/// columns and only prepares X_tilde columns from scratch. The `swap` mask
+/// indicates which column pairs have X_j ↔ X_tilde_j swapped.
 pub fn gaussian_lasso_path_with_left_cache(
-    left_cache: &HalfPreparedData,
-    x_tilde: &Matrix,
+    x_cache: &HalfPreparedData,
+    tilde_cache: &HalfPreparedData,
+    swap: &[bool],
     y: &Vector,
     config: &GaussianLassoPathConfig,
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
-    // Validate basics (we trust left_cache dimensions match)
-    let n = x_tilde.nrows();
-    let p = left_cache.x_scaled.ncols();
+    let n = x_cache.x_scaled.nrows();
+    let p = x_cache.x_scaled.ncols();
     if n == 0 || p == 0 {
         return Err(GlmnetError::InvalidInputShape {
             rows: n,
@@ -268,22 +269,19 @@ pub fn gaussian_lasso_path_with_left_cache(
         });
     }
 
-    let prepared = PreparedData::from_halves(left_cache, x_tilde, y, config.standardize);
+    let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y);
 
-    // Build lambda grid using cached left contribution
+    // Build lambda grid: compute max |col · y_centered| / n across all 2p columns
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
         None => {
-            // Compute right-half lambda_max contribution from prepared data
             let x_array = prepared.x_scaled.as_ndarray();
             let y_array = prepared.y_centered.as_ndarray();
             let n_f = n as Scalar;
-            let right_lambda_max = x_array
+            let lambda_max_raw = x_array
                 .axis_iter(Axis(1))
-                .skip(p)
                 .map(|column| column.dot(y_array).abs() / n_f)
                 .fold(0.0, Scalar::max);
-            let lambda_max_raw = left_cache.lambda_max_contrib.max(right_lambda_max);
             build_geometric_lambda_grid(lambda_max_raw, n, 2 * p, config.nlambda, config.alpha)?
         }
     };
@@ -638,12 +636,13 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     Ok(Vector::from_ndarray(statistic))
 }
 
-/// Like `stat_glmnet_lambdasmax_prebuilt` but reuses a precomputed
-/// `HalfPreparedData` for the X (left) half of the augmented matrix.
-/// `x_tilde_swapped` is the right half (n×p) after column swaps.
+/// Like `stat_glmnet_lambdasmax_prebuilt` but reuses precomputed per-column
+/// stats for X and X_tilde, applying the swap mask to assemble PreparedData
+/// without re-centering/scaling the X columns each iteration.
 pub fn stat_glmnet_lambdasmax_prebuilt_cached(
-    left_cache: &HalfPreparedData,
-    x_tilde_swapped: &Matrix,
+    x_cache: &HalfPreparedData,
+    tilde_cache: &HalfPreparedData,
+    swap: &[bool],
     p: usize,
     y: &Vector,
     family: GlmnetFamily,
@@ -661,13 +660,12 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     };
     let path = match family {
         GlmnetFamily::Gaussian => {
-            gaussian_lasso_path_with_left_cache(left_cache, x_tilde_swapped, y, &knockoff_config)?
+            gaussian_lasso_path_with_left_cache(x_cache, tilde_cache, swap, y, &knockoff_config)?
         }
         GlmnetFamily::Binomial => {
-            // Binomial path doesn't have a cached variant; build PreparedData
-            // from halves and use the pre-scaled augmented matrix directly.
-            let prepared =
-                PreparedData::from_halves(left_cache, x_tilde_swapped, y, knockoff_config.standardize);
+            // Binomial: assemble PreparedData from cached halves with swap,
+            // then run binomial path on the pre-scaled matrix.
+            let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y);
             binomial_lasso_path(&prepared.x_scaled, y, &knockoff_config)?
         }
     };
@@ -1229,53 +1227,54 @@ impl PreparedData {
         }
     }
 
-    /// Build a `PreparedData` for the augmented n×2p matrix `[X | X_tilde]`
-    /// by reusing precomputed stats for the left (X) half and only preparing
-    /// the right (X_tilde) half from scratch.
-    fn from_halves(
-        left: &HalfPreparedData,
-        right_raw: &Matrix,
+    /// Build a `PreparedData` for the augmented n×2p matrix by reusing
+    /// precomputed per-column stats for X columns and freshly computed
+    /// stats for X_tilde columns. The `swap` mask indicates which column
+    /// pairs have been swapped (X_j ↔ X_tilde_j).
+    ///
+    /// After swapping:
+    /// - Position j:   X_j if !swap[j], else X_tilde_j
+    /// - Position p+j: X_tilde_j if !swap[j], else X_j
+    ///
+    /// This assembles the full 2p-column PreparedData by placing each
+    /// column's precomputed stats in the correct position.
+    fn from_halves_swapped(
+        x_cache: &HalfPreparedData,
+        tilde_cache: &HalfPreparedData,
+        swap: &[bool],
         y: &Vector,
-        standardize: bool,
     ) -> Self {
-        let n = right_raw.nrows();
-        let p = left.x_scaled.ncols();
+        let n = x_cache.x_scaled.nrows();
+        let p = x_cache.x_scaled.ncols();
         let y_array = y.as_ndarray();
         let y_mean = y_array.iter().copied().sum::<Scalar>() / (n as Scalar);
         let y_centered = y_array.mapv(|value| value - y_mean);
 
-        // Prepare right half
-        let right = HalfPreparedData::new(right_raw, &y_centered, standardize);
-
-        // Assemble full n×2p column-major matrix
+        // Assemble full n×2p column-major matrix with swaps applied
         let mut x_col_major = Array2::zeros((n, 2 * p).f());
-        for col in 0..p {
-            x_col_major.column_mut(col).assign(&left.x_scaled.column(col));
+        let mut x_mean = Array1::zeros(2 * p);
+        let mut column_scale = Array1::ones(2 * p);
+        let mut column_sq_norm = Array1::zeros(2 * p);
+
+        for j in 0..p {
+            let (left_src, right_src) = if swap[j] {
+                (tilde_cache, x_cache)
+            } else {
+                (x_cache, tilde_cache)
+            };
+
+            // Position j (left half)
+            x_col_major.column_mut(j).assign(&left_src.x_scaled.column(j));
+            x_mean[j] = left_src.x_mean[j];
+            column_scale[j] = left_src.column_scale[j];
+            column_sq_norm[j] = left_src.column_sq_norm[j];
+
+            // Position p+j (right half)
+            x_col_major.column_mut(p + j).assign(&right_src.x_scaled.column(j));
+            x_mean[p + j] = right_src.x_mean[j];
+            column_scale[p + j] = right_src.column_scale[j];
+            column_sq_norm[p + j] = right_src.column_sq_norm[j];
         }
-        for col in 0..p {
-            x_col_major
-                .column_mut(p + col)
-                .assign(&right.x_scaled.column(col));
-        }
-
-        // Combine means, scales, norms
-        let x_mean = ndarray::concatenate(
-            Axis(0),
-            &[left.x_mean.view(), right.x_mean.view()],
-        )
-        .unwrap_or_else(|_| unreachable!("same-rank 1-d arrays"));
-
-        let column_scale = ndarray::concatenate(
-            Axis(0),
-            &[left.column_scale.view(), right.column_scale.view()],
-        )
-        .unwrap_or_else(|_| unreachable!("same-rank 1-d arrays"));
-
-        let column_sq_norm = ndarray::concatenate(
-            Axis(0),
-            &[left.column_sq_norm.view(), right.column_sq_norm.view()],
-        )
-        .unwrap_or_else(|_| unreachable!("same-rank 1-d arrays"));
 
         Self {
             x_scaled: Matrix::from_ndarray(x_col_major),
