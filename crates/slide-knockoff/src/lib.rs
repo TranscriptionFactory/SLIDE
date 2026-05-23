@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use slide_glmnet::{
     stat_glmnet_coefdiff_prebuilt, stat_glmnet_lambdadiff_prebuilt,
     stat_glmnet_lambdasmax_prebuilt, stat_glmnet_lambdasmax_prebuilt_cached,
-    GaussianLassoPathConfig, GlmnetError, GlmnetFamily, HalfPreparedData,
+    GaussianCdWorkspace, GaussianLassoPathConfig, GlmnetError, GlmnetFamily, HalfPreparedData,
 };
 use slide_sdp::{create_solve_asdp, create_solve_equi, create_solve_sdp, SdpError};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
@@ -287,7 +287,13 @@ pub fn knockoff_filter_voting(
     // Check if we can use the cached path (lambdasmax only for now)
     let use_cached_path = config.statistic == KnockoffStatistic::GlmnetLambdasMax;
 
-    let run_iteration_cached = |iteration: usize| {
+    let glmnet_config = GaussianLassoPathConfig {
+        nlambda: config.nlambda,
+        cv_folds: n.clamp(2, 5),
+        ..GaussianLassoPathConfig::default()
+    };
+
+    let run_iteration_cached = |ws: &mut GaussianCdWorkspace, iteration: usize| {
         let x_tilde = cache.sample(config.base_seed + (iteration as u64));
 
         // Prepare X_tilde half (fresh each iteration)
@@ -299,13 +305,7 @@ pub fn knockoff_filter_voting(
         );
         let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
 
-        // Compute statistic using precomputed column stats — no raw matrix
-        // assembly, centering, or scaling needed.
-        let glmnet_config = GaussianLassoPathConfig {
-            nlambda: config.nlambda,
-            cv_folds: n.clamp(2, 5),
-            ..GaussianLassoPathConfig::default()
-        };
+        // Compute statistic using precomputed column stats and reusable workspace
         let w = stat_glmnet_lambdasmax_prebuilt_cached(
             &x_cache,
             &tilde_cache,
@@ -316,6 +316,7 @@ pub fn knockoff_filter_voting(
             &y_centered,
             config.family,
             &glmnet_config,
+            ws,
         )?;
 
         // Correct W-statistic signs for swapped columns
@@ -407,11 +408,15 @@ pub fn knockoff_filter_voting(
         if config.parallel {
             (0..config.niter)
                 .into_par_iter()
-                .map(|iteration| run_iteration_cached(iteration))
+                .map_init(
+                    || GaussianCdWorkspace::new(n, 2 * p),
+                    |ws, iteration| run_iteration_cached(ws, iteration),
+                )
                 .collect::<Result<Vec<_>, _>>()?
         } else {
+            let mut ws = GaussianCdWorkspace::new(n, 2 * p);
             (0..config.niter)
-                .map(|iteration| run_iteration_cached(iteration))
+                .map(|iteration| run_iteration_cached(&mut ws, iteration))
                 .collect::<Result<Vec<_>, _>>()?
         }
     } else if config.parallel {
@@ -1184,8 +1189,9 @@ mod tests {
         let x_cache = HalfPreparedData::new(&x, &y_centered, true);
         let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
 
+        let mut ws = slide_glmnet::GaussianCdWorkspace::new(n, 2 * p);
         let w_cached = stat_glmnet_lambdasmax_prebuilt_cached(
-            &x_cache, &tilde_cache, &swap, p, &y, y_mean, &y_centered, GlmnetFamily::Gaussian, &config,
+            &x_cache, &tilde_cache, &swap, p, &y, y_mean, &y_centered, GlmnetFamily::Gaussian, &config, &mut ws,
         )
         .unwrap_or_else(|error| panic!("cached failed: {error}"));
 
