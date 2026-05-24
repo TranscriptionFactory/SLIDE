@@ -382,11 +382,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
-    // Match Python/Fortran glmnet tolerance (1e-7) and max_iter (100_000).
-    // Tight tolerance is needed for highly-correlated original/knockoff pairs
-    // where entry coefficients are small.
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
-    const KNOCKOFF_MAX_ITER: usize = 100_000;
+    // Rust's convergence criterion (max |beta_change|) is ~3x tighter than
+    // Fortran glmnet's (max xv*del^2) at the same numeric threshold, since
+    // xv≈1 for standardized data → |del|<1e-4 ≈ del^2<1e-8.
+    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
+    const KNOCKOFF_MAX_ITER: usize = 1_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
         tolerance: KNOCKOFF_TOLERANCE,
@@ -428,8 +428,8 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     ws: &mut GaussianCdWorkspace,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
-    const KNOCKOFF_MAX_ITER: usize = 100_000;
+    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
+    const KNOCKOFF_MAX_ITER: usize = 1_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
         tolerance: KNOCKOFF_TOLERANCE,
