@@ -26,6 +26,10 @@ pub struct GaussianLassoPathConfig {
     /// Stop the path early once every coefficient has been non-zero at least once.
     /// Useful for `lambdasmax` which only needs entry lambdas.
     pub early_stop_all_entered: bool,
+    /// Degrees-of-freedom correction for column standardization.
+    /// 0 = population std (glmnet default), 1 = sample std (R's `scale()`).
+    /// The knockoff package uses ddof=1 via `scale()` before calling glmnet.
+    pub scale_ddof: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -95,6 +99,7 @@ impl Default for GaussianLassoPathConfig {
             cv_folds: 5,
             lambda: None,
             early_stop_all_entered: false,
+            scale_ddof: 0,
         }
     }
 }
@@ -106,7 +111,7 @@ pub fn gaussian_lasso_path(
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
     validate_inputs(x, y, config)?;
 
-    let prepared = PreparedData::from_inputs(x, y, config.standardize);
+    let prepared = PreparedData::from_inputs(x, y, config.standardize, config.scale_ddof);
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
         None => build_lambda_grid(
@@ -178,7 +183,7 @@ pub fn binomial_lasso_path(
     validate_inputs(x, y, config)?;
     validate_binary_response(y)?;
 
-    let prepared = PreparedData::from_inputs(x, y, config.standardize);
+    let prepared = PreparedData::from_inputs(x, y, config.standardize, config.scale_ddof);
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
         None => build_binomial_lambda_grid(
@@ -886,17 +891,18 @@ impl HalfPreparedData {
         x_centered -= &x_mean.view().insert_axis(Axis(0));
 
         let mut column_scale = Array1::ones(p);
+        let n_f = n as Scalar;
+        let nm1_f = ((n - 1) as Scalar).max(1.0);
         let mut column_sq_norm = if standardize {
-            // After standardizing, each column with positive variance has
-            // ||col||²/n = 1.0 by construction. Compute norms once during
-            // scaling and derive post-scale norms directly.
+            // Use ddof=1 (sample std) to match R's scale() / knockoff package.
+            // R's knockoff does: scale(X) with ddof=1 then glmnet(standardize=FALSE).
             for col in 0..p {
                 let sq = x_centered
                     .column(col)
                     .iter()
                     .map(|value| value * value)
                     .sum::<Scalar>();
-                let scale = (sq / (n as Scalar)).sqrt();
+                let scale = (sq / nm1_f).sqrt();
                 if scale > 0.0 {
                     column_scale[col] = scale;
                     x_centered
@@ -904,8 +910,8 @@ impl HalfPreparedData {
                         .mapv_inplace(|value| value / scale);
                 }
             }
-            // Norms after scaling: 1.0 for scaled cols, 0.0 for zero-variance
-            Array1::from_iter(column_scale.iter().map(|&s| if s > 0.0 { 1.0 } else { 0.0 }))
+            // After ddof=1 scaling: ||col||²/n = (n-1)/n for scaled cols
+            Array1::from_iter(column_scale.iter().map(|&s| if s > 0.0 { nm1_f / n_f } else { 0.0 }))
         } else {
             // Without standardization, must compute norms explicitly
             Array1::zeros(p) // placeholder, filled below after col-major copy
@@ -954,7 +960,7 @@ struct PreparedData {
 }
 
 impl PreparedData {
-    fn from_inputs(x: &Matrix, y: &Vector, standardize: bool) -> Self {
+    fn from_inputs(x: &Matrix, y: &Vector, standardize: bool, scale_ddof: usize) -> Self {
         let x_array = x.as_ndarray();
         let y_array = y.as_ndarray();
         let n = x_array.nrows();
@@ -971,13 +977,14 @@ impl PreparedData {
 
         let mut column_scale = Array1::ones(p);
         if standardize {
+            let divisor = ((n - scale_ddof) as Scalar).max(1.0);
             for col in 0..p {
                 let sq = x_centered
                     .column(col)
                     .iter()
                     .map(|value| value * value)
                     .sum::<Scalar>();
-                let scale = (sq / (n as Scalar)).sqrt();
+                let scale = (sq / divisor).sqrt();
                 if scale > 0.0 {
                     column_scale[col] = scale;
                     x_centered
