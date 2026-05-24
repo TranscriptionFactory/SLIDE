@@ -286,6 +286,9 @@ pub fn knockoff_filter_voting(
     let glmnet_config = GaussianLassoPathConfig {
         nlambda: config.nlambda,
         cv_folds: n.clamp(2, 5),
+        // Use ddof=1 to match R's knockoff package which calls scale() (sample std)
+        // before passing to glmnet with standardize=FALSE.
+        scale_ddof: 1,
         ..GaussianLassoPathConfig::default()
     };
 
@@ -622,6 +625,7 @@ fn compute_statistic_prebuilt(
     let glmnet_config = GaussianLassoPathConfig {
         nlambda: config.nlambda,
         cv_folds: augmented.nrows().clamp(2, 5),
+        scale_ddof: 1,
         ..GaussianLassoPathConfig::default()
     };
 
@@ -1184,6 +1188,7 @@ mod tests {
 
         let config = GaussianLassoPathConfig {
             nlambda: 40,
+            scale_ddof: 1,
             ..GaussianLassoPathConfig::default()
         };
 
