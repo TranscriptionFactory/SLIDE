@@ -382,11 +382,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
-    // Lambdasmax only detects whether a coefficient has entered (nonzero) at
-    // each lambda — not its precise value.  Looser tolerance is sufficient for
-    // entry detection and dramatically reduces CD iterations per lambda step.
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
-    const KNOCKOFF_MAX_ITER: usize = 1_000;
+    // Match Python/Fortran glmnet tolerance (1e-7) and max_iter (100_000).
+    // Tight tolerance is needed for highly-correlated original/knockoff pairs
+    // where entry coefficients are small.
+    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
+    const KNOCKOFF_MAX_ITER: usize = 100_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
         tolerance: KNOCKOFF_TOLERANCE,
@@ -428,8 +428,8 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     ws: &mut GaussianCdWorkspace,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
-    const KNOCKOFF_MAX_ITER: usize = 1_000;
+    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
+    const KNOCKOFF_MAX_ITER: usize = 100_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
         tolerance: KNOCKOFF_TOLERANCE,
@@ -754,7 +754,8 @@ fn entry_lambda(beta: &Array2<Scalar>, lambda: &Array1<Scalar>) -> Array1<Scalar
         row.iter()
             .zip(lambda.iter())
             .find_map(|(&coefficient, &lambda_value)| {
-                (coefficient.abs() > 1.0e-10).then_some(lambda_value)
+                // Match Python: np.abs(coefs) > 0
+                (coefficient != 0.0).then_some(lambda_value)
             })
             .unwrap_or(0.0)
     }))
