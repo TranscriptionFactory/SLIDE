@@ -256,7 +256,12 @@ pub fn prepare_knockoff_cache(
 ) -> Result<KnockoffCache, KnockoffError> {
     validate_feature_matrix(x)?;
     let mu = estimate_mean(x);
-    let sigma = estimate_covariance(x)?;
+    // Match R's create.second_order: try raw sample covariance first,
+    // fall back to Schäfer-Strimmer shrinkage only if not positive definite.
+    let sigma = match sample_covariance(x) {
+        Some(cov) if cov.cholesky_unchecked("sigma").is_ok() => cov,
+        _ => estimate_covariance(x)?,
+    };
     let diag_s = solve_diag_s(&sigma, method)?;
     build_knockoff_cache(x, &mu, &sigma, &diag_s)
 }
@@ -661,6 +666,28 @@ fn estimate_mean(x: &Matrix) -> Vector {
         .mean_axis(Axis(0))
         .unwrap_or_else(|| unreachable!("validated non-empty input"));
     Vector::from_ndarray(mean)
+}
+
+/// Compute the sample covariance matrix (ddof=1), equivalent to `np.cov(X, ddof=1)`
+/// and R's `cov(X)`. Returns `None` if the matrix has fewer than 2 rows.
+fn sample_covariance(x: &Matrix) -> Option<Matrix> {
+    let (n, p) = x.shape();
+    if n < 2 {
+        return None;
+    }
+    let x_nd = x.as_ndarray();
+    let mean = x_nd.mean_axis(Axis(0))?;
+    let centered = x_nd - &mean.clone().insert_axis(Axis(0));
+    let denom = (n - 1) as Scalar;
+    let mut cov = Array2::zeros((p, p));
+    for i in 0..p {
+        for j in i..p {
+            let val = centered.column(i).dot(&centered.column(j)) / denom;
+            cov[(i, j)] = val;
+            cov[(j, i)] = val;
+        }
+    }
+    Some(Matrix::from_ndarray(cov))
 }
 
 /// Estimate a shrinkage-regularised covariance matrix using the Schäfer-Strimmer
