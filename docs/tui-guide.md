@@ -159,8 +159,9 @@ The dashboard has five tabs. Use the keys below to navigate.
 
 ### Overview tab
 
-Summary table of all evaluated `(delta, lambda)` pairs with their scores,
-number of selected factors, and a visual phase timeline bar showing where the
+Summary table of all evaluated `(delta, lambda)` pairs, a cycleable grid
+metric (`g` toggles score, factor count, pure count, selected marginals, and
+selected interactions), and a visual phase timeline bar showing where the
 pipeline is currently spending time:
 
 ```
@@ -180,7 +181,7 @@ diagnostics remain available with direct keys `6` and `7`.
 | `4` | Group Correlation | Within-group correlation heatmap; large `k` uses a compact window around the selected factor |
 | `5` | Block Correlation | Block-structure correlation heatmap (half-block `▀` rendering, blue-white-red, capped at 300 vars) |
 | `6` | Gamma (Noise Variance) | Advanced: gamma distribution of noise variance estimates |
-| `7` | Interaction Network | Advanced: adjacency-style view of factor interactions |
+| `7` | Interaction Ranking | Advanced: ranked interaction table with selected status, frequency, and response association when available |
 
 For large LOVE outputs, the matrix-style views prioritize scanability over
 showing every cell. Covariance and group-correlation matrices show a centered
@@ -209,7 +210,8 @@ Two sub-views (toggle with `v`):
 | Interactions | SLIDE knockoff frequency bars for interaction terms |
 
 Both sub-views also display factor-response correlation beneath the frequency
-bars.
+bars. Response-association data is computed on demand when the response vector
+is available.
 
 ### Performance tab
 
@@ -222,12 +224,15 @@ cv:
 ```
 
 This tab reads the persisted `final_cv` block from the checkpoint or result
-JSON. It shows:
+JSON. Cycle Performance sub-views with `v`. It shows:
 
 - Final CV metric, mean, and standard error
 - Scored fold count vs empty or degenerate folds
 - Fold-score bar chart
 - Per-fold train/validation sizes and selected model sizes
+- Prediction distributions
+- ROC/PR threshold summary for binary responses
+- Residual histogram for continuous responses
 
 If final CV was not enabled for the run, the tab displays a short
 "not available" message instead. During live runs, the Overview tab also shows
@@ -245,8 +250,9 @@ If final CV was not enabled for the run, the tab displays a short
 | `k` / `Up` | Previous run |
 | `PgDn` | Next factor |
 | `PgUp` | Previous factor |
-| `v` | Cycle primary sub-views (LOVE and SLIDE tabs) |
+| `v` | Cycle primary sub-views (LOVE, SLIDE, and Performance tabs) |
 | `1`–`7` | Jump to LOVE sub-view directly (`6` and `7` are advanced) |
+| `g` | Cycle Overview grid metric |
 | `r` | Force reload checkpoint from disk |
 | `q` | Quit |
 

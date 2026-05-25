@@ -1,7 +1,8 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
@@ -82,8 +83,17 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                         Tab::Slide => {
                             app.selection_sub_view = app.selection_sub_view.next();
                         }
+                        Tab::Performance => {
+                            if let Some(data) = app.data.as_ref() {
+                                app.performance_sub_view =
+                                    app.performance_sub_view.next(data.response_type);
+                            }
+                        }
                         _ => {}
                     },
+                    KeyCode::Char('g') if app.tab == Tab::Overview => {
+                        app.grid_metric = app.grid_metric.next();
+                    }
                     KeyCode::Char('m')
                         if app.tab == Tab::Love
                             && app.love_sub_view == LoveSubView::LoadingMatrix =>
@@ -183,7 +193,7 @@ impl LoveSubView {
             Self::GroupCorrelation => "Group Correlation",
             Self::BlockCorrelation => "Block Correlation",
             Self::GammaDistribution => "Gamma (Noise Variance)",
-            Self::InteractionNetwork => "Interaction Network",
+            Self::InteractionNetwork => "Interaction Ranking",
         }
     }
 
@@ -211,6 +221,37 @@ enum LoadingRowMode {
     SelectedFactor,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PerformanceSubView {
+    Summary,
+    FoldScores,
+    Predictions,
+    RocPr,
+    Residuals,
+}
+
+impl PerformanceSubView {
+    fn next(self, response_type: OptimizeResponseType) -> Self {
+        match (self, response_type) {
+            (Self::Summary, _) => Self::FoldScores,
+            (Self::FoldScores, _) => Self::Predictions,
+            (Self::Predictions, OptimizeResponseType::Binary) => Self::RocPr,
+            (Self::Predictions, OptimizeResponseType::Continuous) => Self::Residuals,
+            (Self::RocPr, _) | (Self::Residuals, _) => Self::Summary,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Summary => "Summary",
+            Self::FoldScores => "Fold Scores",
+            Self::Predictions => "Predictions",
+            Self::RocPr => "ROC / PR",
+            Self::Residuals => "Residuals",
+        }
+    }
+}
+
 impl LoadingRowMode {
     fn next(self) -> Self {
         match self {
@@ -229,7 +270,7 @@ impl LoadingRowMode {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct App {
     args: TuiArgs,
     tab: Tab,
@@ -242,6 +283,8 @@ struct App {
     love_sub_view: LoveSubView,
     loading_row_mode: LoadingRowMode,
     selection_sub_view: SelectionSubView,
+    grid_metric: GridMetric,
+    performance_sub_view: PerformanceSubView,
     feature_search_input: String,
     feature_search_editing: bool,
     config_summary: Option<Vec<String>>,
@@ -328,6 +371,8 @@ impl App {
             love_sub_view: LoveSubView::Diagnostics,
             loading_row_mode: LoadingRowMode::TopWindow,
             selection_sub_view: SelectionSubView::Marginal,
+            grid_metric: GridMetric::Score,
+            performance_sub_view: PerformanceSubView::Summary,
             feature_search_input: String::new(),
             feature_search_editing: false,
             config_summary,
@@ -417,7 +462,6 @@ impl App {
     }
 
     fn build_live_preview(&mut self, live: LiveEvaluation) {
-        let Some(ref data) = self.data else { return };
         let n = live.love.a.nrows();
         let k = live.love.k;
         let synthetic = SlideRunResult {
@@ -448,18 +492,21 @@ impl App {
             },
             score: 0.0,
         };
-        self.live_factor_rankings = compute_factor_rankings(
-            &synthetic,
-            &data.standardized_x,
-            &data.y,
-            &data.feature_names,
-            data.response_type,
-        )
-        .ok();
-        self.live_group_correlations = Some(compute_group_correlation_matrix(
-            &synthetic,
-            &data.standardized_x,
-        ));
+        if self.ensure_x().is_ok() && self.ensure_y().is_ok() {
+            if let Some(data) = self.data.as_ref() {
+                let derived = data.derived.borrow();
+                if let (Some(x), Some(y)) = (&derived.standardized_x, &derived.y) {
+                    let names = derived
+                        .feature_names
+                        .as_ref()
+                        .unwrap_or(&data.feature_names);
+                    self.live_factor_rankings =
+                        compute_factor_rankings(&synthetic, x, y, names, data.response_type).ok();
+                    self.live_group_correlations =
+                        Some(compute_group_correlation_matrix(&synthetic, x));
+                }
+            }
+        }
         self.live_run = Some(synthetic);
     }
 
@@ -567,11 +614,13 @@ impl App {
         let Some(query) = self.feature_search_query() else {
             return Vec::new();
         };
-        let Some(data) = self.data.as_ref() else {
+        let Some(_data) = self.data.as_ref() else {
             return Vec::new();
         };
+        let _ = self.ensure_x();
+        let names = self.current_feature_names();
         let query = query.to_ascii_lowercase();
-        data.feature_names
+        names
             .iter()
             .enumerate()
             .filter(|(_, name)| name.to_ascii_lowercase().contains(&query))
@@ -599,26 +648,151 @@ impl App {
             .or(self.live_run.as_ref())
     }
 
-    fn current_factor_rankings(&self) -> Option<&[FactorRanking]> {
-        self.data
-            .as_ref()?
-            .factor_rankings
-            .get(self.selected_run)
-            .map(|v| v.as_slice())
-            .or(self.live_factor_rankings.as_deref())
+    fn ensure_x(&self) -> Result<()> {
+        let Some(data) = self.data.as_ref() else {
+            return Err(anyhow!("checkpoint data is not loaded"));
+        };
+        if data.derived.borrow().standardized_x.is_some() {
+            return Ok(());
+        }
+        let Some(path) = data.x_path.as_ref() else {
+            data.derived.borrow_mut().load_error = Some(
+                "feature matrix required for this view; pass --x or use checkpoint data refs"
+                    .to_owned(),
+            );
+            return Err(anyhow!(
+                "feature matrix required for this view; pass --x or use checkpoint data refs"
+            ));
+        };
+        let options = MatrixReadOptions {
+            delimiter: infer_delimiter_from_path(path),
+            impute_missing: false,
+        };
+        let loaded_x = read_feature_matrix(path, &options)
+            .with_context(|| format!("failed to read feature matrix from {}", path.display()))?;
+        let feature_names = loaded_x.feature_names.clone();
+        let standardized_x = slide_data_io::standardize(&loaded_x.matrix).matrix;
+        let mut derived = data.derived.borrow_mut();
+        derived.standardized_x = Some(standardized_x);
+        derived.feature_names = Some(feature_names);
+        derived.load_error = None;
+        Ok(())
     }
 
-    fn current_group_correlations(&self) -> Option<&Array2<Scalar>> {
-        self.data
-            .as_ref()?
-            .group_correlations
-            .get(self.selected_run)
-            .and_then(|opt| opt.as_ref())
-            .or_else(|| {
-                self.live_group_correlations
-                    .as_ref()
-                    .and_then(|opt| opt.as_ref())
-            })
+    fn ensure_y(&self) -> Result<()> {
+        let Some(data) = self.data.as_ref() else {
+            return Err(anyhow!("checkpoint data is not loaded"));
+        };
+        if data.derived.borrow().y.is_some() {
+            return Ok(());
+        }
+        let Some(path) = data.y_path.as_ref() else {
+            data.derived.borrow_mut().load_error =
+                Some("response vector required for this view; use checkpoint data refs".to_owned());
+            return Err(anyhow!(
+                "response vector required for this view; use checkpoint data refs"
+            ));
+        };
+        let y = read_response_vector(path, &ResponseReadOptions::default())
+            .with_context(|| format!("failed to read response vector from {}", path.display()))?;
+        let mut derived = data.derived.borrow_mut();
+        derived.y = Some(y);
+        derived.load_error = None;
+        Ok(())
+    }
+
+    fn current_feature_names(&self) -> Vec<String> {
+        let Some(data) = self.data.as_ref() else {
+            return Vec::new();
+        };
+        data.derived
+            .borrow()
+            .feature_names
+            .clone()
+            .unwrap_or_else(|| data.feature_names.clone())
+    }
+
+    fn current_factor_rankings(&self) -> Option<Vec<FactorRanking>> {
+        let data = self.data.as_ref()?;
+        if self.selected_run >= data.runs.len() {
+            return self.live_factor_rankings.clone();
+        }
+        if self.ensure_x().is_err() || self.ensure_y().is_err() {
+            return None;
+        }
+        let mut derived = data.derived.borrow_mut();
+        if derived.factor_rankings.get(self.selected_run)?.is_none() {
+            let x = derived.standardized_x.as_ref()?;
+            let y = derived.y.as_ref()?;
+            let names = derived
+                .feature_names
+                .as_ref()
+                .unwrap_or(&data.feature_names);
+            let rankings = compute_factor_rankings(
+                &data.runs[self.selected_run],
+                x,
+                y,
+                names,
+                data.response_type,
+            )
+            .ok()?;
+            derived.factor_rankings[self.selected_run] = Some(rankings);
+        }
+        derived.factor_rankings[self.selected_run].clone()
+    }
+
+    fn current_group_correlations(&self) -> Option<Array2<Scalar>> {
+        let data = self.data.as_ref()?;
+        if self.selected_run >= data.runs.len() {
+            return self.live_group_correlations.clone().flatten();
+        }
+        if self.ensure_x().is_err() {
+            return None;
+        }
+        let mut derived = data.derived.borrow_mut();
+        if derived.group_correlations.get(self.selected_run)?.is_none() {
+            let x = derived.standardized_x.as_ref()?;
+            let value = compute_group_correlation_matrix(&data.runs[self.selected_run], x);
+            derived.group_correlations[self.selected_run] = Some(value);
+        }
+        derived.group_correlations[self.selected_run]
+            .clone()
+            .flatten()
+    }
+
+    fn current_factor_response_corr(&self) -> Option<Vec<Scalar>> {
+        let data = self.data.as_ref()?;
+        if self.selected_run >= data.runs.len() || self.ensure_y().is_err() {
+            return None;
+        }
+        let mut derived = data.derived.borrow_mut();
+        if derived
+            .factor_response_corr
+            .get(self.selected_run)?
+            .is_none()
+        {
+            let y = derived.y.as_ref()?;
+            let value =
+                compute_factor_response_corr(&data.runs[self.selected_run], y, data.response_type);
+            derived.factor_response_corr[self.selected_run] = Some(value);
+        }
+        derived.factor_response_corr[self.selected_run].clone()
+    }
+
+    fn current_block_correlation(&self) -> Option<(Array2<Scalar>, Vec<usize>)> {
+        let data = self.data.as_ref()?;
+        if self.selected_run >= data.runs.len() || self.ensure_x().is_err() {
+            return None;
+        }
+        let mut derived = data.derived.borrow_mut();
+        if derived.block_correlations.get(self.selected_run)?.is_none() {
+            let x = derived.standardized_x.as_ref()?;
+            let value = compute_block_correlation(&data.runs[self.selected_run], x);
+            derived.block_correlations[self.selected_run] = Some(value);
+        }
+        derived.block_correlations[self.selected_run]
+            .clone()
+            .flatten()
     }
 
     fn render(&self, frame: &mut Frame) {
@@ -683,8 +857,8 @@ impl App {
                 }
             }
             Tab::Slide => footer_spans.push(" | v sub-view".dark_gray()),
-            Tab::Performance => {}
-            Tab::Overview => {}
+            Tab::Performance => footer_spans.push(" | v sub-view".dark_gray()),
+            Tab::Overview => footer_spans.push(" | g grid metric".dark_gray()),
         }
         if self.feature_search_editing {
             footer_spans.push(format!(" | find: {}", self.feature_search_input).yellow());
@@ -760,7 +934,7 @@ impl App {
         self.render_summary(frame, sections[0]);
         frame.render_widget(self.run_table(), sections[1]);
         frame.render_widget(
-            self.grid_widget("Score Grid", GridMetric::Score),
+            self.grid_widget(self.grid_metric.title(), self.grid_metric),
             sections[2],
         );
         frame.render_widget(self.config_identity_widget(), sections[3]);
@@ -861,21 +1035,7 @@ impl App {
     }
 
     fn render_love_diagnostics(&self, frame: &mut Frame, area: Rect) {
-        if area.width >= 100 {
-            let panes = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-                .split(area);
-            frame.render_widget(self.love_detail_widget(), panes[0]);
-            frame.render_widget(self.interaction_network_widget(), panes[1]);
-        } else {
-            let panes = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(6), Constraint::Min(4)])
-                .split(area);
-            frame.render_widget(self.love_detail_widget(), panes[0]);
-            frame.render_widget(self.interaction_network_widget(), panes[1]);
-        }
+        frame.render_widget(self.love_detail_widget(), area);
     }
 
     fn render_summary(&self, frame: &mut Frame, area: Rect) {
@@ -1072,6 +1232,17 @@ impl App {
             || "n/a".to_owned(),
             |group| format!("+{} / -{}", group.pos.len(), group.neg.len()),
         );
+        let rankings = self.current_factor_rankings();
+        let top_loading = rankings
+            .as_ref()
+            .and_then(|f| f.get(factor))
+            .and_then(|r| r.by_loading.first())
+            .map_or(0.0, |entry| entry.loading.abs());
+        let top_association = rankings
+            .as_ref()
+            .and_then(|f| f.get(factor))
+            .and_then(|r| r.by_association.first())
+            .map_or(0.0, |entry| entry.association.abs());
         let lines = vec![
             Line::from(format!("factor index: {}", factor + 1)),
             Line::from(format!(
@@ -1096,14 +1267,7 @@ impl App {
             )),
             Line::from(format!(
                 "top |loading|: {:.3} | top assoc: {:.3}",
-                self.current_factor_rankings()
-                    .and_then(|f| f.get(factor))
-                    .and_then(|r| r.by_loading.first())
-                    .map_or(0.0, |entry| entry.loading.abs()),
-                self.current_factor_rankings()
-                    .and_then(|f| f.get(factor))
-                    .and_then(|r| r.by_association.first())
-                    .map_or(0.0, |entry| entry.association.abs()),
+                top_loading, top_association,
             )),
         ];
         Paragraph::new(Text::from(lines))
@@ -1142,10 +1306,9 @@ impl App {
         } else {
             let a = run.love.a.as_ndarray();
             let pure_owner = pure_factor_owner(run, a.nrows());
+            let feature_names = self.current_feature_names();
             for feature in matches {
-                let name = self
-                    .data()
-                    .feature_names
+                let name = feature_names
                     .get(feature)
                     .cloned()
                     .unwrap_or_else(|| format!("f{}", feature + 1));
@@ -1191,11 +1354,11 @@ impl App {
             return empty_table(title);
         }
         let factor = self.selected_factor.min(run.love.k - 1);
-        let rankings = self
-            .current_factor_rankings()
-            .and_then(|per_run| per_run.get(factor));
+        let rankings = self.current_factor_rankings();
 
         let rows = rankings
+            .as_ref()
+            .and_then(|per_run| per_run.get(factor))
             .map(|ranking| match metric {
                 FactorMetric::Loading => ranking.by_loading.clone(),
                 FactorMetric::Association => ranking.by_association.clone(),
@@ -1267,6 +1430,14 @@ impl App {
                             let run = &self.data().runs[index];
                             let value = match metric {
                                 GridMetric::Score => run.score,
+                                GridMetric::K => run.love.k as Scalar,
+                                GridMetric::PureCount => run.love.pure_vec.len() as Scalar,
+                                GridMetric::MarginalSelected => {
+                                    run.marginal.sig_lfs.len() as Scalar
+                                }
+                                GridMetric::InteractionSelected => {
+                                    run.interactions.sig_interacts.len() as Scalar
+                                }
                             };
                             let color = if index == self.selected_run {
                                 Color::Cyan
@@ -1495,7 +1666,7 @@ impl App {
         }
         header.push(Cell::from("pure?".to_owned()));
 
-        let feature_names = &self.data().feature_names;
+        let feature_names = self.current_feature_names();
         let search_match_set = search_matches
             .iter()
             .copied()
@@ -1631,16 +1802,10 @@ impl App {
 
     fn render_block_correlation_heatmap(&self, frame: &mut Frame, area: Rect) {
         let title = "Block Correlation";
-        let Some(bc) = self
-            .data()
-            .block_correlations
-            .get(self.selected_run)
-            .and_then(|opt| opt.as_ref())
-        else {
+        let Some((corr, boundaries)) = self.current_block_correlation() else {
             frame.render_widget(empty_widget(title), area);
             return;
         };
-        let (corr, boundaries) = bc;
         let p = corr.nrows();
         if p == 0 {
             frame.render_widget(empty_widget(title), area);
@@ -1766,7 +1931,7 @@ impl App {
             return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
         }
 
-        let feature_names = &self.data().feature_names;
+        let feature_names = self.current_feature_names();
         let mut indexed: Vec<(usize, Scalar)> = gamma.iter().copied().enumerate().collect();
         indexed.sort_by(|a, b| b.1.total_cmp(&a.1));
         indexed.truncate(30);
@@ -1810,90 +1975,119 @@ impl App {
             .max(1000)
     }
 
-    fn interaction_network_widget(&self) -> Paragraph<'static> {
-        let title = "Interaction Network";
+    fn interaction_network_widget(&self) -> Table<'static> {
+        let title = "Interaction Ranking";
         let Some(run) = self.current_run() else {
-            return empty_widget(title);
+            return empty_table(title);
         };
         let k = run.love.k;
-        let sig_interacts = &run.interactions.sig_interacts;
-        let marginal_lfs = &run.marginal.sig_lfs;
-
-        if sig_interacts.is_empty() {
-            let lines = vec![
-                Line::from(format!("k = {k} factors | 0 significant interactions")),
-                Line::from("No interaction edges to display."),
-            ];
-            return Paragraph::new(Text::from(lines))
-                .block(Block::default().borders(Borders::ALL).title(title));
+        let mut rows_data: BTreeMap<(usize, usize), (bool, Option<Scalar>, Option<Scalar>)> =
+            BTreeMap::new();
+        for &(left, right) in &run.interactions.sig_interacts {
+            let pair = if left <= right {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            rows_data.entry(pair).or_insert((true, None, None)).0 = true;
         }
 
-        if k <= 12 {
-            // Circle layout rendered as text art
-            let mut lines = vec![Line::from(format!(
-                "{} interactions among {} factors ({} marginal)",
-                sig_interacts.len(),
-                k,
-                marginal_lfs.len(),
-            ))];
-
-            // Build adjacency per factor
-            let mut adj: std::collections::BTreeMap<usize, Vec<usize>> =
-                std::collections::BTreeMap::new();
-            for &(a, b) in sig_interacts {
-                adj.entry(a).or_default().push(b);
-                adj.entry(b).or_default().push(a);
+        for voting in &run.interactions.voting {
+            let freq = voting.voting.selection_frequency.as_ndarray();
+            for (candidate_index, &candidate) in voting.candidate_lfs.iter().enumerate() {
+                let left = voting.marginal_lf.min(candidate);
+                let right = voting.marginal_lf.max(candidate);
+                let frequency = (candidate_index < freq.len()).then_some(freq[candidate_index]);
+                let selected = voting.voting.selected.contains(&candidate_index);
+                let entry = rows_data
+                    .entry((left, right))
+                    .or_insert((false, None, None));
+                entry.0 |= selected;
+                if let Some(value) = frequency {
+                    entry.1 = Some(entry.1.map_or(value, |existing| existing.max(value)));
+                }
             }
-
-            // List edges
-            for (factor, neighbors) in &adj {
-                let neighbor_str: Vec<String> =
-                    neighbors.iter().map(|n| format!("F{}", n + 1)).collect();
-                let is_marginal = marginal_lfs.contains(factor);
-                let marker = if is_marginal { "*" } else { " " };
-                lines.push(Line::from(format!(
-                    " {marker}F{:<2} \u{2500}\u{2500} {}",
-                    factor + 1,
-                    neighbor_str.join(", ")
-                )));
-            }
-
-            lines.push(Line::from(""));
-            lines.push(
-                Line::from("* = marginal LF".to_owned())
-                    .style(Style::default().fg(Color::DarkGray)),
-            );
-
-            Paragraph::new(Text::from(lines))
-                .block(Block::default().borders(Borders::ALL).title(title))
-        } else {
-            // Adjacency list for large k
-            let mut lines = vec![Line::from(format!(
-                "{} interactions among {} factors | adjacency list",
-                sig_interacts.len(),
-                k,
-            ))];
-
-            let mut adj: std::collections::BTreeMap<usize, Vec<usize>> =
-                std::collections::BTreeMap::new();
-            for &(a, b) in sig_interacts {
-                adj.entry(a).or_default().push(b);
-                adj.entry(b).or_default().push(a);
-            }
-
-            for (factor, neighbors) in &adj {
-                let neighbor_str: Vec<String> =
-                    neighbors.iter().map(|n| format!("F{}", n + 1)).collect();
-                lines.push(Line::from(format!(
-                    "F{} \u{2500}\u{2500} {}",
-                    factor + 1,
-                    neighbor_str.join(", ")
-                )));
-            }
-
-            Paragraph::new(Text::from(lines))
-                .block(Block::default().borders(Borders::ALL).title(title))
         }
+
+        let response = self.current_factor_response_corr();
+        if let Some(corrs) = response.as_ref() {
+            for ((left, right), (_, _, association)) in rows_data.iter_mut() {
+                if *left < corrs.len() && *right < corrs.len() {
+                    *association = Some((corrs[*left].abs() + corrs[*right].abs()) / 2.0);
+                }
+            }
+        }
+
+        if rows_data.is_empty() {
+            return Table::new(
+                [Row::new([format!(
+                    "k = {k} factors; no interaction candidates to display"
+                )])],
+                [Constraint::Min(10)],
+            )
+            .block(Block::default().borders(Borders::ALL).title(title));
+        }
+
+        let mut rows = rows_data
+            .into_iter()
+            .map(|((left, right), (selected, frequency, association))| {
+                (left, right, selected, frequency, association)
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| {
+            b.2.cmp(&a.2)
+                .then_with(|| b.3.unwrap_or(-1.0).total_cmp(&a.3.unwrap_or(-1.0)))
+                .then_with(|| b.4.unwrap_or(-1.0).total_cmp(&a.4.unwrap_or(-1.0)))
+                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| a.1.cmp(&b.1))
+        });
+
+        let table_rows =
+            rows.into_iter()
+                .take(30)
+                .map(|(left, right, selected, frequency, association)| {
+                    let style = if selected {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+                    Row::new([
+                        format!("F{}×F{}", left + 1, right + 1),
+                        if selected {
+                            "Y".to_owned()
+                        } else {
+                            "".to_owned()
+                        },
+                        frequency.map_or_else(
+                            || "n/a".to_owned(),
+                            |value| format!("{:.1}%", value * 100.0),
+                        ),
+                        association.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.3}")),
+                    ])
+                    .style(style)
+                });
+
+        Table::new(
+            table_rows,
+            [
+                Constraint::Length(12),
+                Constraint::Length(8),
+                Constraint::Length(12),
+                Constraint::Length(12),
+            ],
+        )
+        .header(
+            Row::new(["pair", "selected", "frequency", "assoc"]).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("{title} | top 30 | selected/frequency/association")),
+        )
     }
 
     fn render_slide(&self, frame: &mut Frame, area: Rect) {
@@ -1927,18 +2121,54 @@ impl App {
             return;
         };
 
+        let title = format!(
+            "Performance: {} | v cycles sub-views",
+            self.performance_sub_view.label()
+        );
         let sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(8),
-                Constraint::Min(8),
-                Constraint::Length(9),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Min(8)])
             .split(area);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "metric {:?} | mean {} | SE {} | predictions {}",
+                cv.metric,
+                format_optional_scalar(cv.mean),
+                format_optional_scalar(cv.standard_error),
+                cv.predictions.len()
+            ))
+            .block(Block::default().borders(Borders::ALL).title(title)),
+            sections[0],
+        );
 
-        frame.render_widget(self.performance_summary_widget(cv), sections[0]);
-        frame.render_widget(self.cv_fold_score_chart(cv), sections[1]);
-        frame.render_widget(self.cv_model_size_table(cv), sections[2]);
+        match self.performance_sub_view {
+            PerformanceSubView::Summary => {
+                let body = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(7),
+                        Constraint::Min(8),
+                        Constraint::Length(9),
+                    ])
+                    .split(sections[1]);
+                frame.render_widget(self.performance_summary_widget(cv), body[0]);
+                frame.render_widget(self.cv_fold_score_chart(cv), body[1]);
+                frame.render_widget(self.cv_model_size_table(cv), body[2]);
+            }
+            PerformanceSubView::FoldScores => {
+                let body = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(8), Constraint::Length(11)])
+                    .split(sections[1]);
+                frame.render_widget(self.cv_fold_score_chart(cv), body[0]);
+                frame.render_widget(self.cv_model_size_table(cv), body[1]);
+            }
+            PerformanceSubView::Predictions => {
+                self.render_prediction_distribution(frame, sections[1], cv)
+            }
+            PerformanceSubView::RocPr => self.render_roc_pr(frame, sections[1], cv),
+            PerformanceSubView::Residuals => self.render_residuals(frame, sections[1], cv),
+        }
     }
 
     fn performance_summary_widget(&self, cv: &slide_cv::FinalCvResult) -> Paragraph<'static> {
@@ -2122,6 +2352,189 @@ impl App {
         .block(Block::default().borders(Borders::ALL).title(title))
     }
 
+    fn render_prediction_distribution(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        cv: &slide_cv::FinalCvResult,
+    ) {
+        if cv.predictions.is_empty() {
+            frame.render_widget(empty_widget("Prediction Distribution"), area);
+            return;
+        }
+        match self.data().response_type {
+            OptimizeResponseType::Binary => {
+                let mut neg = Vec::new();
+                let mut pos = Vec::new();
+                for prediction in &cv.predictions {
+                    if prediction.y_true >= 0.5 {
+                        pos.push(prediction.y_pred);
+                    } else {
+                        neg.push(prediction.y_pred);
+                    }
+                }
+                let neg_bins = histogram_counts(&neg, 10, 0.0, 1.0);
+                let pos_bins = histogram_counts(&pos, 10, 0.0, 1.0);
+                let max_count = neg_bins
+                    .iter()
+                    .chain(pos_bins.iter())
+                    .copied()
+                    .max()
+                    .unwrap_or(1)
+                    .max(1);
+                let neg_bars = neg_bins
+                    .iter()
+                    .enumerate()
+                    .map(|(index, count)| {
+                        Bar::default()
+                            .value(*count)
+                            .label(Line::from(format!("{:.1}", index as Scalar / 10.0)))
+                            .text_value(count.to_string())
+                            .style(Style::default().fg(Color::Blue))
+                    })
+                    .collect::<Vec<_>>();
+                let pos_bars = pos_bins
+                    .iter()
+                    .enumerate()
+                    .map(|(index, count)| {
+                        Bar::default()
+                            .value(*count)
+                            .label(Line::from(format!("{:.1}", index as Scalar / 10.0)))
+                            .text_value(count.to_string())
+                            .style(Style::default().fg(Color::Green))
+                    })
+                    .collect::<Vec<_>>();
+                let chart = BarChart::default()
+                    .data(
+                        BarGroup::default()
+                            .label(Line::from("y=0").blue())
+                            .bars(&neg_bars),
+                    )
+                    .data(
+                        BarGroup::default()
+                            .label(Line::from("y=1").green())
+                            .bars(&pos_bars),
+                    )
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Predicted probability distribution by observed class"),
+                    )
+                    .direction(Direction::Horizontal)
+                    .bar_width(1)
+                    .bar_gap(0)
+                    .group_gap(1)
+                    .max(max_count);
+                frame.render_widget(chart, area);
+            }
+            OptimizeResponseType::Continuous => self.render_residuals(frame, area, cv),
+        }
+    }
+
+    fn render_roc_pr(&self, frame: &mut Frame, area: Rect, cv: &slide_cv::FinalCvResult) {
+        if self.data().response_type != OptimizeResponseType::Binary {
+            frame.render_widget(empty_widget("ROC / PR"), area);
+            return;
+        }
+        let positives = cv.predictions.iter().filter(|p| p.y_true >= 0.5).count();
+        let negatives = cv.predictions.len().saturating_sub(positives);
+        if positives == 0 || negatives == 0 {
+            frame.render_widget(
+                Paragraph::new("Not enough positive and negative prediction rows for ROC / PR.")
+                    .block(Block::default().borders(Borders::ALL).title("ROC / PR"))
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+            return;
+        }
+        let auc = auc_score(
+            &cv.predictions.iter().map(|p| p.y_true).collect::<Vec<_>>(),
+            &cv.predictions.iter().map(|p| p.y_pred).collect::<Vec<_>>(),
+        )
+        .unwrap_or(0.5);
+        let average_precision = average_precision_score(&cv.predictions);
+        let rows = roc_pr_threshold_rows(&cv.predictions).into_iter().map(
+            |(threshold, tpr, fpr, precision, recall)| {
+                Row::new([
+                    format!("{threshold:.2}"),
+                    format!("{tpr:.3}"),
+                    format!("{fpr:.3}"),
+                    format!("{precision:.3}"),
+                    format!("{recall:.3}"),
+                ])
+            },
+        );
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(12),
+                Constraint::Length(10),
+            ],
+        )
+        .header(
+            Row::new(["threshold", "TPR", "FPR", "precision", "recall"]).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "ROC / PR | AUC {auc:.3} | avg precision {average_precision:.3}"
+        )));
+        frame.render_widget(table, area);
+    }
+
+    fn render_residuals(&self, frame: &mut Frame, area: Rect, cv: &slide_cv::FinalCvResult) {
+        if cv.predictions.is_empty() {
+            frame.render_widget(empty_widget("Residuals"), area);
+            return;
+        }
+        let residuals = cv
+            .predictions
+            .iter()
+            .map(|prediction| prediction.y_true - prediction.y_pred)
+            .collect::<Vec<_>>();
+        let mean = residuals.iter().sum::<Scalar>() / residuals.len() as Scalar;
+        let rmse = (residuals.iter().map(|value| value * value).sum::<Scalar>()
+            / residuals.len() as Scalar)
+            .sqrt();
+        let min_val = residuals
+            .iter()
+            .copied()
+            .fold(Scalar::INFINITY, Scalar::min);
+        let max_val = residuals
+            .iter()
+            .copied()
+            .fold(Scalar::NEG_INFINITY, Scalar::max);
+        let bins = histogram_counts(&residuals, 20, min_val, max_val);
+        let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
+        let bars = bins
+            .iter()
+            .enumerate()
+            .map(|(index, count)| {
+                Bar::default()
+                    .value(*count)
+                    .label(Line::from(index.to_string()))
+                    .text_value(count.to_string())
+                    .style(Style::default().fg(Color::Cyan))
+            })
+            .collect::<Vec<_>>();
+        let chart = BarChart::default()
+            .data(BarGroup::default().bars(&bars))
+            .block(Block::default().borders(Borders::ALL).title(format!(
+                "Residuals y - yhat | n={} | mean {mean:.3} | RMSE {rmse:.3} | range [{min_val:.3}, {max_val:.3}]",
+                residuals.len()
+            )))
+            .direction(Direction::Horizontal)
+            .bar_width(1)
+            .bar_gap(0)
+            .max(max_count);
+        frame.render_widget(chart, area);
+    }
+
     fn render_selection_frequency(&self, frame: &mut Frame, area: Rect) {
         let title = "SLIDE Marginal Factor Selection";
         let Some(run) = self.current_run() else {
@@ -2285,7 +2698,7 @@ impl App {
         let Some(run) = self.current_run() else {
             return empty();
         };
-        let corrs = self.data().factor_response_corr.get(self.selected_run);
+        let corrs = self.current_factor_response_corr();
         let Some(corrs) = corrs else {
             return empty();
         };
@@ -2347,9 +2760,35 @@ enum FactorMetric {
     Association,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GridMetric {
     Score,
+    K,
+    PureCount,
+    MarginalSelected,
+    InteractionSelected,
+}
+
+impl GridMetric {
+    fn next(self) -> Self {
+        match self {
+            Self::Score => Self::K,
+            Self::K => Self::PureCount,
+            Self::PureCount => Self::MarginalSelected,
+            Self::MarginalSelected => Self::InteractionSelected,
+            Self::InteractionSelected => Self::Score,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Score => "Grid: Score",
+            Self::K => "Grid: Factor Count",
+            Self::PureCount => "Grid: Pure Variables",
+            Self::MarginalSelected => "Grid: Selected Marginals",
+            Self::InteractionSelected => "Grid: Selected Interactions",
+        }
+    }
 }
 
 struct LoadingRowSelection {
@@ -2372,7 +2811,7 @@ fn format_optional_scalar(value: Option<Scalar>) -> String {
     value.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct DashboardData {
     runs: Vec<SlideRunResult>,
     best_run: Option<SlideRunResult>,
@@ -2383,16 +2822,22 @@ struct DashboardData {
     run_lookup: BTreeMap<(ScalarKey, ScalarKey), usize>,
     response_type: OptimizeResponseType,
     config_lines: Vec<String>,
-    factor_rankings: Vec<Vec<FactorRanking>>,
     feature_names: Vec<String>,
-    group_correlations: Vec<Option<Array2<Scalar>>>,
-    /// Per-run, per-factor correlation (Pearson) or AUC of z[:, f] vs y.
-    factor_response_corr: Vec<Vec<Scalar>>,
-    /// Per-run block correlation matrix: (corr_matrix, group_boundary_indices).
-    block_correlations: Vec<Option<(Array2<Scalar>, Vec<usize>)>>,
-    /// Cached for live preview computation.
-    standardized_x: Matrix,
-    y: Vector,
+    x_path: Option<PathBuf>,
+    y_path: Option<PathBuf>,
+    derived: RefCell<DerivedDashboardData>,
+}
+
+#[derive(Debug, Default)]
+struct DerivedDashboardData {
+    standardized_x: Option<Matrix>,
+    y: Option<Vector>,
+    feature_names: Option<Vec<String>>,
+    factor_rankings: Vec<Option<Vec<FactorRanking>>>,
+    group_correlations: Vec<Option<Option<Array2<Scalar>>>>,
+    factor_response_corr: Vec<Option<Vec<Scalar>>>,
+    block_correlations: Vec<Option<Option<(Array2<Scalar>, Vec<usize>)>>>,
+    load_error: Option<String>,
 }
 
 impl DashboardData {
@@ -2408,54 +2853,22 @@ impl DashboardData {
             None
         };
         let (runs, final_cv) = if let Some(result) = result {
-            (result.evaluations.into_iter().flatten().collect::<Vec<_>>(), result.final_cv)
+            (
+                result.evaluations.into_iter().flatten().collect::<Vec<_>>(),
+                result.final_cv,
+            )
         } else {
-            (checkpoint.evaluations.iter().filter_map(|e| e.clone()).collect(), checkpoint.final_cv.clone())
+            (
+                checkpoint
+                    .evaluations
+                    .iter()
+                    .filter_map(|e| e.clone())
+                    .collect(),
+                checkpoint.final_cv.clone(),
+            )
         };
-        // Load matrices from data reference paths (or CLI override)
-        let x_path = args
-            .x
-            .as_deref()
-            .or_else(|| checkpoint.x_ref.as_ref().map(|r| r.path.as_path()))
-            .ok_or_else(|| {
-                anyhow!(
-                    "no feature matrix path: supply --x or use a checkpoint with data references"
-                )
-            })?;
-        let y_path = checkpoint
-            .y_ref
-            .as_ref()
-            .map(|r| r.path.as_path())
-            .ok_or_else(|| anyhow!("no response vector path in checkpoint: supply a checkpoint with data references"))?;
-
-        let loaded_x = read_feature_matrix(x_path, &MatrixReadOptions::default())
-            .with_context(|| format!("failed to read feature matrix from {}", x_path.display()))?;
-        let x = loaded_x.matrix;
-        let y = read_response_vector(y_path, &ResponseReadOptions::default())
-            .with_context(|| format!("failed to read response vector from {}", y_path.display()))?;
-
-        let feature_names = load_feature_names(Some(x_path), x.ncols())?;
         let response_type = checkpoint.config.response_type;
-        let standardized_x = slide_data_io::standardize(&x).matrix;
-        let factor_rankings = runs
-            .iter()
-            .map(|run| {
-                compute_factor_rankings(run, &standardized_x, &y, &feature_names, response_type)
-            })
-            .collect::<Result<Vec<_>>>()?;
         let config_lines = build_config_lines(&checkpoint, args.config.as_deref())?;
-        let group_correlations = runs
-            .iter()
-            .map(|run| compute_group_correlation_matrix(run, &standardized_x))
-            .collect();
-        let factor_response_corr = runs
-            .iter()
-            .map(|run| compute_factor_response_corr(run, &y, response_type))
-            .collect();
-        let block_correlations = runs
-            .iter()
-            .map(|run| compute_block_correlation(run, &standardized_x))
-            .collect();
         let best_run = runs
             .iter()
             .max_by(|left, right| left.score.total_cmp(&right.score))
@@ -2469,6 +2882,17 @@ impl DashboardData {
                 index,
             );
         }
+        let nfeatures = runs.iter().map(|run| run.love.a.nrows()).max().unwrap_or(0);
+        let feature_names = (0..nfeatures)
+            .map(|index| format!("feature_{}", index + 1))
+            .collect::<Vec<_>>();
+        let x_path = args
+            .x
+            .clone()
+            .or_else(|| checkpoint.x_ref.as_ref().map(|r| r.path.clone()));
+        let y_path = checkpoint.y_ref.as_ref().map(|r| r.path.clone());
+        let run_count = runs.len();
+
         Ok(Self {
             total_grid_points: checkpoint.delta_grid.len() * checkpoint.lambda_grid.len(),
             delta_values,
@@ -2479,13 +2903,16 @@ impl DashboardData {
             final_cv,
             response_type,
             config_lines,
-            factor_rankings,
             feature_names,
-            group_correlations,
-            factor_response_corr,
-            block_correlations,
-            standardized_x,
-            y,
+            x_path,
+            y_path,
+            derived: RefCell::new(DerivedDashboardData {
+                factor_rankings: vec![None; run_count],
+                group_correlations: vec![None; run_count],
+                factor_response_corr: vec![None; run_count],
+                block_correlations: vec![None; run_count],
+                ..DerivedDashboardData::default()
+            }),
         })
     }
 }
@@ -2734,27 +3161,78 @@ fn auc_score(labels: &[Scalar], scores: &[Scalar]) -> Result<Scalar> {
     Ok((positive_rank_sum - positive * (positive + 1.0) / 2.0) / (positive * negative))
 }
 
-fn load_feature_names(path: Option<&Path>, expected_columns: usize) -> Result<Vec<String>> {
-    if let Some(path) = path {
-        let options = MatrixReadOptions {
-            delimiter: infer_delimiter_from_path(path),
-            impute_missing: false,
-        };
-        let loaded = read_feature_matrix(path, &options)?;
-        if loaded.matrix.ncols() != expected_columns {
-            return Err(anyhow!(
-                "feature matrix {} has {} columns but checkpoint expects {}",
-                path.display(),
-                loaded.matrix.ncols(),
-                expected_columns
-            ));
-        }
-        return Ok(loaded.feature_names);
+fn histogram_counts(
+    values: &[Scalar],
+    nbins: usize,
+    min_value: Scalar,
+    max_value: Scalar,
+) -> Vec<u64> {
+    let mut bins = vec![0u64; nbins.max(1)];
+    if values.is_empty() {
+        return bins;
     }
+    let range = (max_value - min_value).abs().max(1.0e-10);
+    let last = bins.len() - 1;
+    for &value in values {
+        let index = (((value - min_value) / range) * bins.len() as Scalar) as usize;
+        bins[index.min(last)] += 1;
+    }
+    bins
+}
 
-    Ok((0..expected_columns)
-        .map(|index| format!("feature_{}", index + 1))
-        .collect())
+fn average_precision_score(predictions: &[slide_cv::FinalCvPrediction]) -> Scalar {
+    let positives = predictions.iter().filter(|p| p.y_true >= 0.5).count() as Scalar;
+    if positives == 0.0 {
+        return 0.0;
+    }
+    let mut rows = predictions
+        .iter()
+        .map(|p| (p.y_pred, p.y_true >= 0.5))
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.0.total_cmp(&left.0));
+    let mut true_positives = 0.0;
+    let mut precision_sum = 0.0;
+    for (rank, (_, is_positive)) in rows.iter().enumerate() {
+        if *is_positive {
+            true_positives += 1.0;
+            precision_sum += true_positives / (rank + 1) as Scalar;
+        }
+    }
+    precision_sum / positives
+}
+
+fn roc_pr_threshold_rows(
+    predictions: &[slide_cv::FinalCvPrediction],
+) -> Vec<(Scalar, Scalar, Scalar, Scalar, Scalar)> {
+    let positives = predictions.iter().filter(|p| p.y_true >= 0.5).count() as Scalar;
+    let negatives = predictions.len() as Scalar - positives;
+    [0.9, 0.75, 0.5, 0.25, 0.1]
+        .into_iter()
+        .map(|threshold| {
+            let mut tp = 0.0;
+            let mut fp = 0.0;
+            let mut fn_count = 0.0;
+            for prediction in predictions {
+                let predicted_positive = prediction.y_pred >= threshold;
+                let actual_positive = prediction.y_true >= 0.5;
+                match (predicted_positive, actual_positive) {
+                    (true, true) => tp += 1.0,
+                    (true, false) => fp += 1.0,
+                    (false, true) => fn_count += 1.0,
+                    (false, false) => {}
+                }
+            }
+            let tpr = if positives > 0.0 { tp / positives } else { 0.0 };
+            let fpr = if negatives > 0.0 { fp / negatives } else { 0.0 };
+            let precision = if tp + fp > 0.0 { tp / (tp + fp) } else { 0.0 };
+            let recall = if tp + fn_count > 0.0 {
+                tp / (tp + fn_count)
+            } else {
+                0.0
+            };
+            (threshold, tpr, fpr, precision, recall)
+        })
+        .collect()
 }
 
 fn infer_delimiter_from_path(path: &Path) -> Option<Delimiter> {
@@ -2802,12 +3280,30 @@ fn color_for_metric(metric: GridMetric, value: Scalar) -> Color {
                 Color::LightRed
             }
         }
+        GridMetric::K | GridMetric::PureCount => {
+            if value > 0.0 {
+                Color::Cyan
+            } else {
+                Color::DarkGray
+            }
+        }
+        GridMetric::MarginalSelected | GridMetric::InteractionSelected => {
+            if value > 0.0 {
+                Color::Green
+            } else {
+                Color::DarkGray
+            }
+        }
     }
 }
 
 fn format_metric(metric: GridMetric, value: Scalar) -> String {
     match metric {
         GridMetric::Score => format!("{value:.2}"),
+        GridMetric::K
+        | GridMetric::PureCount
+        | GridMetric::MarginalSelected
+        | GridMetric::InteractionSelected => format!("{value:.0}"),
     }
 }
 
@@ -2995,7 +3491,11 @@ fn matrix_title(
         "Group Correlation" => "Group Corr",
         _ => label,
     };
-    let scale = if compact { "symbols" } else { "values" };
+    let scale = if compact {
+        "symbols .≈0 █=large | blue-/red+"
+    } else {
+        "values | blue-/red+"
+    };
     if shown_rows == total_rows && shown_cols == total_cols {
         format!("{short_label} | F{selected} | all factors | {scale}")
     } else {
@@ -3020,7 +3520,11 @@ fn loading_matrix_status_title(
         _ => "none".to_owned(),
     };
     let selected = selected_factor + 1;
-    let scale = if compact { "symbols" } else { "values" };
+    let scale = if compact {
+        "symbols .≈0 █=large | blue-/red+"
+    } else {
+        "values | blue-/red+"
+    };
     let truncation = if rows_truncated { "trunc" } else { "all" };
     let search = feature_search.map_or(String::new(), |query| {
         format!(" | search {}", truncate_label(query, 12))
@@ -3056,7 +3560,7 @@ fn love_view_scope(view: LoveSubView, k: usize, selected_factor: usize) -> Strin
         }
         LoveSubView::BlockCorrelation => "pure-variable blocks".to_owned(),
         LoveSubView::GammaDistribution => "top gamma features".to_owned(),
-        LoveSubView::InteractionNetwork => "significant LF interactions".to_owned(),
+        LoveSubView::InteractionNetwork => "ranked LF interactions".to_owned(),
     }
 }
 
@@ -3465,7 +3969,8 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoadingRowMode, LoveSubView};
+    use super::{GridMetric, LoadingRowMode, LoveSubView, PerformanceSubView};
+    use slide_core::OptimizeResponseType;
 
     #[test]
     fn love_v_cycle_stays_on_primary_views() {
@@ -3526,6 +4031,48 @@ mod tests {
         assert_eq!(
             LoadingRowMode::SelectedFactor.next(),
             LoadingRowMode::TopWindow
+        );
+    }
+
+    #[test]
+    fn grid_metric_cycle_is_stable() {
+        let mut metric = GridMetric::Score;
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            seen.push(metric);
+            metric = metric.next();
+        }
+
+        assert_eq!(
+            seen,
+            vec![
+                GridMetric::Score,
+                GridMetric::K,
+                GridMetric::PureCount,
+                GridMetric::MarginalSelected,
+                GridMetric::InteractionSelected,
+            ]
+        );
+        assert_eq!(metric, GridMetric::Score);
+    }
+
+    #[test]
+    fn performance_subview_cycle_respects_response_type() {
+        assert_eq!(
+            PerformanceSubView::Predictions.next(OptimizeResponseType::Binary),
+            PerformanceSubView::RocPr
+        );
+        assert_eq!(
+            PerformanceSubView::Predictions.next(OptimizeResponseType::Continuous),
+            PerformanceSubView::Residuals
+        );
+        assert_eq!(
+            PerformanceSubView::RocPr.next(OptimizeResponseType::Binary),
+            PerformanceSubView::Summary
+        );
+        assert_eq!(
+            PerformanceSubView::Residuals.next(OptimizeResponseType::Continuous),
+            PerformanceSubView::Summary
         );
     }
 }

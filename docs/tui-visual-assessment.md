@@ -1,7 +1,7 @@
 # TUI Visual Assessment
 
 This document assesses the current SLIDE terminal UI implementation in
-`crates/slide-rs/src/tui.rs` and separates the visuals worth keeping from the
+`crates/slide-cli/src/tui.rs` and separates the visuals worth keeping from the
 ones that should be simplified, hidden, or removed.
 
 ## Keep And Refine
@@ -17,7 +17,7 @@ Keep the current top-level tabs:
 
 This is a useful mental model: operational progress, LOVE factor creation,
 per-factor inspection, and SLIDE knockoff selection are distinct tasks. The
-structure is implemented around `App::render` in `crates/slide-rs/src/tui.rs`.
+structure is implemented around `App::render` in `crates/slide-cli/src/tui.rs`.
 
 Refinement: make the footer more context-aware. It currently always shows
 factor navigation even outside the Factors tab. Showing only relevant keys per
@@ -128,11 +128,11 @@ Recommended direction:
 
 ## Hide, Move To Advanced, Or Remove
 
-### Interaction Network
+### Interaction Ranking
 
 Move this out of the default LOVE subview cycle or remove it.
 
-The current rendering is an adjacency list, not really a network visualization.
+The current rendering is a ranked table/debug view rather than a full network visualization.
 It also overlaps with the interaction selection view. It may still be useful as
 debug output, but it should not be a primary visual.
 
@@ -186,7 +186,7 @@ Recommended direction:
 1. Simplify the LOVE tab first. It has the most visual overload and the most
    duplicate information.
 2. Keep the Overview and Factors tabs as the core experience.
-3. Move Gamma Distribution and Interaction Network into advanced/debug views.
+3. Move Gamma Distribution and Interaction Ranking into advanced/debug views.
 4. Rework matrix views into scalable heatmaps or paged tables.
 5. Reduce persistent footer/config noise so the TUI feels more intentional.
 
