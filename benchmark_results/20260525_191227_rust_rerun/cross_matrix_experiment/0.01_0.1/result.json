@@ -1,0 +1,75 @@
+{
+  "combo": "0.01_0.1_out",
+  "stage_one_union": [
+    0,
+    18,
+    19,
+    20,
+    21,
+    27,
+    39,
+    45,
+    53,
+    61,
+    74,
+    87,
+    96,
+    98,
+    110,
+    118,
+    120,
+    125,
+    128,
+    131,
+    135,
+    136,
+    137,
+    141,
+    150,
+    163
+  ],
+  "saved_rust_selected_global": [
+    18,
+    20,
+    27,
+    45,
+    136
+  ],
+  "saved_rust_freq_global": [
+    18,
+    20,
+    27,
+    45,
+    136
+  ],
+  "rust_matrices_python_stat_selected_global": [
+    18,
+    20,
+    27,
+    45,
+    136
+  ],
+  "rust_matrices_python_stat_freq_global": [
+    18,
+    20,
+    27,
+    45,
+    136
+  ],
+  "python_matrices_python_stat_selected_global": [
+    18,
+    20,
+    27,
+    45,
+    136
+  ],
+  "python_matrices_python_stat_freq_global": [
+    18,
+    20,
+    27,
+    45,
+    136
+  ],
+  "rust_matrices_python_stat_opt_iter": 3,
+  "python_matrices_python_stat_opt_iter": 21
+}
