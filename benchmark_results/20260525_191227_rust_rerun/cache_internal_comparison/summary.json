@@ -1,0 +1,84 @@
+{
+  "checkpoint": "benchmark_results/20260525_191227_rust_rerun/rust/0.1_0.1_out/checkpoint.json",
+  "method": "ASDP config, p<=500 so full SDP on Python side; Rust dump uses slide_sdp::create_solve_asdp on Rust shrinkage covariance.",
+  "notes": {
+    "factor_convention": "Rust l_trans is compared with Python lower_cholesky.T because both samplers use Xk = mu_k + Z_noise @ factor.",
+    "python_covariance": "Python create_second_order default sample covariance (np.cov ddof=1) with no shrinkage for this 24x14 matrix.",
+    "rust_covariance": "Rust prepare_knockoff_cache uses Schaefer-Strimmer/corpcor shrinkage covariance, replicated here for diag_s."
+  },
+  "screened_shape": [
+    24,
+    14
+  ],
+  "stage_one_union": [
+    0,
+    5,
+    10,
+    25,
+    33,
+    38,
+    39,
+    44,
+    53,
+    55,
+    61,
+    62,
+    66,
+    69
+  ],
+  "table": {
+    "diag_s": {
+      "correlation": -0.17573675501984629,
+      "max_abs_diff": 0.8601925138082732,
+      "relative_diff": 0.9999999799823228,
+      "shape": [
+        14
+      ]
+    },
+    "empirical_cov_shared_xk": {
+      "correlation": 0.7653065393849088,
+      "max_abs_diff": 0.6055456407615665,
+      "relative_diff": 0.4913629879679062,
+      "shape": [
+        14,
+        14
+      ]
+    },
+    "factor_l_trans_vs_python_lower_T": {
+      "correlation": 0.5697654559723453,
+      "max_abs_diff": 0.7941503431117608,
+      "relative_diff": 0.9234894601529441,
+      "shape": [
+        14,
+        14
+      ]
+    },
+    "mu_k": {
+      "correlation": 0.7220048243411514,
+      "max_abs_diff": 2.0820889315522404,
+      "relative_diff": 0.8270667064745998,
+      "shape": [
+        24,
+        14
+      ]
+    },
+    "rust_sampler_seed_42_vs_python_shared_noise_xk": {
+      "correlation": 0.2705414838370418,
+      "max_abs_diff": 3.5476786876196007,
+      "relative_diff": 1.4091853863313386,
+      "shape": [
+        24,
+        14
+      ]
+    },
+    "shared_noise_xk": {
+      "correlation": 0.4514935023862985,
+      "max_abs_diff": 3.011154689045333,
+      "relative_diff": 1.1960708839257639,
+      "shape": [
+        24,
+        14
+      ]
+    }
+  }
+}
