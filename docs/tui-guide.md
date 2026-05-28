@@ -1,7 +1,7 @@
 # SLIDE TUI Guide
 
-The `slide-rs` binary includes a terminal dashboard (TUI) for monitoring
-SLIDE pipeline runs in real time. It reads checkpoint files written during
+The `slide` binary (built from the `slide-rs` package) includes a terminal
+dashboard (TUI) for monitoring SLIDE pipeline runs in real time. It reads checkpoint files written during
 optimization and renders live-updating views of LOVE factor creation, SLIDE
 knockoff selection, factor diagnostics, and more.
 
@@ -14,10 +14,13 @@ git clone https://github.com/TranscriptionFactory/omni-SLIDE.git
 ```
 From the project repository:
 ```bash
-cargo build --release && ./target/release/slide-rs monitor \
+cargo build --release && ./target/release/slide monitor \
   --config tests/test_config_quick.yaml \
   --checkpoint tests/test_config_checkpoint.json
 ```
+
+> The Cargo package is named `slide-rs`, but the built binary is `slide`.
+> The path is `target/release/slide`, not `target/release/slide-rs`.
 
 
 
@@ -31,28 +34,28 @@ From the repo root:
 cargo build --release
 ```
 
-The binary lands at `target/release/slide-rs`.
+The binary lands at `target/release/slide`.
 
 > Requires OpenBLAS headers on the system. On the CRC cluster, load the
 > appropriate module first (e.g. `module load openblas`).
 
 ---
 
-## Three Ways to Use It
+## Four Ways to Use It
 
 ### 1. `monitor` — Run pipeline + TUI together (recommended)
 
-Launches the SLIDE optimization in the background and opens the TUI on top.
-The TUI polls the checkpoint file and updates as results arrive.
+Launches the SLIDE optimization as a child process and opens the TUI on top.
+The pipeline's stdout/stderr are redirected to a `.log` file next to the
+checkpoint. The TUI polls the checkpoint file and updates as results arrive.
 
 ```bash
-./target/release/slide-rs monitor \
+./target/release/slide monitor \
   --config path/to/config.yaml \
   --checkpoint path/to/checkpoint.json
 ```
 
-Press `q` to exit the TUI. The pipeline continues on its background thread
-and its exit status is reported when the TUI closes.
+Press `q` to exit the TUI; this also terminates the child pipeline process.
 
 ### 2. `run` — Pipeline only (headless)
 
@@ -60,7 +63,7 @@ Runs optimization and writes checkpoint JSON, no TUI. Useful for batch/SLURM
 jobs where you attach the TUI separately.
 
 ```bash
-./target/release/slide-rs run \
+./target/release/slide run \
   --config path/to/config.yaml \
   --checkpoint path/to/checkpoint.json
 ```
@@ -71,7 +74,7 @@ Opens the TUI against a checkpoint file written by a running or completed
 pipeline.
 
 ```bash
-./target/release/slide-rs tui \
+./target/release/slide tui \
   --checkpoint path/to/checkpoint.json
 ```
 
@@ -84,6 +87,25 @@ Optional flags:
 | `--x`          | —       | Feature matrix CSV/TSV (recovers feature names) |
 | `--poll-ms`    | 1000    | Checkpoint polling interval in milliseconds |
 | `--no-follow`  | false   | Disable live polling (view a static checkpoint) |
+
+### 4. `submit` — Submit a SLURM job + attach TUI
+
+Submits a SLURM batch script via `sbatch` and immediately opens the TUI to
+watch progress. Designed for HPC clusters where the pipeline runs as a
+scheduled job and writes its checkpoint to a shared filesystem.
+
+```bash
+./target/release/slide submit \
+  --script job.sh \
+  --checkpoint path/to/checkpoint.json \
+  --config path/to/config.yaml
+```
+
+| Flag           | Description                                   |
+|----------------|-----------------------------------------------|
+| `--script`     | SLURM batch script to submit                  |
+| `--checkpoint` | Checkpoint path the SLURM job will write to   |
+| `--config`     | Optional YAML config for the TUI summary pane |
 
 ---
 
@@ -264,7 +286,7 @@ If final CV was not enabled for the run, the tab displays a short
 
 ```bash
 # Single command — runs pipeline and TUI together
-./target/release/slide-rs monitor \
+./target/release/slide monitor \
   --config my_config.yaml \
   --checkpoint /tmp/my_run.json
 ```
@@ -281,7 +303,7 @@ Submit the pipeline as a SLURM job:
 #SBATCH --cpus-per-task=4
 #SBATCH --cluster=htc
 
-./target/release/slide-rs run \
+./target/release/slide run \
   --config my_config.yaml \
   --checkpoint /ix/djishnu/$USER/checkpoints/run1.json
 ```
@@ -289,7 +311,7 @@ Submit the pipeline as a SLURM job:
 Then attach the TUI from a login node while the job runs:
 
 ```bash
-./target/release/slide-rs tui \
+./target/release/slide tui \
   --checkpoint /ix/djishnu/$USER/checkpoints/run1.json
 ```
 
@@ -299,7 +321,7 @@ evaluations complete. Add `--no-follow` to view a finished run without polling.
 ### Reviewing a completed run
 
 ```bash
-./target/release/slide-rs tui \
+./target/release/slide tui \
   --checkpoint results/checkpoint.json \
   --x data/features.csv \
   --no-follow
