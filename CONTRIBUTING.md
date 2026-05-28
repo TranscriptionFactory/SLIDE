@@ -193,7 +193,6 @@ Two crates are currently placeholders:
 
 - **`tests/fixtures/` regeneration** — the R fixture generation script (`.tmp/generate_slide_core_hiv_fixture.R`) needs an R environment. Making this portable or documenting the exact setup would help.
 - **README.md** — currently describes only the Python wrapper. Needs to mention the Rust CLI, YAML config, and TUI.
-- **Duplicate TUI guide** — `docs/tui-guide.md` and `docs/tui_guide.md` are near-duplicates. One should be deleted.
 
 ---
 

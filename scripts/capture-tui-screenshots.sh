@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+module load ffmpeg
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAPE="${ROOT}/docs/tui-screenshots.tape"
 OUT_DIR="${ROOT}/docs/assets/tui"
