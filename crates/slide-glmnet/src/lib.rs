@@ -37,6 +37,10 @@ pub struct GaussianLassoPathResult {
     pub beta: Matrix,
     pub intercept: Vector,
     pub lambda: Vector,
+    /// Total coordinate-descent outer iterations summed across all lambda steps
+    /// actually computed for this path. Used by the SLIDE_KNOCKOFF_PROFILE env
+    /// instrumentation to distinguish path-length vs CD-grinding bottlenecks.
+    pub total_cd_iters: usize,
 }
 
 pub type BinomialLassoPathConfig = GaussianLassoPathConfig;
@@ -315,6 +319,7 @@ pub fn binomial_lasso_path(
         beta: Matrix::from_ndarray(beta_path),
         intercept: Vector::from_ndarray(intercept_path),
         lambda,
+        total_cd_iters: 0,
     })
 }
 
@@ -394,10 +399,12 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
         early_stop_all_entered: true,
         ..config.clone()
     };
+    let _t0 = std::time::Instant::now();
     let path = match family {
         GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, &knockoff_config)?,
         GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, &knockoff_config)?,
     };
+    log_knockoff_profile("uncached", &path, _t0);
     let beta = path.beta.as_ndarray();
     let lambda = path.lambda.as_ndarray();
 
@@ -410,6 +417,24 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     }
 
     Ok(Vector::from_ndarray(statistic))
+}
+
+/// Emits one structured profile line per knockoff iteration if the
+/// `SLIDE_KNOCKOFF_PROFILE` env var is set to a non-empty value. Used to
+/// distinguish path-length (`lambda_len ≈ nlambda`) vs CD-grinding
+/// (`cd_iters` near `max_iter * lambda_len`) bottlenecks. Zero overhead when
+/// the env var is unset (single getenv per call).
+#[inline]
+fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time::Instant) {
+    if std::env::var_os("SLIDE_KNOCKOFF_PROFILE").is_some_and(|v| !v.is_empty()) {
+        eprintln!(
+            "SLIDE_PROFILE tag={} lambda_len={} cd_iters={} wall_ms={}",
+            tag,
+            path.lambda.as_ndarray().len(),
+            path.total_cd_iters,
+            t0.elapsed().as_millis()
+        );
+    }
 }
 
 /// Like `stat_glmnet_lambdasmax_prebuilt` but reuses precomputed per-column
@@ -437,6 +462,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
         early_stop_all_entered: true,
         ..config.clone()
     };
+    let _t0 = std::time::Instant::now();
     let path = match family {
         GlmnetFamily::Gaussian => {
             gaussian_lasso_path_with_left_cache(x_cache, tilde_cache, swap, y, y_mean, y_centered, &knockoff_config, ws)?
@@ -448,6 +474,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
             binomial_lasso_path(&prepared.x_scaled, y, &knockoff_config)?
         }
     };
+    log_knockoff_profile("cached", &path, _t0);
     let beta = path.beta.as_ndarray();
     let lambda = path.lambda.as_ndarray();
 
@@ -1138,6 +1165,7 @@ fn run_gaussian_cd(
     let null_deviance = y_array.dot(y_array);
     let mut n_computed = 0usize;
     let mut n_ever_nonzero = 0usize;
+    let mut total_cd_iters = 0usize;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         ws.candidate_indices.clear();
@@ -1159,7 +1187,7 @@ fn run_gaussian_cd(
         }
 
         loop {
-            coordinate_descent_step(
+            total_cd_iters += coordinate_descent_step(
                 x_array,
                 &prepared.column_sq_norm,
                 &mut ws.beta_scaled,
@@ -1229,6 +1257,7 @@ fn run_gaussian_cd(
         beta: Matrix::from_ndarray(beta_path),
         intercept: Vector::from_ndarray(intercept),
         lambda,
+        total_cd_iters,
     }
 }
 
@@ -1253,7 +1282,7 @@ fn coordinate_descent_step(
     max_iter: usize,
     candidate_indices: &[usize],
     active_indices: &mut Vec<usize>,
-) {
+) -> usize {
     let n = x.nrows();
 
     // Active set: non-zero betas within the candidate set
@@ -1265,7 +1294,9 @@ fn coordinate_descent_step(
             .filter(|&j| beta[j].abs() > 0.0),
     );
 
+    let mut iters_done = 0usize;
     for _ in 0..max_iter {
+        iters_done += 1;
         let mut max_change = 0.0;
         if !active_indices.is_empty() {
             max_change = sweep_coordinates(
@@ -1307,6 +1338,7 @@ fn coordinate_descent_step(
             break;
         }
     }
+    iters_done
 }
 
 /// Sweep over the given coordinate indices.
