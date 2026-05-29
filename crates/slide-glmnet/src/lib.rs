@@ -386,16 +386,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
-    const KNOCKOFF_NLAMBDA: usize = 250;
-    // Rust's convergence criterion (max |beta_change|) is ~3x tighter than
-    // Fortran glmnet's (max xv*del^2) at the same numeric threshold, since
-    // xv≈1 for standardized data → |del|<1e-4 ≈ del^2<1e-8.
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
-    const KNOCKOFF_MAX_ITER: usize = 1_000;
+    let (knockoff_nlambda, knockoff_tolerance, knockoff_max_iter) = knockoff_cd_tunables();
     let knockoff_config = GaussianLassoPathConfig {
-        nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
-        tolerance: KNOCKOFF_TOLERANCE,
-        max_iter: KNOCKOFF_MAX_ITER,
+        nlambda: config.nlambda.min(knockoff_nlambda),
+        tolerance: knockoff_tolerance,
+        max_iter: knockoff_max_iter,
         early_stop_all_entered: true,
         ..config.clone()
     };
@@ -423,10 +418,12 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
 /// `SLIDE_KNOCKOFF_PROFILE` env var is set to a non-empty value. Used to
 /// distinguish path-length (`lambda_len ≈ nlambda`) vs CD-grinding
 /// (`cd_iters` near `max_iter * lambda_len`) bottlenecks. Zero overhead when
-/// the env var is unset (single getenv per call).
+/// the env var is unset (single env read per call).
 #[inline]
 fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time::Instant) {
-    if std::env::var_os("SLIDE_KNOCKOFF_PROFILE").is_some_and(|v| !v.is_empty()) {
+    if *KNOCKOFF_PROFILE_ENABLED.get_or_init(|| {
+        std::env::var_os("SLIDE_KNOCKOFF_PROFILE").is_some_and(|v| !v.is_empty())
+    }) {
         eprintln!(
             "SLIDE_PROFILE tag={} lambda_len={} cd_iters={} wall_ms={}",
             tag,
@@ -435,6 +432,38 @@ fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time
             t0.elapsed().as_millis()
         );
     }
+}
+
+static KNOCKOFF_PROFILE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(usize, Scalar, usize)> = std::sync::OnceLock::new();
+
+/// Returns `(nlambda, tolerance, max_iter)` for the knockoff CD path, allowing
+/// env-var overrides. Defaults match the historical hardcoded constants so
+/// behavior is unchanged unless an override is set:
+///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 250) — path length cap
+///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-4) — CD convergence threshold
+///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 1000) — per-lambda CD iter cap
+///
+/// Read once per process via OnceLock so we don't hit getenv per knockoff iter.
+fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
+    *KNOCKOFF_CD_TUNABLES.get_or_init(|| {
+        let nlambda = std::env::var("SLIDE_KNOCKOFF_NLAMBDA")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(250);
+        let tolerance = std::env::var("SLIDE_KNOCKOFF_TOL")
+            .ok()
+            .and_then(|s| s.parse::<Scalar>().ok())
+            .filter(|&t| t > 0.0)
+            .unwrap_or(1.0e-4);
+        let max_iter = std::env::var("SLIDE_KNOCKOFF_MAX_ITER")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(1_000);
+        (nlambda, tolerance, max_iter)
+    })
 }
 
 /// Like `stat_glmnet_lambdasmax_prebuilt` but reuses precomputed per-column
@@ -452,13 +481,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     config: &GaussianLassoPathConfig,
     ws: &mut GaussianCdWorkspace,
 ) -> Result<Vector, GlmnetError> {
-    const KNOCKOFF_NLAMBDA: usize = 250;
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
-    const KNOCKOFF_MAX_ITER: usize = 1_000;
+    let (knockoff_nlambda, knockoff_tolerance, knockoff_max_iter) = knockoff_cd_tunables();
     let knockoff_config = GaussianLassoPathConfig {
-        nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
-        tolerance: KNOCKOFF_TOLERANCE,
-        max_iter: KNOCKOFF_MAX_ITER,
+        nlambda: config.nlambda.min(knockoff_nlambda),
+        tolerance: knockoff_tolerance,
+        max_iter: knockoff_max_iter,
         early_stop_all_entered: true,
         ..config.clone()
     };
