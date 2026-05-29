@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --cluster=htc
 #SBATCH --export=ALL
-#SBATCH --array=0-3
+#SBATCH --array=0-2
 
 set -euo pipefail
 
@@ -26,13 +26,10 @@ export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH
 export CONDA_PREFIX="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1
 export RPY2_CFFI_MODE=ABI
-# Outer parallelism is rayon (knockoff voting iters). Inner BLAS calls
-# inside ndarray .dot() are forced single-threaded to avoid
-# rayon_workers * BLAS_threads oversubscription on $SLURM_CPUS_PER_TASK cores.
-export OMP_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:-4}
+export OMP_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export RAYON_NUM_THREADS=4
 
 cd /ix/djishnu/Aaron/1_general_use/omni-SLIDE
 
@@ -41,7 +38,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LD_LIBRARY_PATH:-}"
 
-BACKENDS=(python r_knockoffs rust pure_r)
+BACKENDS=(python r_knockoffs rust)
 BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
 
 echo "Running backend: $BACKEND (array task $SLURM_ARRAY_TASK_ID)"
