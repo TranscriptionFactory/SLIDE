@@ -110,8 +110,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--y-path", default=_SSC_Y, help="Path to Y vector CSV")
     p.add_argument("--y-factor", action="store_true", help="Treat y as binary factor")
     p.add_argument(
-        "--backends", nargs="+", default=["python", "r_knockoffs", "rust"],
+        "--backends", nargs="+", default=["python", "r_knockoffs", "rust", "pure_r"],
         help="Backends to benchmark",
+    )
+    p.add_argument(
+        "--rscript", default=None,
+        help="Path to Rscript binary used by pure_r backend "
+             "(defaults to pixi env Rscript)",
     )
     p.add_argument(
         "--delta", type=float, nargs="+", default=[0.01, 0.1],
@@ -289,6 +294,54 @@ def run_python_backend(
         elapsed = time.perf_counter() - start
         log.error("Backend %s failed (delta=%s, lam=%s): %s", backend, delta, lam, exc)
         return TimingRecord(backend, delta, lam, elapsed, "failed", str(exc))
+
+
+_DEFAULT_RSCRIPT = "/software/rhel9/manual/install/r/4.5.0/bin/Rscript"
+
+
+def run_pure_r_backend(
+    args: argparse.Namespace, delta: float, lam: float, out_dir: Path,
+) -> TimingRecord:
+    """Run pure-R SLIDE backend via benchmarks/run_slide_r.R subprocess."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rscript = args.rscript or _DEFAULT_RSCRIPT
+    runner = _PROJECT_ROOT / "benchmarks" / "run_slide_r.R"
+
+    cmd = [
+        rscript, str(runner),
+        "--x-path", str(Path(args.x_path).resolve()),
+        "--y-path", str(Path(args.y_path).resolve()),
+        "--out-dir", str(out_dir),
+        "--delta",  str(delta),
+        "--lambda", str(lam),
+        "--niter",  str(args.niter),
+    ]
+    if args.y_factor:
+        cmd.append("--y-factor")
+
+    env = os.environ.copy()
+    if args.threads:
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                    "MKL_NUM_THREADS", "RAYON_NUM_THREADS"):
+            env[var] = str(args.threads)
+
+    combo_log = out_dir / f"pure_r_{delta}_{lam}.log"
+    log.info("Running pure_r: %s", " ".join(cmd))
+    start = time.perf_counter()
+    try:
+        with combo_log.open("w") as lf:
+            result = subprocess.run(
+                cmd, cwd=str(_PROJECT_ROOT), env=env,
+                stdout=lf, stderr=subprocess.STDOUT, text=True,
+            )
+        elapsed = time.perf_counter() - start
+        if result.returncode != 0:
+            return TimingRecord("pure_r", delta, lam, elapsed, "failed",
+                                f"exit code {result.returncode}; log={combo_log}")
+        return TimingRecord("pure_r", delta, lam, elapsed, "success")
+    except Exception as exc:
+        elapsed = time.perf_counter() - start
+        return TimingRecord("pure_r", delta, lam, elapsed, "failed", str(exc))
 
 
 def run_rust_backend(
@@ -646,6 +699,8 @@ def main(argv: list[str] | None = None) -> int:
                 if backend == "rust":
                     rust_dir = backend_dir / _param_subdir(delta, lam)
                     record = run_rust_backend(args, delta, lam, rust_dir)
+                elif backend == "pure_r":
+                    record = run_pure_r_backend(args, delta, lam, backend_dir)
                 else:
                     record = run_python_backend(args, backend, delta, lam, backend_dir)
 

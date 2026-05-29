@@ -1,0 +1,145 @@
+#!/usr/bin/env Rscript
+# Pure-R SLIDE benchmark runner: one (delta, lambda) combo per invocation.
+#
+# Writes the same per-combo files the Python/R-knockoffs backends produce so
+# benchmarks/benchmark_backends.py:load_python_result can pick them up:
+#   <out_dir>/<delta>_<lambda>_out/
+#     sig_LFs.txt
+#     sig_interacts.txt
+#     z_matrix.csv
+#     A.csv  (best-effort)
+#     SLIDE_LFs.rds + AllLatentFactors.rds  (native SLIDE outputs)
+
+# Lightweight base-R arg parser (avoids optparse/yaml deps not in pixi R env).
+parse_cli <- function(argv) {
+  out <- list()
+  i <- 1
+  while (i <= length(argv)) {
+    a <- argv[[i]]
+    if (!startsWith(a, "--")) {
+      stop("unexpected positional arg: ", a)
+    }
+    key <- sub("^--", "", a)
+    # boolean flags have no value
+    if (key %in% c("y-factor")) {
+      out[[key]] <- TRUE
+      i <- i + 1
+      next
+    }
+    if (i + 1 > length(argv)) stop("missing value for --", key)
+    out[[key]] <- argv[[i + 1]]
+    i <- i + 2
+  }
+  out
+}
+
+defaults <- list(
+  niter            = "500",
+  spec             = "0.1",
+  fdr              = "0.1",
+  `thresh-fdr`     = "0.2",
+  `slide-top-feats`= "10",
+  `y-factor`       = FALSE
+)
+opts <- modifyList(defaults, parse_cli(commandArgs(trailingOnly = TRUE)))
+
+# Coerce numeric/int fields
+opts$delta             <- as.numeric(opts$delta)
+opts$lambda            <- as.numeric(opts$lambda)
+opts$spec              <- as.numeric(opts$spec)
+opts$fdr               <- as.numeric(opts$fdr)
+opts[["thresh-fdr"]]   <- as.numeric(opts[["thresh-fdr"]])
+opts$niter             <- as.integer(opts$niter)
+opts[["slide-top-feats"]] <- as.integer(opts[["slide-top-feats"]])
+opts[["y-factor"]]     <- isTRUE(opts[["y-factor"]])
+
+for (k in c("x-path", "y-path", "out-dir", "delta", "lambda")) {
+  if (is.null(opts[[k]])) stop("missing required arg --", k)
+}
+
+suppressPackageStartupMessages(library(SLIDE))
+
+out_path <- normalizePath(opts$`out-dir`, mustWork = FALSE)
+dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
+
+input_params <- list(
+  x_path          = normalizePath(opts$`x-path`),
+  y_path          = normalizePath(opts$`y-path`),
+  delta           = opts$delta,
+  lambda          = opts$lambda,
+  spec            = opts$spec,
+  fdr             = opts$fdr,
+  thresh_fdr      = opts$`thresh-fdr`,
+  SLIDE_iter      = opts$niter,
+  SLIDE_top_feats = opts$`slide-top-feats`,
+  do_interacts    = TRUE,
+  pure_homo       = TRUE,
+  out_path        = out_path,
+  y_factor        = opts[["y-factor"]],
+  # Set eval_type explicitly to sidestep a SLIDE bug where the auto-detect
+  # branch references `y` before it is loaded from disk.
+  eval_type       = if (opts[["y-factor"]]) "auc" else "corr"
+)
+
+cat(sprintf("[pure_r] delta=%g lambda=%g niter=%d out=%s\n",
+            opts$delta, opts$lambda, opts$niter, out_path))
+
+t0 <- Sys.time()
+SLIDE::optimizeSLIDE(input_params, sink_file = FALSE)
+elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+cat(sprintf("[pure_r] optimizeSLIDE elapsed: %.2fs\n", elapsed))
+
+# SLIDE names the per-combo dir as paste0(d, "_", l, "_out") with R's default
+# numeric formatting (so 1.0 -> "1"). Python's benchmark loader expects the
+# exact tokens that python's f"{delta}_{lam}_out" produces (so 1.0 -> "1.0").
+# Rename the SLIDE-created dir to the Python-expected dir name if needed.
+fmt_py <- function(x) {
+  # Mimic Python's default float-to-str: integer floats keep the ".0".
+  if (x == floor(x)) sprintf("%.1f", x) else format(x, trim = TRUE,
+                                                   scientific = FALSE)
+}
+expected_dir <- file.path(out_path, sprintf("%s_%s_out", fmt_py(opts$delta),
+                                            fmt_py(opts$lambda)))
+slide_dir    <- file.path(out_path, sprintf("%s_%s_out",
+                                            format(opts$delta, trim = TRUE),
+                                            format(opts$lambda, trim = TRUE)))
+if (!identical(slide_dir, expected_dir) && dir.exists(slide_dir) &&
+    !dir.exists(expected_dir)) {
+  file.rename(slide_dir, expected_dir)
+}
+combo_dir <- expected_dir
+if (!dir.exists(combo_dir)) {
+  stop("SLIDE did not create the expected combo dir: ", combo_dir,
+       " (tried ", slide_dir, ")")
+}
+
+slide_rds <- file.path(combo_dir, "SLIDE_LFs.rds")
+lf_rds    <- file.path(combo_dir, "AllLatentFactors.rds")
+
+if (!file.exists(slide_rds)) {
+  stop("Expected SLIDE_LFs.rds not found in ", combo_dir)
+}
+
+slide_res <- readRDS(slide_rds)
+inner     <- if (!is.null(slide_res$SLIDE_res)) slide_res$SLIDE_res else slide_res
+
+marginal_vars    <- if (!is.null(inner$marginal_vars))    inner$marginal_vars    else character(0)
+interaction_vars <- if (!is.null(inner$interaction_vars)) inner$interaction_vars else character(0)
+
+# SLIDE post-processing in getTopFeatures coerces marginal_vars from "Z26" to
+# numeric 26. Re-prefix with "Z" so the file matches the python/rust
+# backends' format ("Z26\nZ34\n...").
+normalize_lf <- function(v) {
+  if (length(v) == 0) return(character(0))
+  s <- as.character(v)
+  ifelse(grepl("^[Zz]", s), s, paste0("Z", s))
+}
+
+writeLines(normalize_lf(marginal_vars),    file.path(combo_dir, "sig_LFs.txt"))
+writeLines(as.character(interaction_vars), file.path(combo_dir, "sig_interacts.txt"))
+
+# z_matrix.csv and A.csv are already written by SLIDE::optimizeSLIDE into
+# combo_dir; no need to recompute or rewrite them here.
+
+cat(sprintf("[pure_r] wrote sig_LFs (%d), sig_interacts (%d) to %s\n",
+            length(marginal_vars), length(interaction_vars), combo_dir))
