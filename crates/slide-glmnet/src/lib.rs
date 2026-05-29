@@ -384,8 +384,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     const KNOCKOFF_NLAMBDA: usize = 250;
     // Rust's convergence criterion (max |beta_change|) is ~3x tighter than
     // Fortran glmnet's (max xv*del^2) at the same numeric threshold, since
-    // xv≈1 for standardized data → |del|<1e-4 ≈ del^2<1e-8.
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
+    // xv≈1 for standardized data → |del|<5e-4 ≈ del^2<2.5e-7 (still ~4x
+    // tighter than R glmnet's thresh=1e-7 default). Loosened from 1e-4 to
+    // recover speed on the raw-sample-cov path where near-singular Σ makes
+    // X̃ ≈ X and slows per-coordinate convergence.
+    const KNOCKOFF_TOLERANCE: Scalar = 5.0e-4;
     const KNOCKOFF_MAX_ITER: usize = 1_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
@@ -428,7 +431,10 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     ws: &mut GaussianCdWorkspace,
 ) -> Result<Vector, GlmnetError> {
     const KNOCKOFF_NLAMBDA: usize = 250;
-    const KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
+    // Matches the loosened tolerance in stat_glmnet_lambdasmax_prebuilt
+    // (see comment there). Trades a small CD-precision margin for ~30-50%
+    // speedup on the raw-sample-cov knockoff path.
+    const KNOCKOFF_TOLERANCE: Scalar = 5.0e-4;
     const KNOCKOFF_MAX_ITER: usize = 1_000;
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(KNOCKOFF_NLAMBDA),
