@@ -17,6 +17,10 @@ use thiserror::Error;
 
 const COVARIANCE_EPSILON: Scalar = 1.0e-10;
 const DEFAULT_MAX_BLOCK_SIZE: usize = 500;
+/// Minimum eigenvalue a sample covariance must exceed to be treated as positive
+/// definite, matching the `tol=1e-9` used by R's `knockoff:::is_posdef` and
+/// Python's `loveslide.knockoff.utils.is_posdef`.
+const POSDEF_EIGENVALUE_TOL: Scalar = 1.0e-9;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum KnockoffMethod {
@@ -256,10 +260,14 @@ pub fn prepare_knockoff_cache(
 ) -> Result<KnockoffCache, KnockoffError> {
     validate_feature_matrix(x)?;
     let mu = estimate_mean(x);
-    // Match R's create.second_order: try raw sample covariance first,
-    // fall back to Schäfer-Strimmer shrinkage only if not positive definite.
+    // Match R's create.second_order: use the raw sample covariance when it is
+    // positive definite (smallest eigenvalue > 1e-9, as in R's is_posdef) and
+    // fall back to Schäfer-Strimmer shrinkage otherwise. The eigenvalue test
+    // replaces a bare Cholesky check so the raw-vs-shrunk decision is
+    // deterministic across BLAS builds and CPUs instead of flipping on
+    // floating-point rounding (see `is_positive_definite`).
     let sigma = match sample_covariance(x) {
-        Some(cov) if cov.cholesky_unchecked("sigma").is_ok() => cov,
+        Some(cov) if is_positive_definite(&cov, POSDEF_EIGENVALUE_TOL) => cov,
         _ => estimate_covariance(x)?,
     };
     let diag_s = solve_diag_s(&sigma, method)?;
@@ -688,6 +696,18 @@ fn sample_covariance(x: &Matrix) -> Option<Matrix> {
         }
     }
     Some(Matrix::from_ndarray(cov))
+}
+
+/// Positive-definiteness test matching R's `knockoff:::is_posdef` and Python's
+/// `loveslide.knockoff.utils.is_posdef`: the smallest eigenvalue must exceed
+/// `tol`. Using an explicit eigenvalue margin rather than a bare Cholesky
+/// success/failure keeps the raw-vs-shrunk covariance choice deterministic
+/// across BLAS builds and CPUs. A Cholesky on a near-singular n≈p sample
+/// covariance can succeed or fail on floating-point rounding alone, flipping the
+/// chosen Sigma — and therefore the knockoffs and selected factors — between
+/// machines; an eigenvalue threshold with a fixed margin does not.
+fn is_positive_definite(sigma: &Matrix, tol: Scalar) -> bool {
+    minimum_eigenvalue(sigma) > tol
 }
 
 /// Estimate a shrinkage-regularised covariance matrix using the Schäfer-Strimmer
