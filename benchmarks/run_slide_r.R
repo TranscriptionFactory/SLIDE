@@ -127,16 +127,44 @@ marginal_vars    <- if (!is.null(inner$marginal_vars))    inner$marginal_vars   
 interaction_vars <- if (!is.null(inner$interaction_vars)) inner$interaction_vars else character(0)
 
 # SLIDE post-processing in getTopFeatures coerces marginal_vars from "Z26" to
-# numeric 26. Re-prefix with "Z" so the file matches the python/rust
-# backends' format ("Z26\nZ34\n...").
-normalize_lf <- function(v) {
+# numeric 26. Re-prefix with "Z" AND shift to 0-indexed to match the
+# python/rust backends, which name columns Z0..Z(K-1). SLIDE uses Z1..ZK.
+shift_to_0idx <- function(v) {
   if (length(v) == 0) return(character(0))
   s <- as.character(v)
-  ifelse(grepl("^[Zz]", s), s, paste0("Z", s))
+  # Strip any leading "Z"/"z" prefix, treat what remains as integer index, -1.
+  nums <- as.integer(sub("^[Zz]", "", s))
+  paste0("Z", nums - 1L)
 }
 
-writeLines(normalize_lf(marginal_vars),    file.path(combo_dir, "sig_LFs.txt"))
-writeLines(as.character(interaction_vars), file.path(combo_dir, "sig_interacts.txt"))
+shift_interacts_to_0idx <- function(v) {
+  if (length(v) == 0) return(character(0))
+  vapply(as.character(v), function(s) {
+    parts <- strsplit(s, ".", fixed = TRUE)[[1]]
+    shifted <- vapply(parts, function(p) {
+      n <- as.integer(sub("^[Zz]", "", p))
+      paste0("Z", n - 1L)
+    }, character(1))
+    paste(shifted, collapse = ".")
+  }, character(1), USE.NAMES = FALSE)
+}
+
+writeLines(shift_to_0idx(marginal_vars),
+           file.path(combo_dir, "sig_LFs.txt"))
+writeLines(shift_interacts_to_0idx(interaction_vars),
+           file.path(combo_dir, "sig_interacts.txt"))
+
+# Rewrite z_matrix.csv with 0-indexed column names so the loader's z-corr
+# comparison aligns column-for-column with the python/rust z_matrix.csv.
+z_path <- file.path(combo_dir, "z_matrix.csv")
+if (file.exists(z_path)) {
+  zdf <- utils::read.csv(z_path, row.names = 1, check.names = FALSE)
+  cn <- colnames(zdf)
+  if (all(grepl("^[Zz][0-9]+$", cn))) {
+    colnames(zdf) <- paste0("Z", as.integer(sub("^[Zz]", "", cn)) - 1L)
+    utils::write.csv(zdf, z_path, row.names = TRUE)
+  }
+}
 
 # z_matrix.csv and A.csv are already written by SLIDE::optimizeSLIDE into
 # combo_dir; no need to recompute or rewrite them here.
