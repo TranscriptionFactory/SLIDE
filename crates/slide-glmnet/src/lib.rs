@@ -438,9 +438,11 @@ static KNOCKOFF_PROFILE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock
 static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(usize, Scalar, usize)> = std::sync::OnceLock::new();
 
 /// Returns `(nlambda, tolerance, max_iter)` for the knockoff CD path, allowing
-/// env-var overrides. Defaults match the historical hardcoded constants so
-/// behavior is unchanged unless an override is set:
-///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 250) — path length cap
+/// env-var overrides:
+///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 100) — path length cap, matching R
+///     glmnet's default `nlambda=100`. Profiling showed ~49% of knockoff CD
+///     solves hit the old 250 cap with the path never truncating early, so the
+///     longer grid was pure cost without matching what R/glmnet computes.
 ///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-4) — CD convergence threshold
 ///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 1000) — per-lambda CD iter cap
 ///
@@ -451,7 +453,7 @@ fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&n| n > 0)
-            .unwrap_or(250);
+            .unwrap_or(100);
         let tolerance = std::env::var("SLIDE_KNOCKOFF_TOL")
             .ok()
             .and_then(|s| s.parse::<Scalar>().ok())
