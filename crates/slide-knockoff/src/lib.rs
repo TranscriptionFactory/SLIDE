@@ -21,6 +21,10 @@ const DEFAULT_MAX_BLOCK_SIZE: usize = 500;
 /// definite, matching the `tol=1e-9` used by R's `knockoff:::is_posdef` and
 /// Python's `loveslide.knockoff.utils.is_posdef`.
 const POSDEF_EIGENVALUE_TOL: Scalar = 1.0e-9;
+/// Maximum 2-norm condition number (largest/smallest eigenvalue) for the raw
+/// sample covariance to be used directly. Matches Python's
+/// `_prepare_knockoff_cache` ill-conditioning guard (`cond > 1e5 -> shrink`).
+const MAX_RAW_COV_CONDITION: Scalar = 1.0e5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum KnockoffMethod {
@@ -260,14 +264,18 @@ pub fn prepare_knockoff_cache(
 ) -> Result<KnockoffCache, KnockoffError> {
     validate_feature_matrix(x)?;
     let mu = estimate_mean(x);
-    // Match R's create.second_order: use the raw sample covariance when it is
-    // positive definite (smallest eigenvalue > 1e-9, as in R's is_posdef) and
-    // fall back to Schäfer-Strimmer shrinkage otherwise. The eigenvalue test
-    // replaces a bare Cholesky check so the raw-vs-shrunk decision is
-    // deterministic across BLAS builds and CPUs instead of flipping on
-    // floating-point rounding (see `is_positive_definite`).
+    // Use the raw sample covariance only when it is positive definite AND
+    // well-conditioned; otherwise fall back to Schäfer-Strimmer shrinkage. This
+    // matches Python's `_prepare_knockoff_cache` (is_posdef with tol=1e-9, plus a
+    // `cond > 1e5 -> shrink` guard) and R's is_posdef fallback. In the n<=p regime
+    // the raw sample covariance is singular / ill-conditioned, so shrinkage — the
+    // lower-MSE, well-conditioned estimator that both R and Python use there — is
+    // selected. Beyond matching the references, this avoids handing the knockoff
+    // lasso an ill-conditioned augmented design, which makes coordinate descent
+    // grind (see `raw_covariance_is_usable`). The eigenvalue-based test also keeps
+    // the decision deterministic across BLAS builds and CPUs.
     let sigma = match sample_covariance(x) {
-        Some(cov) if is_positive_definite(&cov, POSDEF_EIGENVALUE_TOL) => cov,
+        Some(cov) if raw_covariance_is_usable(&cov) => cov,
         _ => estimate_covariance(x)?,
     };
     let diag_s = solve_diag_s(&sigma, method)?;
@@ -698,16 +706,35 @@ fn sample_covariance(x: &Matrix) -> Option<Matrix> {
     Some(Matrix::from_ndarray(cov))
 }
 
-/// Positive-definiteness test matching R's `knockoff:::is_posdef` and Python's
-/// `loveslide.knockoff.utils.is_posdef`: the smallest eigenvalue must exceed
-/// `tol`. Using an explicit eigenvalue margin rather than a bare Cholesky
-/// success/failure keeps the raw-vs-shrunk covariance choice deterministic
-/// across BLAS builds and CPUs. A Cholesky on a near-singular n≈p sample
+/// Whether the raw sample covariance is a sound basis for knockoff construction:
+/// positive definite (smallest eigenvalue > `POSDEF_EIGENVALUE_TOL`, as in R's
+/// `knockoff:::is_posdef` and Python's `is_posdef`) AND well-conditioned (2-norm
+/// condition number ≤ `MAX_RAW_COV_CONDITION`, matching Python's `cond > 1e5 ->
+/// shrink` guard). Otherwise the caller falls back to shrinkage.
+///
+/// Using an eigenvalue margin rather than a bare Cholesky keeps the decision
+/// deterministic across BLAS builds and CPUs: a Cholesky on a near-singular n≈p
 /// covariance can succeed or fail on floating-point rounding alone, flipping the
-/// chosen Sigma — and therefore the knockoffs and selected factors — between
-/// machines; an eigenvalue threshold with a fixed margin does not.
-fn is_positive_definite(sigma: &Matrix, tol: Scalar) -> bool {
-    minimum_eigenvalue(sigma) > tol
+/// chosen Sigma (and the resulting knockoffs and selected factors) between
+/// machines; a fixed eigenvalue threshold does not. The condition check
+/// short-circuits the (single) max-eigenvalue computation when the matrix is not
+/// positive definite, which is the common n<=p case.
+fn raw_covariance_is_usable(sigma: &Matrix) -> bool {
+    let min = minimum_eigenvalue(sigma);
+    if min <= POSDEF_EIGENVALUE_TOL {
+        return false;
+    }
+    maximum_eigenvalue(sigma) <= MAX_RAW_COV_CONDITION * min
+}
+
+fn maximum_eigenvalue(matrix: &Matrix) -> Scalar {
+    matrix
+        .symmetric_eigendecomposition_unchecked()
+        .eigenvalues()
+        .as_ndarray()
+        .iter()
+        .copied()
+        .fold(Scalar::NEG_INFINITY, Scalar::max)
 }
 
 /// Estimate a shrinkage-regularised covariance matrix using the Schäfer-Strimmer
