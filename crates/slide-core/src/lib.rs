@@ -2,7 +2,6 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use ndarray::{Array1, Array2, Axis};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use slide_data_io::{standardize, ResponseType as DataResponseType};
@@ -436,15 +435,15 @@ pub fn find_interaction_lfs(
         })
         .collect();
 
-    let knockoff_config = KnockoffConfig {
-        parallel: false, // outer par_iter handles parallelism
-        ..config.to_knockoff_config()
-    };
+    // parallel: true (via to_knockoff_config) — parallelism lives in each
+    // select_short_freq's niter voting loop (width 500), not this narrow
+    // marginal loop (width = #sig_LFs, typically ~2).
+    let knockoff_config = config.to_knockoff_config();
 
-    // Run all marginal iterations in parallel
+    // Run marginals serially; each select_short_freq parallelizes over niter.
     let results: Vec<Option<InteractionVotingResult>> = sig_lfs
-        .par_iter()
-        .zip(candidate_sets.par_iter())
+        .iter()
+        .zip(candidate_sets.iter())
         .map(|(&marginal_lf, candidate_lfs)| {
             if candidate_lfs.is_empty() {
                 return Ok(None);
@@ -543,16 +542,16 @@ fn find_interaction_lfs_with_progress(
         })
         .collect();
 
-    let knockoff_config = KnockoffConfig {
-        parallel: false, // outer par_iter handles parallelism
-        ..config.to_knockoff_config()
-    };
+    // parallel: true (via to_knockoff_config) — parallelism lives in each
+    // select_short_freq's niter voting loop (width 500), not this narrow
+    // marginal loop (width = #sig_LFs, typically ~2).
+    let knockoff_config = config.to_knockoff_config();
     let completed = std::sync::atomic::AtomicUsize::new(0);
 
-    // Run all marginal iterations in parallel
+    // Run marginals serially; each select_short_freq parallelizes over niter.
     let results: Vec<Option<InteractionVotingResult>> = sig_lfs
-        .par_iter()
-        .zip(candidate_sets.par_iter())
+        .iter()
+        .zip(candidate_sets.iter())
         .map(|(&marginal_lf, candidate_lfs)| {
             if candidate_lfs.is_empty() {
                 completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
