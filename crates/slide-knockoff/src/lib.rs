@@ -1145,6 +1145,91 @@ mod tests {
             .unwrap_or_else(|error| panic!("write {out_path}: {error}"));
     }
 
+    /// Diagnostic harness: given Z (`SLIDE_W_Z_CSV`), y (`SLIDE_W_Y_CSV`) and a
+    /// seed (`SLIDE_W_SEED`), builds the ASDP knockoff cache, samples ONE
+    /// knockoff draw X̃, and emits both X̃ (`SLIDE_W_XTILDE_OUT`) and the
+    /// lambdasmax W statistic (`SLIDE_W_OUT`) the pipeline would compute. Feed
+    /// the emitted X̃ to python's _compute_glmnet_lambdasmax to A/B the W
+    /// statistic (rust CD lasso vs python sklearn) on the identical draw.
+    ///   cargo test -p slide-knockoff emit_knockoff_w -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_W_* and run with --ignored"]
+    fn emit_knockoff_w() {
+        let read_grid = |path: &str| -> Vec<Vec<Scalar>> {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read {path}: {error}"));
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    line.split(',')
+                        .map(|cell| {
+                            cell.trim()
+                                .parse::<Scalar>()
+                                .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let z_path = std::env::var("SLIDE_W_Z_CSV").unwrap_or_else(|_| panic!("set SLIDE_W_Z_CSV"));
+        let y_path = std::env::var("SLIDE_W_Y_CSV").unwrap_or_else(|_| panic!("set SLIDE_W_Y_CSV"));
+        let xt_out =
+            std::env::var("SLIDE_W_XTILDE_OUT").unwrap_or_else(|_| panic!("set SLIDE_W_XTILDE_OUT"));
+        let w_out = std::env::var("SLIDE_W_OUT").unwrap_or_else(|_| panic!("set SLIDE_W_OUT"));
+        let seed: u64 = std::env::var("SLIDE_W_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42);
+
+        let zrows = read_grid(&z_path);
+        let n = zrows.len();
+        let p = zrows.first().map(Vec::len).unwrap_or(0);
+        let zflat: Vec<Scalar> = zrows.into_iter().flatten().collect();
+        let z = Matrix::from_ndarray(
+            Array2::from_shape_vec((n, p), zflat)
+                .unwrap_or_else(|error| panic!("z reshape {n}x{p}: {error}")),
+        );
+        let yflat: Vec<Scalar> = read_grid(&y_path).into_iter().flatten().collect();
+        let y = Vector::from_ndarray(Array1::from_vec(yflat));
+
+        let cache = prepare_knockoff_cache(&z, &KnockoffMethod::default())
+            .unwrap_or_else(|error| panic!("cache: {error}"));
+        let x_tilde = cache.sample(seed);
+
+        let config = GaussianLassoPathConfig {
+            nlambda: 250,
+            scale_ddof: 1,
+            ..GaussianLassoPathConfig::default()
+        };
+        let w = slide_glmnet::stat_glmnet_lambdasmax(
+            &z,
+            &x_tilde,
+            &y,
+            GlmnetFamily::Gaussian,
+            &config,
+        )
+        .unwrap_or_else(|error| panic!("stat_glmnet_lambdasmax: {error}"));
+        eprintln!(
+            "Z={n}x{p} seed={seed} -> X̃ + W (len {}) emitted",
+            w.as_ndarray().len()
+        );
+
+        let xt = x_tilde.as_ndarray();
+        let mut xs = String::new();
+        for i in 0..xt.nrows() {
+            let row: Vec<String> = (0..xt.ncols())
+                .map(|j| format!("{:.15e}", xt[(i, j)]))
+                .collect();
+            xs.push_str(&row.join(","));
+            xs.push('\n');
+        }
+        std::fs::write(&xt_out, xs).unwrap_or_else(|error| panic!("write {xt_out}: {error}"));
+
+        let w_lines: Vec<String> = w.as_ndarray().iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(&w_out, w_lines.join("\n"))
+            .unwrap_or_else(|error| panic!("write {w_out}: {error}"));
+    }
+
     #[test]
     fn knockoff_threshold_matches_spec_formula() {
         let w = Vector::from_ndarray(arr1(&[3.0, 2.0, -2.0, 0.5]));
