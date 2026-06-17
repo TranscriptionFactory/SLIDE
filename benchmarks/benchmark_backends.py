@@ -127,6 +127,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="lambdas", help="Lambda values",
     )
     p.add_argument("--niter", type=int, default=500, help="Knockoff iterations")
+    p.add_argument("--spec", type=float, default=0.1,
+                   help="Selection-frequency threshold (fraction of niter)")
     p.add_argument("--out-dir", type=Path, default=Path("benchmark_results"))
     p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
     p.add_argument("--threads", type=int, default=4, help="Thread count")
@@ -271,7 +273,7 @@ def run_python_backend(
         "pure_homo": True,
         "do_interacts": True,
         "n_workers": 1,
-        "spec": 0.1,
+        "spec": args.spec,
         "love_backend": "python",
         "knockoff_backend": knockoff_backend,
         "knockoff_method": "asdp",
@@ -315,6 +317,7 @@ def run_pure_r_backend(
         "--delta",  str(delta),
         "--lambda", str(lam),
         "--niter",  str(args.niter),
+        "--spec",   str(args.spec),
     ]
     if args.y_factor:
         cmd.append("--y-factor")
@@ -362,7 +365,7 @@ def run_rust_backend(
         "y_factor": args.y_factor,
         "pure_homo": True,
         "thresh_fdr": 0.2,
-        "spec": 0.1,
+        "spec": args.spec,
         "fdr": 0.1,
         "SLIDE_iter": args.niter,
         "do_interacts": True,
