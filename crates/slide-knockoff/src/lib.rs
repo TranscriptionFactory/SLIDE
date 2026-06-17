@@ -1082,6 +1082,69 @@ mod tests {
         }
     }
 
+    /// Diagnostic harness (not a parity assertion): reads a Z matrix CSV
+    /// (no header/index, comma-separated) from `SLIDE_COV_Z_CSV`, emits the
+    /// shrinkage covariance that `prepare_knockoff_cache` would use in the n<=p
+    /// regime to `SLIDE_COV_OUT_CSV`, and prints whether the raw sample
+    /// covariance is usable (i.e. whether the gate would pick raw or shrink).
+    /// Used to A/B rust's Schäfer-Strimmer Sigma against python's
+    /// `_cov_shrink_corpcor` on the same Z. Run with:
+    ///   cargo test -p slide-knockoff emit_shrinkage_covariance -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_COV_Z_CSV / SLIDE_COV_OUT_CSV and run with --ignored"]
+    fn emit_shrinkage_covariance() {
+        let z_path = std::env::var("SLIDE_COV_Z_CSV")
+            .unwrap_or_else(|_| panic!("set SLIDE_COV_Z_CSV"));
+        let out_path = std::env::var("SLIDE_COV_OUT_CSV")
+            .unwrap_or_else(|_| panic!("set SLIDE_COV_OUT_CSV"));
+        let text = std::fs::read_to_string(&z_path)
+            .unwrap_or_else(|error| panic!("read {z_path}: {error}"));
+        let rows: Vec<Vec<Scalar>> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.split(',')
+                    .map(|cell| {
+                        cell.trim()
+                            .parse::<Scalar>()
+                            .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                    })
+                    .collect()
+            })
+            .collect();
+        let n = rows.len();
+        let p = rows.first().map(Vec::len).unwrap_or(0);
+        let flat: Vec<Scalar> = rows.into_iter().flatten().collect();
+        let arr = Array2::from_shape_vec((n, p), flat)
+            .unwrap_or_else(|error| panic!("reshape {n}x{p}: {error}"));
+        let z = Matrix::from_ndarray(arr);
+
+        let raw_usable = sample_covariance(&z)
+            .as_ref()
+            .map(raw_covariance_is_usable)
+            .unwrap_or(false);
+        let sigma = estimate_covariance(&z)
+            .unwrap_or_else(|error| panic!("estimate_covariance: {error}"));
+        let s = sigma.as_ndarray();
+        eprintln!(
+            "Z={n}x{p}  raw_cov_usable={raw_usable} (gate -> {})  emitting shrinkage Sigma {}x{}",
+            if raw_usable { "RAW" } else { "SHRINK" },
+            s.nrows(),
+            s.ncols()
+        );
+
+        let mut out = String::new();
+        for i in 0..s.nrows() {
+            let row: Vec<String> = (0..s.ncols())
+                .map(|j| format!("{:.15e}", s[(i, j)]))
+                .collect();
+            out.push_str(&row.join(","));
+            out.push('\n');
+        }
+        std::fs::write(&out_path, out)
+            .unwrap_or_else(|error| panic!("write {out_path}: {error}"));
+    }
+
     #[test]
     fn knockoff_threshold_matches_spec_formula() {
         let w = Vector::from_ndarray(arr1(&[3.0, 2.0, -2.0, 0.5]));
