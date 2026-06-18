@@ -1230,6 +1230,77 @@ mod tests {
             .unwrap_or_else(|error| panic!("write {w_out}: {error}"));
     }
 
+    /// Diagnostic harness: given a covariance matrix Sigma (`SLIDE_S_SIGMA_CSV`),
+    /// runs the ASDP `solve_diag_s` and emits the resulting `diag_s` vector
+    /// (`SLIDE_S_OUT`). Also emits the downstream `l_trans` cache matrix
+    /// (`SLIDE_S_LTRANS_OUT`, optional) which depends only on Sigma + diag_s.
+    /// Feed the same Sigma to python's `create_solve_asdp` (or R's
+    /// `knockoff::create.solve_asdp`) to A/B the knockoff construction solve.
+    ///   cargo test -p slide-knockoff emit_diag_s -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_S_SIGMA_CSV / SLIDE_S_OUT and run with --ignored"]
+    fn emit_diag_s() {
+        let sigma_path =
+            std::env::var("SLIDE_S_SIGMA_CSV").unwrap_or_else(|_| panic!("set SLIDE_S_SIGMA_CSV"));
+        let out_path = std::env::var("SLIDE_S_OUT").unwrap_or_else(|_| panic!("set SLIDE_S_OUT"));
+        let text = std::fs::read_to_string(&sigma_path)
+            .unwrap_or_else(|error| panic!("read {sigma_path}: {error}"));
+        let rows: Vec<Vec<Scalar>> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.split(',')
+                    .map(|cell| {
+                        cell.trim()
+                            .parse::<Scalar>()
+                            .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                    })
+                    .collect()
+            })
+            .collect();
+        let n = rows.len();
+        let p = rows.first().map(Vec::len).unwrap_or(0);
+        let flat: Vec<Scalar> = rows.into_iter().flatten().collect();
+        let sigma = Matrix::from_ndarray(
+            Array2::from_shape_vec((n, p), flat)
+                .unwrap_or_else(|error| panic!("sigma reshape {n}x{p}: {error}")),
+        );
+
+        let method = KnockoffMethod::default();
+        let diag_s = solve_diag_s(&sigma, &method)
+            .unwrap_or_else(|error| panic!("solve_diag_s: {error}"));
+        let s = diag_s.as_ndarray();
+        eprintln!(
+            "Sigma={n}x{p} method={method:?} -> diag_s (len {}, min {:.6e}, max {:.6e})",
+            s.len(),
+            s.iter().cloned().fold(Scalar::INFINITY, Scalar::min),
+            s.iter().cloned().fold(Scalar::NEG_INFINITY, Scalar::max),
+        );
+
+        let s_lines: Vec<String> = s.iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(&out_path, s_lines.join("\n"))
+            .unwrap_or_else(|error| panic!("write {out_path}: {error}"));
+
+        if let Ok(ltrans_path) = std::env::var("SLIDE_S_LTRANS_OUT") {
+            let sigma_inv_diag_s = solve_sigma_inv_diag_s(&sigma, &diag_s)
+                .unwrap_or_else(|error| panic!("solve_sigma_inv_diag_s: {error}"));
+            let l_trans = compute_l_trans(&diag_s, &sigma_inv_diag_s)
+                .unwrap_or_else(|error| panic!("compute_l_trans: {error}"));
+            let lt = l_trans.as_ndarray();
+            let mut out = String::new();
+            for i in 0..lt.nrows() {
+                let row: Vec<String> = (0..lt.ncols())
+                    .map(|j| format!("{:.15e}", lt[(i, j)]))
+                    .collect();
+                out.push_str(&row.join(","));
+                out.push('\n');
+            }
+            std::fs::write(&ltrans_path, out)
+                .unwrap_or_else(|error| panic!("write {ltrans_path}: {error}"));
+            eprintln!("  emitted l_trans {}x{}", lt.nrows(), lt.ncols());
+        }
+    }
+
     #[test]
     fn knockoff_threshold_matches_spec_formula() {
         let w = Vector::from_ndarray(arr1(&[3.0, 2.0, -2.0, 0.5]));
