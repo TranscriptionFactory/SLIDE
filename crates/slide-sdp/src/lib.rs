@@ -30,13 +30,18 @@ pub struct SdpSettings {
 
 impl Default for SdpSettings {
     fn default() -> Self {
+        // gaptol 1e-6 matches the R knockoff package's create.solve_sdp default
+        // (passed to Rdsdp). The solved s only needs ~1e-6 precision -- diag_s is
+        // identical to the old 1e-9 setting at that scale -- and the closed-form
+        // enforce_feasibility post-step guarantees PSD regardless of solver feas
+        // tolerance, so relaxing these only trims the expensive final IP iterations.
         Self {
             max_iter: 200,
-            tol_gap_abs: 1.0e-9,
-            tol_gap_rel: 1.0e-9,
-            tol_feas: 1.0e-9,
-            tol_infeas_abs: 1.0e-9,
-            tol_infeas_rel: 1.0e-9,
+            tol_gap_abs: 1.0e-6,
+            tol_gap_rel: 1.0e-6,
+            tol_feas: 1.0e-6,
+            tol_infeas_abs: 1.0e-6,
+            tol_infeas_rel: 1.0e-6,
         }
     }
 }
