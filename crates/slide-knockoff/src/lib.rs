@@ -1266,12 +1266,28 @@ mod tests {
                 .unwrap_or_else(|error| panic!("sigma reshape {n}x{p}: {error}")),
         );
 
-        let method = KnockoffMethod::default();
-        let diag_s = solve_diag_s(&sigma, &method)
-            .unwrap_or_else(|error| panic!("solve_diag_s: {error}"));
+        // Optional tolerance override (SLIDE_S_TOL) so a single run can A/B the
+        // solver tolerance on the SAME node (e.g. 1e-9 vs 1e-6); unset = default.
+        let diag_s = match std::env::var("SLIDE_S_TOL").ok().and_then(|s| s.parse::<Scalar>().ok()) {
+            Some(tol) => {
+                let settings = slide_sdp::SdpSettings {
+                    max_iter: 200,
+                    tol_gap_abs: tol,
+                    tol_gap_rel: tol,
+                    tol_feas: tol,
+                    tol_infeas_abs: tol,
+                    tol_infeas_rel: tol,
+                };
+                eprintln!("using SLIDE_S_TOL override = {tol:e}");
+                slide_sdp::create_solve_asdp_with_settings(&sigma, DEFAULT_MAX_BLOCK_SIZE, &settings)
+                    .unwrap_or_else(|error| panic!("create_solve_asdp_with_settings: {error}"))
+            }
+            None => solve_diag_s(&sigma, &KnockoffMethod::default())
+                .unwrap_or_else(|error| panic!("solve_diag_s: {error}")),
+        };
         let s = diag_s.as_ndarray();
         eprintln!(
-            "Sigma={n}x{p} method={method:?} -> diag_s (len {}, min {:.6e}, max {:.6e})",
+            "Sigma={n}x{p} -> diag_s (len {}, min {:.6e}, max {:.6e})",
             s.len(),
             s.iter().cloned().fold(Scalar::INFINITY, Scalar::min),
             s.iter().cloned().fold(Scalar::NEG_INFINITY, Scalar::max),
