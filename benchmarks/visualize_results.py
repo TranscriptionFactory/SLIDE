@@ -26,13 +26,8 @@ def _parse_args():
     return p.parse_args()
 
 
-_args = _parse_args()
-OUT_DIR = _args.out_dir.resolve()
-SUMMARY_PATH = OUT_DIR / "benchmark_summary.json"
-
-
-def load_summary():
-    with SUMMARY_PATH.open() as f:
+def load_summary(summary_path):
+    with summary_path.open() as f:
         return json.load(f)
 
 
@@ -309,12 +304,15 @@ def plot_k_comparison(summary, fig_path):
 
 
 def main():
-    if not SUMMARY_PATH.exists():
-        print(f"ERROR: {SUMMARY_PATH} not found. Run comparison first.")
+    args = _parse_args()
+    out_dir = args.out_dir.resolve()
+    summary_path = out_dir / "benchmark_summary.json"
+    if not summary_path.exists():
+        print(f"ERROR: {summary_path} not found. Run comparison first.")
         sys.exit(1)
 
-    summary = load_summary()
-    fig_dir = OUT_DIR / "figures"
+    summary = load_summary(summary_path)
+    fig_dir = out_dir / "figures"
     fig_dir.mkdir(exist_ok=True)
 
     print("Generating visualizations...")
