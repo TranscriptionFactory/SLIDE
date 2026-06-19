@@ -41,6 +41,7 @@ RUST_VARIANTS = {
     "rust_s0.02": SPECSWEEP / "spec_0.02" / "rust",
     "rust_s0.05": SPECSWEEP / "spec_0.05" / "rust",
     "rust_s0.10": REFRUN / "rust",
+    "rust_nl500": BENCH / "rust_nlambda500_20260619_115012" / "rust",
 }
 
 OUT_DIR = SPECSWEEP
