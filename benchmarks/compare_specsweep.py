@@ -12,13 +12,17 @@ Reuses the loaders and comparison primitives from benchmark_backends.py.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
+import json
+import statistics
 from pathlib import Path
 
 from benchmark_backends import (
     BackendResult,
     PairComparison,
     compare_pair,
+    jaccard,
     load_python_result,
     load_rust_result,
 )
@@ -162,7 +166,199 @@ def write_report(
     return report_path
 
 
-def main() -> int:
+# ---------------------------------------------------------------------------
+# base_seed sweep aggregation
+# ---------------------------------------------------------------------------
+def load_rust_voting(delta: float, lam: float, out_dir: Path) -> dict | None:
+    """Pull the marginal voting block (per-LF selection counts) from a rust
+    checkpoint. `out_dir` is the rust backend dir; the eval lives in its
+    `<delta>_<lam>_out/checkpoint.json`. Returns None if absent."""
+    ckpt_path = out_dir / _param_subdir(delta, lam) / "checkpoint.json"
+    if not ckpt_path.exists():
+        return None
+    with ckpt_path.open() as f:
+        ckpt = json.load(f)
+    ev = None
+    for e in ckpt.get("evaluations", []):
+        if e and abs(e["delta"] - delta) < 1e-9 and abs(e["lambda"] - lam) < 1e-9:
+            ev = e
+            break
+    if ev is None:
+        return None
+    voting = ev["marginal"]["voting"]
+    return {
+        "sig_lfs": {f"Z{i}" for i in ev["marginal"]["sig_lfs"]},
+        "counts": list(voting["selection_counts"]),
+        "min_selections": voting["min_selections"],
+        "niter": voting["niter"],
+    }
+
+
+def discover_seed_dirs(parent: Path) -> dict[int, Path]:
+    """Map base_seed -> rust backend dir for each seed_<N>/ under `parent`."""
+    seeds: dict[int, Path] = {}
+    for d in sorted(parent.glob("seed_*")):
+        if not d.is_dir():
+            continue
+        try:
+            seed = int(d.name.split("_", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        seeds[seed] = d / "rust"
+    return seeds
+
+
+def write_seedsweep_report(parent: Path) -> Path:
+    """Aggregate a base_seed sweep: per-LF count wander across seeds + the
+    seed-averaged rust sig-LF set's Jaccard vs pure_r (the PRIMARY reference)."""
+    seed_dirs = discover_seed_dirs(parent)
+    if not seed_dirs:
+        raise SystemExit(f"No seed_*/ subdirs found under {parent}")
+    seeds = sorted(seed_dirs)
+
+    def _idx(label: str) -> int:
+        return int(label[1:])
+
+    report_path = parent / "seedsweep_report.md"
+    with report_path.open("w") as f:
+        f.write("# Rust knockoff base_seed sweep vs pure_r\n\n")
+        f.write(f"Generated: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(
+            f"Sweep dir: `{parent.name}`; seeds: {seeds}. "
+            f"Reference: pure_r (native-R SLIDE) from `{REFRUN.name}`.\n\n"
+            "Question: does borderline-LF selection wander across the knockoff RNG "
+            "base_seed? If yes, the residual rust-vs-pure_r gap is irreducible "
+            "Monte-Carlo noise; if the seed-averaged rust set converges toward "
+            "pure_r's, that union is the honest parity number.\n\n"
+        )
+
+        # Summary table accumulated across conditions
+        summary_rows: list[str] = []
+
+        for delta, lam in PARAM_GRID:
+            ref = load_python_result("pure_r", delta, lam, REFRUN / "pure_r")
+            ref_sig = ref.sig_lfs if ref is not None else set()
+
+            votings: dict[int, dict] = {}
+            for seed, base in seed_dirs.items():
+                v = load_rust_voting(delta, lam, base)
+                if v is not None:
+                    votings[seed] = v
+            if not votings:
+                continue
+            present = sorted(votings)
+            min_sel = votings[present[0]]["min_selections"]
+            niter = votings[present[0]]["niter"]
+
+            # LFs worth showing: selected by some seed, or in pure_r, or borderline
+            # (>= half the spec threshold in any seed).
+            lf_idxs: set[int] = set()
+            for v in votings.values():
+                lf_idxs |= {_idx(z) for z in v["sig_lfs"]}
+                for i, c in enumerate(v["counts"]):
+                    if c >= 0.5 * min_sel:
+                        lf_idxs.add(i)
+            lf_idxs |= {_idx(z) for z in ref_sig}
+
+            f.write(f"## delta={delta}, lambda={lam}\n\n")
+            f.write(
+                f"niter={niter}, spec threshold = {min_sel} votes "
+                f"({min_sel / niter:.0%}). pure_r sig LFs: "
+                f"{sorted(ref_sig, key=_idx) or '(none)'}\n\n"
+            )
+
+            # Per-LF count-across-seeds table
+            f.write("### Per-LF selection_count across seeds\n\n")
+            f.write(
+                "| LF | " + " | ".join(f"s{s}" for s in present)
+                + " | mean | min | max | #sel | in pure_r |\n"
+            )
+            f.write("|---" * (len(present) + 6) + "|\n")
+            for i in sorted(lf_idxs):
+                counts = [votings[s]["counts"][i] for s in present]
+                n_sel = sum(c >= min_sel for c in counts)
+                f.write(
+                    f"| Z{i} | " + " | ".join(str(c) for c in counts)
+                    + f" | {statistics.mean(counts):.1f} | {min(counts)} | "
+                    f"{max(counts)} | {n_sel}/{len(present)} | "
+                    f"{'yes' if f'Z{i}' in ref_sig else ''} |\n"
+                )
+            f.write("\n")
+
+            # Per-seed sig-LF set + Jaccard vs pure_r
+            f.write("### Per-seed sig-LF set vs pure_r\n\n")
+            f.write("| Seed | rust sig LFs | Jaccard vs pure_r |\n")
+            f.write("|------|--------------|------------------:|\n")
+            jaccs = []
+            for s in present:
+                sig = votings[s]["sig_lfs"]
+                j = jaccard(sig, ref_sig)
+                jaccs.append(j)
+                f.write(
+                    f"| {s} | {sorted(sig, key=_idx)} | {j:.4f} |\n"
+                )
+            mean_j = statistics.mean(jaccs)
+            f.write(f"\nMean per-seed Jaccard vs pure_r: **{mean_j:.4f}**\n\n")
+
+            # Seed-aggregated sets
+            union_set = set().union(*(votings[s]["sig_lfs"] for s in present))
+            major = len(present) / 2
+            majority_set = {
+                f"Z{i}"
+                for i in lf_idxs
+                if sum(votings[s]["counts"][i] >= min_sel for s in present) > major
+            }
+            mean_thresh_set = {
+                f"Z{i}"
+                for i in lf_idxs
+                if statistics.mean(votings[s]["counts"][i] for s in present) >= min_sel
+            }
+            f.write("### Seed-aggregated rust set vs pure_r\n\n")
+            f.write("| Aggregation | set | Jaccard vs pure_r |\n")
+            f.write("|-------------|-----|------------------:|\n")
+            for name, s in (
+                ("union (any seed)", union_set),
+                ("majority of seeds", majority_set),
+                ("mean count >= thresh", mean_thresh_set),
+            ):
+                f.write(
+                    f"| {name} | {sorted(s, key=_idx)} | "
+                    f"{jaccard(s, ref_sig):.4f} |\n"
+                )
+            f.write("\n")
+
+            summary_rows.append(
+                f"| {delta} | {lam} | {mean_j:.4f} | "
+                f"{jaccard(union_set, ref_sig):.4f} | "
+                f"{jaccard(majority_set, ref_sig):.4f} | "
+                f"{jaccard(mean_thresh_set, ref_sig):.4f} |\n"
+            )
+
+        f.write("## Summary: Jaccard vs pure_r\n\n")
+        f.write(
+            "| Delta | Lambda | mean per-seed | union | majority | mean>=thresh |\n"
+        )
+        f.write("|------:|-------:|--------------:|------:|---------:|-------------:|\n")
+        for row in summary_rows:
+            f.write(row)
+
+    return report_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--seedsweep", type=Path, default=None,
+        help="Aggregate a base_seed sweep (parent dir holding seed_<N>/ subdirs) "
+             "vs pure_r instead of running the spec-sweep comparison.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.seedsweep is not None:
+        path = write_seedsweep_report(args.seedsweep)
+        print(f"Seed-sweep report written to {path}")
+        return 0
+
     results = load_all()
     if not results:
         print("No results loaded — check run directories.")
