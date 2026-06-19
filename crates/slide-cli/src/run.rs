@@ -64,6 +64,9 @@ pub struct RunConfig {
     pub slide_selection: Option<bool>,
 
     #[serde(default)]
+    pub nlambda: Option<usize>,
+
+    #[serde(default)]
     pub cv: Option<RunCvConfig>,
 }
 
@@ -174,6 +177,9 @@ fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfi
     if let Some(v) = cfg.slide_selection {
         opt_config.knockoff.slide_selection = v;
     }
+    if let Some(v) = cfg.nlambda {
+        opt_config.knockoff.nlambda = v;
+    }
 
     if let Some(cv) = &cfg.cv {
         if cv.enabled.unwrap_or(false) {
@@ -257,6 +263,24 @@ slide_selection: false
             .unwrap_or_else(|error| panic!("optimize config should build: {error}"));
 
         assert!(!opt_config.knockoff.slide_selection);
+    }
+
+    #[test]
+    fn yaml_sets_knockoff_nlambda() {
+        let cfg = parse_config(
+            r#"
+x_path: x.csv
+y_path: y.csv
+delta: [0.1]
+lambda: [0.5]
+nlambda: 500
+"#,
+        );
+
+        let opt_config = optimize_config_from_run_config(&cfg)
+            .unwrap_or_else(|error| panic!("optimize config should build: {error}"));
+
+        assert_eq!(opt_config.knockoff.nlambda, 500);
     }
 
     #[test]
