@@ -129,6 +129,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--niter", type=int, default=500, help="Knockoff iterations")
     p.add_argument("--spec", type=float, default=0.1,
                    help="Selection-frequency threshold (fraction of niter)")
+    p.add_argument("--knockoff-nlambda", type=int, default=None,
+                   help="Rust knockoff lasso grid size (None=rust default 250; "
+                        "set 500 to match R's stat.glmnet_lambdasmax)")
     p.add_argument("--out-dir", type=Path, default=Path("benchmark_results"))
     p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
     p.add_argument("--threads", type=int, default=4, help="Thread count")
@@ -370,6 +373,8 @@ def run_rust_backend(
         "SLIDE_iter": args.niter,
         "do_interacts": True,
     }
+    if args.knockoff_nlambda is not None:
+        rust_config["nlambda"] = args.knockoff_nlambda
     with config_path.open("w") as f:
         yaml.safe_dump(rust_config, f, sort_keys=False)
 
