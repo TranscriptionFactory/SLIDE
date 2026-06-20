@@ -80,7 +80,14 @@ export PATH="$ORIG_PATH"
 
 # base_seed=42 is rust's current default (== the existing baseline); included so the sweep
 # is self-contained on one node and the variance estimate has the anchor point in it.
-SEEDS=(42 1 7 123 2024)
+#
+# IMPORTANT — pick DISJOINT seeds. The per-iteration draw seed is base_seed+iteration over
+# niter=500 iters (slide-knockoff cache.sample(base_seed + iteration)), so two base_seeds
+# closer than niter apart share most of their knockoff draws (e.g. seeds 1 and 7 reuse 494
+# of 500 identical X̃, giving near-identical selection counts — NOT independent realizations).
+# Default seeds below are >=500 apart so each base_seed's 500-iter window is fully disjoint.
+# Override via --export=ALL,...,SEEDS="42 1000 2000 ...".
+SEEDS=(${SEEDS:-42 1000 2000 3000 4000})
 
 for SEED in "${SEEDS[@]}"; do
     OUT="${BENCH_PARENT}/seed_${SEED}"
