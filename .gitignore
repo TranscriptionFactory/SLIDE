@@ -105,3 +105,4 @@ start-code*
 .rust-target
 .venv_utils
 comparison/
+vendor/
