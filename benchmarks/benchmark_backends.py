@@ -135,6 +135,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--knockoff-base-seed", type=int, default=None,
                    help="Rust knockoff RNG base seed (None=rust default 42; "
                         "sweep to probe Monte-Carlo sensitivity of LF selection)")
+    p.add_argument("--knockoff-fdr", type=float, default=None,
+                   help="Rust per-draw knockoff FDR target q (None=default 0.1; "
+                        "raise to loosen per-draw selection and lift borderline-LF "
+                        "counts without re-partitioning the stage-one union)")
     p.add_argument("--out-dir", type=Path, default=Path("benchmark_results"))
     p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
     p.add_argument("--threads", type=int, default=4, help="Thread count")
@@ -372,7 +376,7 @@ def run_rust_backend(
         "pure_homo": True,
         "thresh_fdr": 0.2,
         "spec": args.spec,
-        "fdr": 0.1,
+        "fdr": args.knockoff_fdr if args.knockoff_fdr is not None else 0.1,
         "SLIDE_iter": args.niter,
         "do_interacts": True,
     }
