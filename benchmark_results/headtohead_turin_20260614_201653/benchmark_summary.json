@@ -1,0 +1,205 @@
+{
+  "timestamp": "2026-06-15T00:22:48.993612+00:00",
+  "timings": [
+    {
+      "backend": "pure_r",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 53.35705093666911,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "pure_r",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 45.557776641100645,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "pure_r",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 16.904780711978674,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "pure_r",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 17.84575627744198,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 57.071886125952005,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 66.37192961201072,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 31.67296266183257,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 33.7653545551002,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "sig_lf_jaccard": 0.4,
+      "z_overall_r": 1.0,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999994,
+      "a_nonzero_jaccard": null
+    },
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "sig_lf_jaccard": 0.3333333333333333,
+      "z_overall_r": 0.9999999999999997,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999994,
+      "a_nonzero_jaccard": null
+    },
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "sig_lf_jaccard": 1.0,
+      "z_overall_r": 0.9999999999999999,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999996,
+      "a_nonzero_jaccard": null
+    },
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "sig_lf_jaccard": 0.25,
+      "z_overall_r": 0.9999999999999998,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999996,
+      "a_nonzero_jaccard": null
+    }
+  ],
+  "results": {
+    "pure_r_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z74"
+      ],
+      "n_sig_interacts": 14,
+      "score": null
+    },
+    "pure_r_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 6,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z73",
+        "Z74"
+      ],
+      "n_sig_interacts": 18,
+      "score": null
+    },
+    "pure_r_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 3,
+      "score": null
+    },
+    "pure_r_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z33",
+        "Z44",
+        "Z69"
+      ],
+      "n_sig_interacts": 6,
+      "score": null
+    },
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "score": 0.8842957061713521
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "score": 0.8873073533258431
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 6,
+      "score": 0.8750613615365176
+    },
+    "rust_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 8,
+      "score": 0.8883637361455426
+    }
+  }
+}

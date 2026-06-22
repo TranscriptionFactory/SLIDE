@@ -1,0 +1,242 @@
+{
+  "timestamp": "2026-05-24T01:52:26.467525+00:00",
+  "timings": [
+    {
+      "backend": "python",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 1068.6359192468226,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 384.8419182486832,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 574.3344023637474,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 663.0703802108765,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 705.7339610634372,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 657.3487935103476,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 375.31749374605715,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "r_knockoffs",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 437.4283018121496,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 0.0023650676012039185,
+      "status": "failed",
+      "error": "[Errno 2] No such file or directory: '/ix/djishnu/Aaron/1_general_use/omni-SLIDE/target/release/slide-rs'"
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 0.001508168876171112,
+      "status": "failed",
+      "error": "[Errno 2] No such file or directory: '/ix/djishnu/Aaron/1_general_use/omni-SLIDE/target/release/slide-rs'"
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 0.001251719892024994,
+      "status": "failed",
+      "error": "[Errno 2] No such file or directory: '/ix/djishnu/Aaron/1_general_use/omni-SLIDE/target/release/slide-rs'"
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 0.001095004379749298,
+      "status": "failed",
+      "error": "[Errno 2] No such file or directory: '/ix/djishnu/Aaron/1_general_use/omni-SLIDE/target/release/slide-rs'"
+    }
+  ],
+  "comparisons": [
+    {
+      "backend_a": "python",
+      "backend_b": "r_knockoffs",
+      "delta": 0.01,
+      "lam": 0.1,
+      "sig_lf_jaccard": 0.8,
+      "z_overall_r": 1.0,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999998,
+      "a_nonzero_jaccard": 1.0
+    },
+    {
+      "backend_a": "python",
+      "backend_b": "r_knockoffs",
+      "delta": 0.01,
+      "lam": 1.0,
+      "sig_lf_jaccard": 0.2,
+      "z_overall_r": 1.0,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999998,
+      "a_nonzero_jaccard": 1.0
+    },
+    {
+      "backend_a": "python",
+      "backend_b": "r_knockoffs",
+      "delta": 0.1,
+      "lam": 0.1,
+      "sig_lf_jaccard": 1.0,
+      "z_overall_r": 0.9999999999999999,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999998,
+      "a_nonzero_jaccard": 1.0
+    },
+    {
+      "backend_a": "python",
+      "backend_b": "r_knockoffs",
+      "delta": 0.1,
+      "lam": 1.0,
+      "sig_lf_jaccard": 1.0,
+      "z_overall_r": 1.0,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999998,
+      "a_nonzero_jaccard": 1.0
+    }
+  ],
+  "results": {
+    "python_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 14,
+      "score": null
+    },
+    "python_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 1,
+      "sig_lfs": [
+        "Z27"
+      ],
+      "n_sig_interacts": 4,
+      "score": null
+    },
+    "python_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44",
+        "Z53"
+      ],
+      "n_sig_interacts": 14,
+      "score": null
+    },
+    "python_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44"
+      ],
+      "n_sig_interacts": 7,
+      "score": null
+    },
+    "r_knockoffs_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z73"
+      ],
+      "n_sig_interacts": 12,
+      "score": null
+    },
+    "r_knockoffs_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z73"
+      ],
+      "n_sig_interacts": 11,
+      "score": null
+    },
+    "r_knockoffs_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44",
+        "Z53"
+      ],
+      "n_sig_interacts": 13,
+      "score": null
+    },
+    "r_knockoffs_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44"
+      ],
+      "n_sig_interacts": 7,
+      "score": null
+    }
+  }
+}

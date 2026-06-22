@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-06-20T18:25:04.732226+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 167.85811191797256,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 143.477243732661,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 21.15246868878603,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 20.429863441735506,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 19,
+      "sig_lfs": [
+        "Z120",
+        "Z125",
+        "Z128",
+        "Z131",
+        "Z136",
+        "Z141",
+        "Z156",
+        "Z18",
+        "Z20",
+        "Z21",
+        "Z22",
+        "Z27",
+        "Z45",
+        "Z57",
+        "Z66",
+        "Z72",
+        "Z73",
+        "Z74",
+        "Z96"
+      ],
+      "n_sig_interacts": 77,
+      "score": 0.9999999999999999
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 15,
+      "sig_lfs": [
+        "Z120",
+        "Z125",
+        "Z131",
+        "Z136",
+        "Z141",
+        "Z154",
+        "Z168",
+        "Z18",
+        "Z22",
+        "Z27",
+        "Z45",
+        "Z57",
+        "Z73",
+        "Z74",
+        "Z98"
+      ],
+      "n_sig_interacts": 57,
+      "score": 1.0000000000000002
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 11,
+      "score": 0.9127974421210067
+    },
+    "rust_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 22,
+      "score": 1.0
+    }
+  }
+}

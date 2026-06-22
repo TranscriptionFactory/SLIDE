@@ -1,0 +1,34 @@
+[
+  {
+    "backend": "pure_r",
+    "delta": 0.01,
+    "lam": 0.1,
+    "wall_seconds": 128.62427239120007,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "pure_r",
+    "delta": 0.01,
+    "lam": 1.0,
+    "wall_seconds": 108.63000039756298,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "pure_r",
+    "delta": 0.1,
+    "lam": 0.1,
+    "wall_seconds": 47.96843198686838,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "pure_r",
+    "delta": 0.1,
+    "lam": 1.0,
+    "wall_seconds": 45.68603543564677,
+    "status": "success",
+    "error": ""
+  }
+]
