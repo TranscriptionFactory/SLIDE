@@ -230,7 +230,7 @@ fn build_sdp_constraint_matrix(dimension: usize) -> CscMatrix<Scalar> {
         nzval.push(-1.0);
 
         rowval.push((2 * dimension) + packed_triangle_diagonal_index(column));
-        nzval.push(-1.0);
+        nzval.push(1.0);
 
         colptr.push(rowval.len());
     }

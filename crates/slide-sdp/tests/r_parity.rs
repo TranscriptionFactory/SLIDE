@@ -68,6 +68,46 @@ fn asdp_produces_feasible_solutions_on_r_fixtures() {
     }
 }
 
+/// Optimality regression (NOT just feasibility): the SDP must reach R's per-coordinate
+/// optimum, not the degenerate equicorrelated solution. The PSD constraint
+/// `2*Sigma - diag(s) >= 0` was once built with a flipped diagonal sign, making it
+/// `2*Sigma + diag(s) >= 0` (vacuous for s >= 0); Clarabel then drove every s_j to the
+/// box bound 1 and `enforce_feasibility` crushed the infeasible result down to the
+/// uniform equi vector. That is FEASIBLE (so the feasibility-only tests above passed)
+/// but ~14x too small on ill-conditioned Sigma, degrading knockoffs to near-copies and
+/// causing the CD4 over-selection. These fixtures are ill-conditioned enough that
+/// x=1 is infeasible, so equi != optimum -- exactly what separates a correct solve
+/// from the bug.
+#[test]
+fn sdp_reaches_r_optimum_not_equicorrelated() {
+    for name in ["corr3", "block4", "cov4"] {
+        let fixture = fixture_dir(name);
+        let sigma = read_matrix(fixture.join("input_sigma.csv"));
+        let expected = read_vector(fixture.join("expected_sdp.csv"));
+        let equi = read_vector(fixture.join("expected_equi.csv"));
+
+        let actual = create_solve_sdp(&sigma)
+            .unwrap_or_else(|error| panic!("sdp solve failed for {name}: {error}"));
+        let actual = actual.as_ndarray();
+
+        // (1) matches R's create.solve_sdp optimum
+        assert_eq!(actual.len(), expected.len());
+        for (i, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (a - e).abs() <= 1.0e-3,
+                "{name}[{i}]: sdp s = {a:.6e}, R optimum = {e:.6e}"
+            );
+        }
+        // (2) is genuinely the optimum, strictly above the equicorrelated fallback
+        let actual_sum: f64 = actual.sum();
+        let equi_sum: f64 = equi.sum();
+        assert!(
+            actual_sum > equi_sum + 1.0e-3,
+            "{name}: sum(s) = {actual_sum:.6} not above equi sum {equi_sum:.6}; SDP degraded to equicorrelated"
+        );
+    }
+}
+
 fn fixture_dir(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/sdp")
