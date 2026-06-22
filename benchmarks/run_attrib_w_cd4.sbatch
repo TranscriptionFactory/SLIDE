@@ -20,6 +20,9 @@
 set -uo pipefail
 if [ -z "${OPTB_DIR:-}" ]; then echo "ERROR: OPTB_DIR not set"; exit 1; fi
 cd /ix/djishnu/Aaron/1_general_use/omni-SLIDE
+# absolute: `cargo test` runs the test binary with CWD = crate dir, not repo root,
+# so the emit_knockoff_w env-var paths must be absolute.
+OPTB_DIR="$(realpath "$OPTB_DIR")"
 
 Z_NUM="${OPTB_DIR}/z_numeric.csv"
 Y_NUM="${OPTB_DIR}/y_numeric.csv"
