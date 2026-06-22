@@ -333,10 +333,13 @@ def run_pure_r_backend(
         cmd.append("--y-factor")
 
     env = os.environ.copy()
-    if args.threads:
-        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-                    "MKL_NUM_THREADS", "RAYON_NUM_THREADS"):
-            env[var] = str(args.threads)
+    # R SLIDE parallelizes at the process level (makePSOCKcluster, ncore=10
+    # hardcoded in runSLIDE.R) — it ignores RAYON/OMP. Pin BLAS to 1 so the 10
+    # workers don't each spawn BLAS threads (nested oversubscription); BLAS is a
+    # no-op on SLIDE's tiny matrices anyway. R's ncore=10 must match rust
+    # --threads 10 (the benchmark is pinned to 10 for fair head-to-head timing).
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[var] = "1"
 
     combo_log = out_dir / f"pure_r_{delta}_{lam}.log"
     log.info("Running pure_r: %s", " ".join(cmd))
@@ -396,9 +399,13 @@ def run_rust_backend(
         cmd.extend(["--threads", str(args.threads)])
 
     env = os.environ.copy()
+    # rust parallelism is rayon (--threads); pin BLAS to 1 so rayon workers
+    # don't nest BLAS threads (no-op on tiny matrices, but clean). RAYON mirrors
+    # --threads. Pinned to 10 to match R's hardcoded ncore=10 for fair timing.
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[var] = "1"
     if args.threads:
-        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "RAYON_NUM_THREADS"):
-            env[var] = str(args.threads)
+        env["RAYON_NUM_THREADS"] = str(args.threads)
 
     log_path = out_dir / "rust.log"
     log.info("Running Rust: %s", " ".join(cmd))
