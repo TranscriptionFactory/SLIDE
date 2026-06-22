@@ -64,6 +64,30 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LD_LIBRARY_PATH:-}"
 
+# Absolute path to THIS script (SLURM runs from a spooled copy; reference the repo
+# copy so the afterany aggregation job below re-invokes a path that still exists).
+SCRIPT_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/benchmarks/run_allbackends_cd4.sbatch"
+
+# ── AGGREGATE_ONLY: cross-backend comparison pass ──
+# The 4-task array holds only ONE backend per task in memory, so each task's own
+# benchmark_backends.py writes a SINGLE-backend report with an empty pairwise table
+# (last writer wins). Task 0 schedules this branch as an afterany dependency job so
+# it runs ONCE, after the whole array finishes, and regenerates the full
+# cross-backend comparison (Sig-LF Jaccard etc.) from the per-backend outputs on
+# disk. --skip-run does no compute (reads CSV/JSON, ~2s). Manual equivalent if this
+# ever fails to submit: rerun the same `benchmark_backends.py --skip-run` line.
+if [ "${AGGREGATE_ONLY:-0}" = "1" ]; then
+    echo "=== AGGREGATE_ONLY: regenerating cross-backend comparison from $BENCH_OUT_DIR ==="
+    python benchmarks/benchmark_backends.py \
+        --skip-run \
+        --backends python r_knockoffs pure_r rust \
+        --x-path "$CD4_X" --y-path "$CD4_Y" \
+        --delta 0.01 0.1 --lam 0.1 1.0 \
+        --out-dir "$BENCH_OUT_DIR"
+    echo "=== AGGREGATE_ONLY done rc=$? ==="
+    exit 0
+fi
+
 BACKENDS=(python r_knockoffs pure_r rust)
 BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
 
@@ -110,3 +134,17 @@ python benchmarks/benchmark_backends.py \
 RC=$?
 
 echo "=== backend=$BACKEND finished rc=$RC ==="
+
+# ── task 0 schedules the cross-backend aggregation to run after the WHOLE array ──
+# afterany (not afterok) so the comparison is still generated from whatever
+# backends succeeded even if one task fails. Lean resources: the agg job only reads
+# files. Non-fatal if submission is disallowed — the per-task reports still exist
+# and the --skip-run line above can be run by hand.
+if [ "$SLURM_ARRAY_TASK_ID" = "0" ]; then
+    echo "=== task 0: submitting afterany aggregation job (dep on array ${SLURM_ARRAY_JOB_ID}) ==="
+    sbatch --dependency="afterany:${SLURM_ARRAY_JOB_ID}" \
+           --array=0 --mem=16G --time=00:15:00 \
+           --export=ALL,BENCH_OUT_DIR="${BENCH_OUT_DIR}",AGGREGATE_ONLY=1 \
+           "$SCRIPT_PATH" \
+        || echo "WARNING: could not submit aggregation job; run benchmark_backends.py --skip-run manually"
+fi
