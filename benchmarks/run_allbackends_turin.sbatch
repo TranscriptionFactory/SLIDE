@@ -45,6 +45,27 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LD_LIBRARY_PATH:-}"
 
+# Absolute path to THIS script (SLURM runs from a spooled copy; reference the repo
+# copy so the afterany aggregation job below re-invokes a path that still exists).
+SCRIPT_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/benchmarks/run_allbackends_turin.sbatch"
+
+# ── AGGREGATE_ONLY: cross-backend comparison pass (afterany dependency job) ──
+# Each array task holds only ONE backend in memory, so its own report is
+# single-backend with an empty pairwise table. Task 0 schedules this branch to run
+# ONCE after the array finishes, regenerating the full cross-backend comparison
+# from on-disk outputs. --skip-run does no compute. Uses default (SSc) data paths,
+# matching the per-backend run below. Manual fallback: rerun the --skip-run line.
+if [ "${AGGREGATE_ONLY:-0}" = "1" ]; then
+    echo "=== AGGREGATE_ONLY: regenerating cross-backend comparison from $BENCH_OUT_DIR ==="
+    python benchmarks/benchmark_backends.py \
+        --skip-run \
+        --backends python r_knockoffs pure_r rust \
+        --delta 0.01 0.1 --lam 0.1 1.0 \
+        --out-dir "$BENCH_OUT_DIR"
+    echo "=== AGGREGATE_ONLY done rc=$? ==="
+    exit 0
+fi
+
 BACKENDS=(python r_knockoffs pure_r rust)
 BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
 
@@ -88,3 +109,15 @@ python benchmarks/benchmark_backends.py \
 RC=$?
 
 echo "=== backend=$BACKEND finished rc=$RC ==="
+
+# ── task 0 schedules the cross-backend aggregation to run after the WHOLE array ──
+# afterany so the comparison is generated from whatever backends succeeded. Lean
+# resources (reads files only). Non-fatal if submission is disallowed.
+if [ "$SLURM_ARRAY_TASK_ID" = "0" ]; then
+    echo "=== task 0: submitting afterany aggregation job (dep on array ${SLURM_ARRAY_JOB_ID}) ==="
+    sbatch --dependency="afterany:${SLURM_ARRAY_JOB_ID}" \
+           --array=0 --mem=16G --time=00:15:00 \
+           --export=ALL,BENCH_OUT_DIR="${BENCH_OUT_DIR}",AGGREGATE_ONLY=1 \
+           "$SCRIPT_PATH" \
+        || echo "WARNING: could not submit aggregation job; run benchmark_backends.py --skip-run manually"
+fi
