@@ -1,0 +1,34 @@
+[
+  {
+    "backend": "python",
+    "delta": 0.01,
+    "lam": 0.1,
+    "wall_seconds": 118.72445773333311,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "python",
+    "delta": 0.01,
+    "lam": 1.0,
+    "wall_seconds": 116.27482295408845,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "python",
+    "delta": 0.1,
+    "lam": 0.1,
+    "wall_seconds": 48.982771907001734,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "python",
+    "delta": 0.1,
+    "lam": 1.0,
+    "wall_seconds": 71.99529803544283,
+    "status": "success",
+    "error": ""
+  }
+]

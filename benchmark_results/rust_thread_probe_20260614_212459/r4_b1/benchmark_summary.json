@@ -1,0 +1,80 @@
+{
+  "timestamp": "2026-06-15T01:29:22.123453+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 38.21119047491811,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 40.558267833897844,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 17.871110227890313,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 20.04996765195392,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "score": 0.8842957061713509
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "score": 0.8873073533258443
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 6,
+      "score": 0.8750613615365175
+    },
+    "rust_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 8,
+      "score": 0.8883637361455419
+    }
+  }
+}

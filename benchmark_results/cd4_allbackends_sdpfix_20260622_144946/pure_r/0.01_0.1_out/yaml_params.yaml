@@ -1,0 +1,14 @@
+x_path: /ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/CD4_Expansion/x.csv
+y_path: /ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/CD4_Expansion/y.csv
+delta: 0.01
+lambda: 0.1
+spec: 0.1
+fdr: 0.1
+thresh_fdr: 0.2
+SLIDE_iter: 1000
+SLIDE_top_feats: 10
+do_interacts: yes
+pure_homo: yes
+out_path: /ix/djishnu/Aaron/1_general_use/omni-SLIDE/benchmark_results/cd4_allbackends_sdpfix_20260622_144946/pure_r/0.01_0.1_out/
+y_factor: no
+eval_type: corr

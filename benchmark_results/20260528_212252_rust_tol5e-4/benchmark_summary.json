@@ -1,0 +1,83 @@
+{
+  "timestamp": "2026-05-29T01:43:14.498855+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 407.1896346062422,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 368.73975981399417,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 196.76451049745083,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 243.27164604887366,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "score": 0.9544550264817024
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 2,
+      "score": 0.8475406891869152
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 4,
+      "score": 0.8602491308903414
+    },
+    "rust_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z44",
+        "Z5",
+        "Z61",
+        "Z69"
+      ],
+      "n_sig_interacts": 11,
+      "score": 0.9684024795936821
+    }
+  }
+}

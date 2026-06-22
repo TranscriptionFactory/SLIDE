@@ -1,0 +1,34 @@
+[
+  {
+    "backend": "rust",
+    "delta": 0.01,
+    "lam": 0.1,
+    "wall_seconds": 59.99667488783598,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "rust",
+    "delta": 0.01,
+    "lam": 1.0,
+    "wall_seconds": 62.1853910908103,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "rust",
+    "delta": 0.1,
+    "lam": 0.1,
+    "wall_seconds": 18.130995467305183,
+    "status": "success",
+    "error": ""
+  },
+  {
+    "backend": "rust",
+    "delta": 0.1,
+    "lam": 1.0,
+    "wall_seconds": 19.98693510890007,
+    "status": "success",
+    "error": ""
+  }
+]

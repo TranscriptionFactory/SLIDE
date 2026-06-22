@@ -1,0 +1,206 @@
+{
+  "timestamp": "2026-06-08T17:49:30.300003+00:00",
+  "timings": [
+    {
+      "backend": "pure_r",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 128.62427239120007,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "pure_r",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 108.63000039756298,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "pure_r",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 47.96843198686838,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "pure_r",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 45.68603543564677,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 151.68827401474118,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 175.06104127690196,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 83.84688689932227,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 89.5142435580492,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "sig_lf_jaccard": 0.4,
+      "z_overall_r": 1.0,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999994,
+      "a_nonzero_jaccard": null
+    },
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "sig_lf_jaccard": 0.4,
+      "z_overall_r": 0.9999999999999997,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999994,
+      "a_nonzero_jaccard": null
+    },
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "sig_lf_jaccard": 0.5,
+      "z_overall_r": 0.9999999999999999,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999996,
+      "a_nonzero_jaccard": null
+    },
+    {
+      "backend_a": "pure_r",
+      "backend_b": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "sig_lf_jaccard": 0.25,
+      "z_overall_r": 0.9999999999999998,
+      "z_median_col_r": 1.0,
+      "z_min_col_r": 0.9999999999999996,
+      "a_nonzero_jaccard": null
+    }
+  ],
+  "results": {
+    "pure_r_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z74"
+      ],
+      "n_sig_interacts": 13,
+      "score": null
+    },
+    "pure_r_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z74"
+      ],
+      "n_sig_interacts": 15,
+      "score": null
+    },
+    "pure_r_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z44",
+        "Z5",
+        "Z61"
+      ],
+      "n_sig_interacts": 3,
+      "score": null
+    },
+    "pure_r_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44"
+      ],
+      "n_sig_interacts": 7,
+      "score": null
+    },
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "score": 0.8842957061713521
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z18",
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "score": 0.8873073533258431
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 6,
+      "score": 0.8750613615365176
+    },
+    "rust_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z61"
+      ],
+      "n_sig_interacts": 8,
+      "score": 0.8883637361455426
+    }
+  }
+}
