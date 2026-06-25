@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import statistics
 from pathlib import Path
 
@@ -31,7 +32,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BENCH = PROJECT_ROOT / "benchmark_results"
 
 SPECSWEEP = BENCH / "rust_specsweep_20260617_173902"
-REFRUN = BENCH / "lfcompare_tolfix_20260617_233303"
+# Reference run holding the pure_r/python/r_knockoffs sig-LF sets. Override for a
+# different dataset (e.g. CD4) via SEEDSWEEP_REFRUN=<dir under benchmark_results/>.
+REFRUN = BENCH / os.environ.get("SEEDSWEEP_REFRUN", "lfcompare_tolfix_20260617_233303")
 
 # (delta, lambda) grid shared by both runs
 PARAM_GRID = [(0.01, 0.1), (0.01, 1.0), (0.1, 0.1), (0.1, 1.0)]

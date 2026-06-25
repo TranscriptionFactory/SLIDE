@@ -89,14 +89,25 @@ export PATH="$ORIG_PATH"
 # Override via --export=ALL,...,SEEDS="42 1000 2000 ...".
 SEEDS=(${SEEDS:-42 1000 2000 3000 4000})
 
+# Dataset + niter are overridable so the same sweep can target CD4 (n>p full-SDP
+# path) or any other X/Y. Defaults = SSc/UnTx (the original parity dataset). For
+# CD4 use niter=1000 and seeds >= niter apart (e.g. 42 2000 4000 6000 8000) so each
+# base_seed's draw window stays disjoint.
+X_PATH="${X_PATH:-/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/X.csv}"
+Y_PATH="${Y_PATH:-/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/Y.csv}"
+NITER="${NITER:-500}"
+echo "Dataset: X=$X_PATH niter=$NITER seeds=${SEEDS[*]}"
+
 for SEED in "${SEEDS[@]}"; do
     OUT="${BENCH_PARENT}/seed_${SEED}"
     echo "=== rust base_seed=${SEED}, spec=0.1 -> ${OUT} ==="
     python benchmarks/benchmark_backends.py \
         --backends rust \
+        --x-path "$X_PATH" \
+        --y-path "$Y_PATH" \
         --delta 0.01 0.1 \
         --lam 0.1 1.0 \
-        --niter 500 \
+        --niter "$NITER" \
         --spec 0.1 \
         --knockoff-base-seed "${SEED}" \
         --threads 4 \
