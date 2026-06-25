@@ -1230,6 +1230,214 @@ mod tests {
             .unwrap_or_else(|error| panic!("write {w_out}: {error}"));
     }
 
+    /// Bundled attribution harness for the CD4 delta=0.1 seed-invariant Z17/Z26
+    /// over-selection. Reads Z (`SLIDE_ATTR_Z_CSV`, no header) + y
+    /// (`SLIDE_ATTR_Y_CSV`) and, in ONE pass over `SLIDE_ATTR_NDRAWS` knockoff
+    /// draws (seed = `SLIDE_ATTR_BASE_SEED` + k), emits everything needed to
+    /// decompose the gap vs native-R into a sampling term (H1) and a lasso term
+    /// (H2). All draws share rust's EXACT cov/mean/diag_s so R's create.gaussian
+    /// can sample from identical inputs.
+    ///
+    /// Outputs under `SLIDE_ATTR_OUTDIR`:
+    ///   sigma.csv, mu.csv, diag_s.csv       rust's cov / colMeans / ASDP diag_s
+    ///   rust_counts.csv  (lf_index,count)   (a)  production voting WITH swap
+    ///   rust_counts_noswap.csv              (a') per-draw lasso, NO swap
+    ///   xtilde/xt_<k>.csv                    byte-identical X-tilde draw k
+    ///   rust_realized_corr.csv (j,mean_abs_corr)  mean_k |corr(Z_j, X~_j)|
+    ///
+    /// Then `benchmarks/attrib_xinject.R` reads sigma/mu/diag_s + each xt_<k> and
+    /// emits (c) R-glmnet on rust's X-tilde and (b) R-glmnet on R's own draws, so
+    /// `benchmarks/attrib_report.py` can print H2=(a')-(c), H1=(c)-(b), swap=(a)-(a').
+    ///   cargo test -p slide-knockoff emit_knockoff_attribution -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_ATTR_* and run with --ignored"]
+    fn emit_knockoff_attribution() {
+        let read_grid = |path: &str| -> Vec<Vec<Scalar>> {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read {path}: {error}"));
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    line.split(',')
+                        .map(|cell| {
+                            cell.trim()
+                                .parse::<Scalar>()
+                                .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let env_or = |key: &str| std::env::var(key).unwrap_or_else(|_| panic!("set {key}"));
+        let z_path = env_or("SLIDE_ATTR_Z_CSV");
+        let y_path = env_or("SLIDE_ATTR_Y_CSV");
+        let outdir = env_or("SLIDE_ATTR_OUTDIR");
+        let ndraws: usize = std::env::var("SLIDE_ATTR_NDRAWS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+        let base_seed: u64 = std::env::var("SLIDE_ATTR_BASE_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42);
+        let fdr: Scalar = std::env::var("SLIDE_ATTR_FDR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.1);
+        let spec: Scalar = std::env::var("SLIDE_ATTR_SPEC")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.1);
+
+        let zrows = read_grid(&z_path);
+        let n = zrows.len();
+        let p = zrows.first().map(Vec::len).unwrap_or(0);
+        let zflat: Vec<Scalar> = zrows.into_iter().flatten().collect();
+        let z = Matrix::from_ndarray(
+            Array2::from_shape_vec((n, p), zflat)
+                .unwrap_or_else(|error| panic!("z reshape {n}x{p}: {error}")),
+        );
+        let yflat: Vec<Scalar> = read_grid(&y_path).into_iter().flatten().collect();
+        let y = Vector::from_ndarray(Array1::from_vec(yflat));
+
+        std::fs::create_dir_all(&outdir).unwrap_or_else(|e| panic!("mkdir {outdir}: {e}"));
+        let xt_dir = format!("{outdir}/xtilde");
+        std::fs::create_dir_all(&xt_dir).unwrap_or_else(|e| panic!("mkdir {xt_dir}: {e}"));
+
+        // Replicate prepare_knockoff_cache so we can emit the EXACT sigma/mu/diag_s
+        // that feed the cache, then build the same cache from them.
+        let mu = estimate_mean(&z);
+        let sigma = match sample_covariance(&z) {
+            Some(cov) if raw_covariance_is_usable(&cov) => cov,
+            _ => estimate_covariance(&z).unwrap_or_else(|e| panic!("estimate_covariance: {e}")),
+        };
+        let diag_s = solve_diag_s(&sigma, &KnockoffMethod::default())
+            .unwrap_or_else(|e| panic!("solve_diag_s: {e}"));
+        let cache = build_knockoff_cache(&z, &mu, &sigma, &diag_s)
+            .unwrap_or_else(|e| panic!("build_knockoff_cache: {e}"));
+
+        // Emit sigma (p x p), mu (p), diag_s (p).
+        let sg = sigma.as_ndarray();
+        let mut sigma_s = String::new();
+        for i in 0..p {
+            let row: Vec<String> = (0..p).map(|j| format!("{:.15e}", sg[(i, j)])).collect();
+            sigma_s.push_str(&row.join(","));
+            sigma_s.push('\n');
+        }
+        std::fs::write(format!("{outdir}/sigma.csv"), sigma_s).expect("write sigma");
+        let mu_s: Vec<String> = mu.as_ndarray().iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(format!("{outdir}/mu.csv"), mu_s.join("\n")).expect("write mu");
+        let ds_s: Vec<String> = diag_s.as_ndarray().iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(format!("{outdir}/diag_s.csv"), ds_s.join("\n")).expect("write diag_s");
+
+        // (a) Production single-stage voting WITH swap (faithful CD4 path).
+        let config = KnockoffConfig {
+            fdr,
+            spec,
+            niter: ndraws,
+            knockoff_method: KnockoffMethod::default(),
+            knockoff_offset: 0,
+            statistic: KnockoffStatistic::GlmnetLambdasMax,
+            nlambda: 250,
+            base_seed,
+            slide_selection: true,
+            f_size: None,
+            family: GlmnetFamily::Gaussian,
+            parallel: true,
+        };
+        let voting = knockoff_filter_voting(&z, &y, &config)
+            .unwrap_or_else(|e| panic!("knockoff_filter_voting: {e}"));
+        let mut counts_a = String::from("lf_index,count\n");
+        for (j, c) in voting.selection_counts.iter().enumerate() {
+            counts_a.push_str(&format!("{j},{c}\n"));
+        }
+        std::fs::write(format!("{outdir}/rust_counts.csv"), counts_a).expect("write rust_counts");
+
+        // Per-draw pass: emit byte-identical X-tilde, compute (a') NO-swap counts,
+        // and accumulate mean |corr(Z_j, X~_j)|.
+        let glmnet_config = slide_glmnet::GaussianLassoPathConfig {
+            nlambda: 250,
+            scale_ddof: 1,
+            ..slide_glmnet::GaussianLassoPathConfig::default()
+        };
+        let pearson = |a: ndarray::ArrayView1<Scalar>, b: ndarray::ArrayView1<Scalar>| -> Scalar {
+            let m = a.len() as Scalar;
+            let ma = a.iter().sum::<Scalar>() / m;
+            let mb = b.iter().sum::<Scalar>() / m;
+            let (mut sab, mut saa, mut sbb) = (0.0, 0.0, 0.0);
+            for (xi, yi) in a.iter().zip(b.iter()) {
+                let (da, db) = (xi - ma, yi - mb);
+                sab += da * db;
+                saa += da * da;
+                sbb += db * db;
+            }
+            if saa > 0.0 && sbb > 0.0 {
+                sab / (saa.sqrt() * sbb.sqrt())
+            } else {
+                0.0
+            }
+        };
+        let za = z.as_ndarray();
+        let mut counts_noswap = vec![0usize; p];
+        let mut corr_accum = vec![0.0; p];
+        for k in 0..ndraws {
+            let seed = base_seed + (k as u64);
+            let x_tilde = cache.sample(seed);
+            let xta = x_tilde.as_ndarray();
+
+            // Emit X-tilde draw k.
+            let mut s = String::with_capacity(n * p * 18);
+            for i in 0..n {
+                for j in 0..p {
+                    if j > 0 {
+                        s.push(',');
+                    }
+                    s.push_str(&format!("{:.12e}", xta[(i, j)]));
+                }
+                s.push('\n');
+            }
+            std::fs::write(format!("{xt_dir}/xt_{k}.csv"), s)
+                .unwrap_or_else(|e| panic!("write xt_{k}: {e}"));
+
+            // (a') NO-swap per-draw selection, identical W path as R uses.
+            let w = slide_glmnet::stat_glmnet_lambdasmax(
+                &z,
+                &x_tilde,
+                &y,
+                GlmnetFamily::Gaussian,
+                &glmnet_config,
+            )
+            .unwrap_or_else(|e| panic!("stat_glmnet_lambdasmax draw {k}: {e}"));
+            let selected = knockoff_filter(&w, fdr, 0)
+                .unwrap_or_else(|e| panic!("knockoff_filter draw {k}: {e}"));
+            for idx in selected {
+                counts_noswap[idx] += 1;
+            }
+
+            for j in 0..p {
+                corr_accum[j] += pearson(za.column(j), xta.column(j)).abs();
+            }
+        }
+
+        let mut counts_b = String::from("lf_index,count\n");
+        for (j, c) in counts_noswap.iter().enumerate() {
+            counts_b.push_str(&format!("{j},{c}\n"));
+        }
+        std::fs::write(format!("{outdir}/rust_counts_noswap.csv"), counts_b)
+            .expect("write rust_counts_noswap");
+
+        let mut corr_s = String::from("lf_index,mean_abs_corr\n");
+        for (j, acc) in corr_accum.iter().enumerate() {
+            corr_s.push_str(&format!("{j},{:.10e}\n", acc / (ndraws as Scalar)));
+        }
+        std::fs::write(format!("{outdir}/rust_realized_corr.csv"), corr_s)
+            .expect("write rust_realized_corr");
+
+        eprintln!(
+            "attribution: Z={n}x{p} ndraws={ndraws} base_seed={base_seed} fdr={fdr} spec={spec} -> {outdir}"
+        );
+    }
+
     /// Diagnostic harness: given a covariance matrix Sigma (`SLIDE_S_SIGMA_CSV`),
     /// runs the ASDP `solve_diag_s` and emits the resulting `diag_s` vector
     /// (`SLIDE_S_OUT`). Also emits the downstream `l_trans` cache matrix
