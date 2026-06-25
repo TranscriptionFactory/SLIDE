@@ -28,7 +28,11 @@ if (HAVE_KO) {
   ko_stat   <- function(X, Xk, y) knockoff::stat.glmnet_lambdasmax(X, Xk, y)
   ko_thresh <- function(W, fdr) knockoff::knockoff.threshold(W, fdr = fdr, offset = 0)
   ko_sample <- function(X, mu, Sigma, diag_s) {
-    knockoff::create.gaussian(X, mu, Sigma, diag_s = diag(diag_s, length(diag_s)))
+    # rust's SDP returns EXACT 0 at s~=0 coords -> Sigma_k exactly singular ->
+    # knockoff::create.gaussian's chol() fails (rust jitters; R does not). Floor to
+    # R's own ~1e-9 scale so (b) runs; near-copy knockoffs (corr~=1) are unchanged.
+    ds <- pmax(diag_s, 1e-9 * max(diag(Sigma)))
+    knockoff::create.gaussian(X, mu, Sigma, diag_s = diag(ds, length(ds)))
   }
   engine <- "knockoff-pkg"
 } else {

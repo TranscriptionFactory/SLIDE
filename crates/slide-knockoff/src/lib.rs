@@ -1288,6 +1288,13 @@ mod tests {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.1);
+        // Knockoff-path grid length (default 250 = rust production). Set to 500 to
+        // probe whether matching R's lasso_max_lambda grid closes the gap. NB the
+        // path also obeys the SLIDE_KNOCKOFF_NLAMBDA cap (default 100), so raise both.
+        let nlambda: usize = std::env::var("SLIDE_ATTR_NLAMBDA")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(250);
 
         let zrows = read_grid(&z_path);
         let n = zrows.len();
@@ -1338,7 +1345,7 @@ mod tests {
             knockoff_method: KnockoffMethod::default(),
             knockoff_offset: 0,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
-            nlambda: 250,
+            nlambda,
             base_seed,
             slide_selection: true,
             f_size: None,
@@ -1356,7 +1363,7 @@ mod tests {
         // Per-draw pass: emit byte-identical X-tilde, compute (a') NO-swap counts,
         // and accumulate mean |corr(Z_j, X~_j)|.
         let glmnet_config = slide_glmnet::GaussianLassoPathConfig {
-            nlambda: 250,
+            nlambda,
             scale_ddof: 1,
             ..slide_glmnet::GaussianLassoPathConfig::default()
         };
