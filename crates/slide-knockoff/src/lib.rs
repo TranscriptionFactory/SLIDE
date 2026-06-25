@@ -1384,6 +1384,10 @@ mod tests {
                 0.0
             }
         };
+        // Set SLIDE_ATTR_SKIP_XTILDE=1 to skip writing the (large) X-tilde files when only
+        // rust's own (a)/(a') counts are wanted (e.g. CD tolerance probes) — sampling is
+        // independent of the CD tunables, so the X-tilde would be identical to a prior run.
+        let skip_xtilde = std::env::var("SLIDE_ATTR_SKIP_XTILDE").is_ok();
         let za = z.as_ndarray();
         let mut counts_noswap = vec![0usize; p];
         let mut corr_accum = vec![0.0; p];
@@ -1393,18 +1397,20 @@ mod tests {
             let xta = x_tilde.as_ndarray();
 
             // Emit X-tilde draw k.
-            let mut s = String::with_capacity(n * p * 18);
-            for i in 0..n {
-                for j in 0..p {
-                    if j > 0 {
-                        s.push(',');
+            if !skip_xtilde {
+                let mut s = String::with_capacity(n * p * 18);
+                for i in 0..n {
+                    for j in 0..p {
+                        if j > 0 {
+                            s.push(',');
+                        }
+                        s.push_str(&format!("{:.12e}", xta[(i, j)]));
                     }
-                    s.push_str(&format!("{:.12e}", xta[(i, j)]));
+                    s.push('\n');
                 }
-                s.push('\n');
+                std::fs::write(format!("{xt_dir}/xt_{k}.csv"), s)
+                    .unwrap_or_else(|e| panic!("write xt_{k}: {e}"));
             }
-            std::fs::write(format!("{xt_dir}/xt_{k}.csv"), s)
-                .unwrap_or_else(|e| panic!("write xt_{k}: {e}"));
 
             // (a') NO-swap per-draw selection, identical W path as R uses.
             let w = slide_glmnet::stat_glmnet_lambdasmax(
