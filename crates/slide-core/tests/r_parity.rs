@@ -7,7 +7,7 @@ use slide_data_io::{
     read_feature_matrix, read_response_vector, MatrixReadOptions, ResponseReadOptions, ResponseType,
 };
 use slide_glmnet::GlmnetFamily;
-use slide_knockoff::{KnockoffMethod, KnockoffStatistic};
+use slide_knockoff::{KnockoffBackend, KnockoffMethod, KnockoffStatistic};
 use slide_love::{LoveConfig, MergeStrategy, NonPureMethod, ScoreNorm};
 use slide_types::{Scalar, Vector};
 
@@ -114,6 +114,7 @@ fn optimize_slide_matches_committed_r_hiv_fixture() {
             niter: fixture_config.niter,
             f_size: None,
             knockoff_method,
+            knockoff_backend: KnockoffBackend::default(),
             knockoff_offset: fixture_config.knockoff_offset,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
             nlambda: 250,
