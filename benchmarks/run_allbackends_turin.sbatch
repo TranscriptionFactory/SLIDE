@@ -7,14 +7,14 @@
 #SBATCH --exclusive
 #SBATCH --constraint=turin
 #SBATCH --export=ALL
-#SBATCH --array=0-3
+#SBATCH --array=0-4
 
 # Clean all-backend head-to-head on contention-free AMD Turin nodes (one
-# --exclusive node per array task). Backends: python, r_knockoffs, pure_r
-# (native-R SLIDE), rust (post interaction-niter-parallel fix, merged to main).
+# --exclusive node per array task). Backends: rust, rust_r_knockoffs, python,
+# r_knockoffs, and pure_r (native-R SLIDE).
 # Full delta x lambda grid, niter 500, 4 cores per backend (apples-to-apples).
 #
-# Pass a SHARED output dir so all 4 tasks write into one place:
+# Pass a SHARED output dir so all 5 tasks write into one place:
 #   sbatch --export=ALL,BENCH_OUT_DIR=benchmark_results/allbackends_turin_<stamp> \
 #          benchmarks/run_allbackends_turin.sbatch
 # (If BENCH_OUT_DIR is unset, each array task would pick its own timestamp dir.)
@@ -59,14 +59,14 @@ if [ "${AGGREGATE_ONLY:-0}" = "1" ]; then
     echo "=== AGGREGATE_ONLY: regenerating cross-backend comparison from $BENCH_OUT_DIR ==="
     python benchmarks/benchmark_backends.py \
         --skip-run \
-        --backends python r_knockoffs pure_r rust \
+        --backends rust rust_r_knockoffs python r_knockoffs pure_r \
         --delta 0.01 0.1 --lam 0.1 1.0 \
         --out-dir "$BENCH_OUT_DIR"
     echo "=== AGGREGATE_ONLY done rc=$? ==="
     exit 0
 fi
 
-BACKENDS=(python r_knockoffs pure_r rust)
+BACKENDS=(rust rust_r_knockoffs python r_knockoffs pure_r)
 BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
 
 echo "=== backend=$BACKEND :: node=$(hostname) job=${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID} ==="
@@ -81,11 +81,15 @@ if [ "$BACKEND" = "pure_r" ]; then
     RSCRIPT_BIN="/software/rhel9/manual/install/r/4.4.0/bin/Rscript"
     RSCRIPT_ARGS=(--rscript "$RSCRIPT_BIN")
     echo "Rscript: $RSCRIPT_BIN -> $("$RSCRIPT_BIN" --version 2>&1 | head -1)"
+elif [ "$BACKEND" = "rust_r_knockoffs" ]; then
+    RSCRIPT_BIN="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin/Rscript"
+    RSCRIPT_ARGS=(--rscript "$RSCRIPT_BIN")
+    echo "Rscript: $RSCRIPT_BIN -> $("$RSCRIPT_BIN" --version 2>&1 | head -1)"
 fi
 
 # ── build rust release once (system cc; pixi conda gcc sysroot is incompatible) ──
 RUST_BIN_ARGS=()
-if [ "$BACKEND" = "rust" ]; then
+if [[ "$BACKEND" = "rust" || "$BACKEND" = "rust_r_knockoffs" ]]; then
     echo "Building slide-rs (release)..."
     ORIG_PATH="$PATH"
     export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '.pixi/envs' | tr '\n' ':')"
