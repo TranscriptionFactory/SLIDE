@@ -18,8 +18,14 @@ Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 | Backend | LOVE | Knockoffs | Notes |
 |---------|------|-----------|-------|
 | `python` | Python | Python | Pure Python pipeline via `loveslide` |
-| `r_knockoffs` | Python | R (via rpy2) | Python LOVE + R knockoff package |
+| `r_knockoffs` | Python | R (via rpy2) | Python LOVE/voting + R SDP and Gaussian draws |
 | `rust` | Rust | Rust | Full Rust pipeline via `slide-rs` |
+| `rust_r_knockoffs` | Rust | R (via `Rscript`) | Rust LOVE/voting + R SDP and Gaussian draws |
+| `pure_r` | R | R | Native-R SLIDE reference |
+
+The release comparison always runs all five modes on the same parameter grid.
+The Rust YAML caller selects R-generated knockoffs with
+`knockoff_backend: r` and an optional `rscript` path.
 
 ## Runtime Results
 
