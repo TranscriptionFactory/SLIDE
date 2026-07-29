@@ -1,6 +1,12 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
 use ndarray::{Array1, Array2, Axis};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, StandardNormal};
@@ -41,6 +47,21 @@ impl Default for KnockoffMethod {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnockoffBackend {
+    #[default]
+    Rust,
+    R {
+        #[serde(default = "default_rscript")]
+        rscript: PathBuf,
+    },
+}
+
+fn default_rscript() -> PathBuf {
+    PathBuf::from("Rscript")
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum KnockoffStatistic {
     GlmnetLambdasMax,
@@ -54,6 +75,7 @@ pub struct KnockoffConfig {
     pub spec: Scalar,
     pub niter: usize,
     pub knockoff_method: KnockoffMethod,
+    pub knockoff_backend: KnockoffBackend,
     pub knockoff_offset: usize,
     pub statistic: KnockoffStatistic,
     pub nlambda: usize,
@@ -73,6 +95,7 @@ impl Default for KnockoffConfig {
             spec: 0.2,
             niter: 100,
             knockoff_method: KnockoffMethod::default(),
+            knockoff_backend: KnockoffBackend::default(),
             knockoff_offset: 0,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
             nlambda: 250,
@@ -134,6 +157,8 @@ pub enum KnockoffError {
     InvalidLambdaCount,
     #[error("f_size must be at least 1, got {actual}")]
     InvalidFeatureChunkSize { actual: usize },
+    #[error("external knockoff solver failed: {message}")]
+    ExternalSolver { message: String },
     #[error("diag_s[{index}] must be finite and non-negative, got {value}")]
     InvalidDiagSEntry { index: usize, value: Scalar },
     #[error("feature variance at index {index} must be strictly positive, got {value:e}")]
@@ -288,7 +313,22 @@ pub fn knockoff_filter_voting(
     config: &KnockoffConfig,
 ) -> Result<VotingResult, KnockoffError> {
     validate_voting_inputs(x, y, config)?;
-    let cache = prepare_knockoff_cache(x, &config.knockoff_method)?;
+    let (cache, r_samples) = match &config.knockoff_backend {
+        KnockoffBackend::Rust => (
+            Some(prepare_knockoff_cache(x, &config.knockoff_method)?),
+            None,
+        ),
+        KnockoffBackend::R { rscript } => (
+            None,
+            Some(generate_knockoffs_r(
+                x,
+                &config.knockoff_method,
+                config.niter,
+                config.base_seed,
+                rscript,
+            )?),
+        ),
+    };
     let (n, p) = x.shape();
 
     // Seed offset for column swap RNG, distinct from knockoff sampling seeds.
@@ -314,7 +354,13 @@ pub fn knockoff_filter_voting(
     };
 
     let run_iteration_cached = |ws: &mut GaussianCdWorkspace, iteration: usize| {
-        let x_tilde = cache.sample(config.base_seed + (iteration as u64));
+        let x_tilde = match &r_samples {
+            Some(samples) => samples[iteration].clone(),
+            None => match &cache {
+                Some(native) => native.sample(config.base_seed + (iteration as u64)),
+                None => unreachable!("validated knockoff backend must provide samples"),
+            },
+        };
 
         // Prepare X_tilde half (fresh each iteration)
         let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
@@ -355,7 +401,13 @@ pub fn knockoff_filter_voting(
     };
 
     let run_iteration_uncached = |augmented: &mut Matrix, swap_buf: &mut Vec<Scalar>, iteration: usize| {
-        let x_tilde = cache.sample(config.base_seed + (iteration as u64));
+        let x_tilde = match &r_samples {
+            Some(samples) => samples[iteration].clone(),
+            None => match &cache {
+                Some(native) => native.sample(config.base_seed + (iteration as u64)),
+                None => unreachable!("validated knockoff backend must provide samples"),
+            },
+        };
         let buf = augmented.as_ndarray_mut();
 
         // Fill X_tilde portion into right half of buffer
@@ -865,6 +917,118 @@ fn solve_diag_s(sigma: &Matrix, method: &KnockoffMethod) -> Result<Vector, Knock
         KnockoffMethod::Sdp => create_solve_sdp(sigma)?,
         KnockoffMethod::Equi => create_solve_equi(sigma)?,
     })
+}
+
+pub fn generate_knockoffs_r(
+    x: &Matrix,
+    method: &KnockoffMethod,
+    niter: usize,
+    base_seed: u64,
+    rscript: &Path,
+) -> Result<Vec<Matrix>, KnockoffError> {
+    const SCRIPT: &str = r#"
+args <- commandArgs(trailingOnly=TRUE)
+n <- as.integer(args[[1]])
+p <- as.integer(args[[2]])
+niter <- as.integer(args[[3]])
+base_seed <- as.numeric(args[[4]])
+method <- args[[5]]
+X <- matrix(scan(file("stdin"), quiet=TRUE), nrow=n, ncol=p, byrow=TRUE)
+suppressPackageStartupMessages(library(knockoff))
+mu <- colMeans(X)
+Sigma <- cov(X)
+if (!knockoff:::is_posdef(Sigma)) {
+  if (!requireNamespace("corpcor", quietly=TRUE)) stop("corpcor is not installed")
+  Sigma <- suppressWarnings(matrix(as.numeric(corpcor::cov.shrink(X, verbose=FALSE)), nrow=p))
+}
+diag_s <- switch(method,
+  asdp=knockoff::create.solve_asdp(Sigma),
+  sdp=knockoff::create.solve_sdp(Sigma),
+  equi=knockoff::create.solve_equi(Sigma))
+for (iteration in seq_len(niter)) {
+  set.seed(base_seed + iteration - 1)
+  Xk <- knockoff::create.gaussian(X, mu, Sigma, diag_s=diag_s)
+  cat(sprintf("%.17g", as.numeric(Xk)), sep="\n")
+}
+"#;
+    let (rows, columns) = x.shape();
+    let method_name = match method {
+        KnockoffMethod::Asdp { .. } => "asdp",
+        KnockoffMethod::Sdp => "sdp",
+        KnockoffMethod::Equi => "equi",
+    };
+    let mut child = Command::new(rscript)
+        .args([
+            "--vanilla",
+            "-e",
+            SCRIPT,
+            &rows.to_string(),
+            &columns.to_string(),
+            &niter.to_string(),
+            &base_seed.to_string(),
+            method_name,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| KnockoffError::ExternalSolver {
+            message: format!("could not start {}: {error}", rscript.display()),
+        })?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        for value in x.as_ndarray() {
+            writeln!(stdin, "{value:.17}").map_err(|error| KnockoffError::ExternalSolver {
+                message: format!("could not write features to R: {error}"),
+            })?;
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| KnockoffError::ExternalSolver {
+            message: format!("could not wait for R knockoff generator: {error}"),
+        })?;
+    if !output.status.success() {
+        return Err(KnockoffError::ExternalSolver {
+            message: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+    let expected_values = niter
+        .checked_mul(rows)
+        .and_then(|count| count.checked_mul(columns))
+        .ok_or_else(|| KnockoffError::ExternalSolver {
+            message: "R knockoff output size overflowed usize".to_owned(),
+        })?;
+    let values = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .map(|value| {
+            value
+                .parse::<Scalar>()
+                .map_err(|error| KnockoffError::ExternalSolver {
+                    message: format!("invalid R generator output {value:?}: {error}"),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() != expected_values {
+        return Err(KnockoffError::ExternalSolver {
+            message: format!(
+                "R generator returned {} values; expected {expected_values}",
+                values.len()
+            ),
+        });
+    }
+    let values_per_iteration = rows * columns;
+    Ok(values
+        .chunks_exact(values_per_iteration)
+        .map(|iteration| {
+            let mut matrix = Array2::zeros((rows, columns));
+            for column in 0..columns {
+                for row in 0..rows {
+                    matrix[(row, column)] = iteration[column * rows + row];
+                }
+            }
+            Matrix::from_ndarray(matrix)
+        })
+        .collect())
 }
 
 fn solve_sigma_inv_diag_s(sigma: &Matrix, diag_s: &Vector) -> Result<Matrix, KnockoffError> {

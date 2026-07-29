@@ -585,7 +585,8 @@ def _prepare_knockoff_cache(
 
 def _sample_knockoffs_from_cache(
     X: np.ndarray,
-    cache: Dict[str, Any]
+    cache: Dict[str, Any],
+    seed: Optional[int] = None,
 ) -> np.ndarray:
     """
     Generate knockoff variables using pre-computed cache.
@@ -605,6 +606,9 @@ def _sample_knockoffs_from_cache(
     np.ndarray of shape (n, p)
         Matrix of knockoff variables.
     """
+    sampler = cache.get('sampler')
+    if sampler is not None:
+        return sampler(X, cache, seed)
     if cache.get('degenerate', False):
         # Return copy of X if knockoff construction failed
         return X.copy()
@@ -627,7 +631,7 @@ def _cached_iteration(X, y, cache, statistic, fdr, offset, seed):
     """Single cached knockoff iteration for parallel execution."""
     if seed is not None:
         np.random.seed(seed)
-    Xk = _sample_knockoffs_from_cache(X, cache)
+    Xk = _sample_knockoffs_from_cache(X, cache, seed)
     W = statistic(X, Xk, y)
     t = knockoff_threshold(W, fdr=fdr, offset=offset)
     selected = np.where(W >= t)[0]
@@ -895,6 +899,7 @@ def knockoff_filter_voting(
 
     # Extract sdp_solver from kwargs (used by r_knockoffs backend)
     sdp_solver = kwargs.pop('sdp_solver', None)
+    knockoff_sampler = kwargs.pop('knockoff_sampler', None)
 
     # Check if we can use caching optimization (default knockoffs and use_cache enabled)
     can_use_cache = use_cache and (knockoffs is create_second_order or
@@ -916,6 +921,7 @@ def knockoff_filter_voting(
         try:
             cache = _prepare_knockoff_cache(X, method='asdp', shrink=False, match_r=match_r,
                                             sdp_solver=sdp_solver)
+            cache['sampler'] = knockoff_sampler
         except Exception as e:
             warnings.warn(f"Cache preparation failed: {e}. Falling back to uncached path.")
             can_use_cache = False
@@ -946,7 +952,7 @@ def knockoff_filter_voting(
 
                 try:
                     # Only random sampling varies per iteration
-                    Xk = _sample_knockoffs_from_cache(X, cache)
+                    Xk = _sample_knockoffs_from_cache(X, cache, seed)
 
                     # Compute statistics and threshold
                     W = statistic(X, Xk, y)
