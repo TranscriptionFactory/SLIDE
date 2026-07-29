@@ -167,6 +167,21 @@ thresh_fdr: 0.2
 SLIDE_iter: 500
 ```
 
+### R-generated knockoffs
+
+Rust uses its native knockoff generator by default. To generate the Gaussian
+knockoff matrices with R's `knockoff` package instead, add:
+
+```yaml
+knockoff_backend: r
+rscript: /path/to/Rscript
+```
+
+The selected `Rscript` must have the `knockoff` and `corpcor` packages
+available. R computes the covariance, SDP solution, and random Gaussian draws;
+the remaining SLIDE voting and scoring pipeline stays in Rust. Use
+`knockoff_backend: rust` (or omit the key) for the fully native Rust path.
+
 Each `(delta, lambda)` pair becomes one evaluation. The pipeline writes
 intermediate results to the checkpoint file after each evaluation completes.
 
