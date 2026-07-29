@@ -1507,6 +1507,7 @@ mod tests {
             spec,
             niter: ndraws,
             knockoff_method: KnockoffMethod::default(),
+            knockoff_backend: KnockoffBackend::default(),
             knockoff_offset: 0,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
             nlambda,
