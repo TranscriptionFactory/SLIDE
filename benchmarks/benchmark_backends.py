@@ -7,7 +7,9 @@ correctness (sig LFs, Z-matrix correlations, A-matrix agreement).
 Backends:
   - python:       loveslide OptimizeSLIDE with Python LOVE + Python knockoffs
   - r_knockoffs:  loveslide OptimizeSLIDE with Python LOVE + R knockoffs (rpy2)
-  - rust:         slide-cli binary via subprocess
+  - rust:         slide-cli with native Rust knockoff SDP solver
+  - rust_r_knockoffs: slide-cli with R knockoff SDP solver
+  - pure_r:       native R SLIDE
 
 Usage:
     # Full benchmark on SSc UnTx (default)
@@ -110,12 +112,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--y-path", default=_SSC_Y, help="Path to Y vector CSV")
     p.add_argument("--y-factor", action="store_true", help="Treat y as binary factor")
     p.add_argument(
-        "--backends", nargs="+", default=["python", "r_knockoffs", "rust", "pure_r"],
+        "--backends", nargs="+",
+        default=["rust", "rust_r_knockoffs", "python", "r_knockoffs", "pure_r"],
         help="Backends to benchmark",
     )
     p.add_argument(
         "--rscript", default=None,
-        help="Path to Rscript binary used by pure_r backend "
+        help="Path to Rscript binary used by R-backed and pure_r backends "
              "(defaults to pixi env Rscript)",
     )
     p.add_argument(
@@ -361,9 +364,9 @@ def run_pure_r_backend(
 
 
 def run_rust_backend(
-    args: argparse.Namespace, delta: float, lam: float, out_dir: Path,
+    args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
 ) -> TimingRecord:
-    """Run Rust backend via slide-cli subprocess."""
+    """Run Rust with either the native Rust or R knockoff SDP solver."""
     import yaml
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -382,7 +385,10 @@ def run_rust_backend(
         "fdr": args.knockoff_fdr if args.knockoff_fdr is not None else 0.1,
         "SLIDE_iter": args.niter,
         "do_interacts": True,
+        "knockoff_backend": "r" if backend == "rust_r_knockoffs" else "rust",
     }
+    if backend == "rust_r_knockoffs":
+        rust_config["rscript"] = args.rscript or _DEFAULT_RSCRIPT
     if args.knockoff_nlambda is not None:
         rust_config["nlambda"] = args.knockoff_nlambda
     if args.knockoff_base_seed is not None:
@@ -418,11 +424,11 @@ def run_rust_backend(
             )
         elapsed = time.perf_counter() - start
         if result.returncode != 0:
-            return TimingRecord("rust", delta, lam, elapsed, "failed", f"exit code {result.returncode}")
-        return TimingRecord("rust", delta, lam, elapsed, "success")
+            return TimingRecord(backend, delta, lam, elapsed, "failed", f"exit code {result.returncode}")
+        return TimingRecord(backend, delta, lam, elapsed, "success")
     except Exception as exc:
         elapsed = time.perf_counter() - start
-        return TimingRecord("rust", delta, lam, elapsed, "failed", str(exc))
+        return TimingRecord(backend, delta, lam, elapsed, "failed", str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +482,9 @@ def load_python_result(
     )
 
 
-def load_rust_result(delta: float, lam: float, out_dir: Path) -> BackendResult | None:
+def load_rust_result(
+    backend: str, delta: float, lam: float, out_dir: Path,
+) -> BackendResult | None:
     """Load results from a Rust checkpoint JSON."""
     ckpt_path = out_dir / "checkpoint.json"
     if not ckpt_path.exists():
@@ -516,7 +524,7 @@ def load_rust_result(delta: float, lam: float, out_dir: Path) -> BackendResult |
     z_col_names = [f"Z{i}" for i in range(ncols_z)]
 
     return BackendResult(
-        backend="rust", delta=delta, lam=lam, k=k,
+        backend=backend, delta=delta, lam=lam, k=k,
         sig_lfs=sig_lfs, sig_interacts=sig_interacts,
         z_matrix=z_matrix, z_col_names=z_col_names,
         a_matrix=a_matrix, score=ev.get("score"),
@@ -720,9 +728,9 @@ def main(argv: list[str] | None = None) -> int:
                 backend_dir.mkdir(parents=True, exist_ok=True)
                 log.info("=== %s delta=%s lambda=%s ===", backend, delta, lam)
 
-                if backend == "rust":
+                if backend in ("rust", "rust_r_knockoffs"):
                     rust_dir = backend_dir / _param_subdir(delta, lam)
-                    record = run_rust_backend(args, delta, lam, rust_dir)
+                    record = run_rust_backend(args, backend, delta, lam, rust_dir)
                 elif backend == "pure_r":
                     record = run_pure_r_backend(args, delta, lam, backend_dir)
                 else:
@@ -747,9 +755,9 @@ def main(argv: list[str] | None = None) -> int:
     for backend in args.backends:
         for delta, lam in param_grid:
             backend_dir = out_dir / backend
-            if backend == "rust":
+            if backend in ("rust", "rust_r_knockoffs"):
                 rust_dir = backend_dir / _param_subdir(delta, lam)
-                r = load_rust_result(delta, lam, rust_dir)
+                r = load_rust_result(backend, delta, lam, rust_dir)
             else:
                 r = load_python_result(backend, delta, lam, backend_dir)
             if r is not None:

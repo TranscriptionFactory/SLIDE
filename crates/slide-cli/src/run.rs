@@ -6,7 +6,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
 use slide_core::{
-    optimize_slide_with_checkpoint_progress, OptimizeResponseType, OptimizeSlideConfig,
+    optimize_slide_with_checkpoint_progress, KnockoffBackend, OptimizeResponseType,
+    OptimizeSlideConfig,
 };
 use slide_cv::FinalCvConfig;
 use slide_data_io::{
@@ -68,6 +69,12 @@ pub struct RunConfig {
 
     #[serde(default)]
     pub base_seed: Option<u64>,
+
+    #[serde(default)]
+    pub knockoff_backend: Option<String>,
+
+    #[serde(default)]
+    pub rscript: Option<PathBuf>,
 
     #[serde(default)]
     pub cv: Option<RunCvConfig>,
@@ -186,6 +193,20 @@ fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfi
     if let Some(v) = cfg.base_seed {
         opt_config.knockoff.base_seed = v;
     }
+    if let Some(backend) = cfg.knockoff_backend.as_deref() {
+        opt_config.knockoff.knockoff_backend = match backend {
+            "rust" => KnockoffBackend::Rust,
+            "r" => KnockoffBackend::R {
+                rscript: cfg
+                    .rscript
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("Rscript")),
+            },
+            other => anyhow::bail!(
+                "unsupported knockoff_backend: {other}; expected \"rust\" or \"r\""
+            ),
+        };
+    }
 
     if let Some(cv) = &cfg.cv {
         if cv.enabled.unwrap_or(false) {
@@ -221,6 +242,7 @@ fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfi
 #[cfg(test)]
 mod tests {
     use super::{optimize_config_from_run_config, RunConfig};
+    use slide_core::KnockoffBackend;
     use slide_cv::FinalCvConfig;
     use slide_score::ResponseType;
 
@@ -251,6 +273,28 @@ SLIDE_iter: 7
         assert_eq!(opt_config.knockoff.fdr, 0.2);
         assert_eq!(opt_config.knockoff.niter, 7);
         assert!(opt_config.knockoff.slide_selection);
+    }
+
+    #[test]
+    fn yaml_can_select_r_knockoff_backend() {
+        let cfg = parse_config(
+            r#"
+x_path: x.csv
+y_path: y.csv
+delta: [0.1]
+lambda: [0.5]
+knockoff_backend: r
+rscript: /opt/R/bin/Rscript
+"#,
+        );
+        let opt_config = optimize_config_from_run_config(&cfg)
+            .unwrap_or_else(|error| panic!("config should build: {error}"));
+        assert_eq!(
+            opt_config.knockoff.knockoff_backend,
+            KnockoffBackend::R {
+                rscript: "/opt/R/bin/Rscript".into()
+            }
+        );
     }
 
     #[test]

@@ -154,6 +154,27 @@ def _solve_sdp_r(Sigma: np.ndarray, method: str = "sdp") -> np.ndarray:
     return diag_s
 
 
+def _sample_gaussian_r(X, cache, seed=None):
+    """Sample one Gaussian knockoff matrix in R using cached parameters."""
+    robjects = _import_rpy2()
+    from rpy2.robjects import numpy2ri
+    from rpy2.robjects.packages import importr
+
+    converter = robjects.default_converter + numpy2ri.converter
+    with converter.context():
+        if seed is not None:
+            robjects.r["set.seed"](int(seed))
+        knockoff_r = importr("knockoff")
+        diag_s = np.diag(cache["diag_s"])
+        sampled = knockoff_r.create_gaussian(
+            X,
+            cache["mu"],
+            cache["Sigma"],
+            diag_s=diag_s,
+        )
+        return np.asarray(sampled)
+
+
 def _single_knockoff_iteration_python(
     z, y, fdr, method, shrink, offset, statistic, mu, Sigma, diag_s
 ):
@@ -917,10 +938,11 @@ class Knockoffs:
 
         # Determine knockoffs callable based on backend
         if backend == "r_knockoffs":
-            # Use R's SDP solver once per chunk, then Python cached iteration loop
-            knockoffs_func = None  # Use default Python knockoff sampling
+            # Solve once, then use R's create.gaussian for every cached draw.
+            knockoffs_func = None
             use_cache = kwargs.pop("use_cache", True)
             kwargs["sdp_solver"] = _solve_sdp_r
+            kwargs["knockoff_sampler"] = _sample_gaussian_r
         elif backend == "python":
             knockoffs_func = None  # Use default create_second_order
             use_cache = kwargs.pop("use_cache", True)

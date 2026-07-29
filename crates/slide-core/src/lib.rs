@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use slide_data_io::{standardize, ResponseType as DataResponseType};
 use slide_glmnet::GlmnetFamily;
-pub use slide_knockoff::VotingResult;
+pub use slide_knockoff::{KnockoffBackend, VotingResult};
 use slide_knockoff::{
     select_short_freq, KnockoffConfig, KnockoffError, KnockoffMethod, KnockoffStatistic,
 };
@@ -31,6 +31,7 @@ pub struct MarginalLfSelectionConfig {
     pub niter: usize,
     pub f_size: Option<usize>,
     pub knockoff_method: KnockoffMethod,
+    pub knockoff_backend: KnockoffBackend,
     pub knockoff_offset: usize,
     pub statistic: KnockoffStatistic,
     pub nlambda: usize,
@@ -48,6 +49,7 @@ impl Default for MarginalLfSelectionConfig {
             niter: knockoff.niter,
             f_size: knockoff.f_size,
             knockoff_method: knockoff.knockoff_method,
+            knockoff_backend: knockoff.knockoff_backend,
             knockoff_offset: knockoff.knockoff_offset,
             statistic: knockoff.statistic,
             nlambda: knockoff.nlambda,
@@ -66,6 +68,7 @@ impl MarginalLfSelectionConfig {
             spec: self.spec,
             niter: self.niter,
             knockoff_method: self.knockoff_method.clone(),
+            knockoff_backend: self.knockoff_backend.clone(),
             knockoff_offset: self.knockoff_offset,
             statistic: self.statistic,
             nlambda: self.nlambda,
