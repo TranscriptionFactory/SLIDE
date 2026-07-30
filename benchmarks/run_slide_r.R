@@ -39,6 +39,7 @@ defaults <- list(
   fdr              = "0.1",
   `thresh-fdr`     = "0.2",
   `slide-top-feats`= "10",
+  `base-seed`      = NA_character_,
   `y-factor`       = FALSE
 )
 opts <- modifyList(defaults, parse_cli(commandArgs(trailingOnly = TRUE)))
@@ -51,6 +52,7 @@ opts$fdr               <- as.numeric(opts$fdr)
 opts[["thresh-fdr"]]   <- as.numeric(opts[["thresh-fdr"]])
 opts$niter             <- as.integer(opts$niter)
 opts[["slide-top-feats"]] <- as.integer(opts[["slide-top-feats"]])
+opts[["base-seed"]]    <- as.integer(opts[["base-seed"]])
 opts[["y-factor"]]     <- isTRUE(opts[["y-factor"]])
 
 for (k in c("x-path", "y-path", "out-dir", "delta", "lambda")) {
@@ -58,6 +60,7 @@ for (k in c("x-path", "y-path", "out-dir", "delta", "lambda")) {
 }
 
 suppressPackageStartupMessages(library(SLIDE))
+if (!is.na(opts[["base-seed"]])) set.seed(opts[["base-seed"]])
 
 out_path <- normalizePath(opts$`out-dir`, mustWork = FALSE)
 dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
