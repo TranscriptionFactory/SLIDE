@@ -43,6 +43,17 @@ pub struct GaussianLassoPathResult {
     pub total_cd_iters: usize,
 }
 
+/// Intermediate values from the lambdas-max knockoff statistic.
+///
+/// This is intended for parity diagnostics; production callers should normally
+/// use [`stat_glmnet_lambdasmax`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct KnockoffLambdasMaxDiagnostics {
+    pub path: GaussianLassoPathResult,
+    pub entry_lambda: Vector,
+    pub statistic: Vector,
+}
+
 pub type BinomialLassoPathConfig = GaussianLassoPathConfig;
 pub type BinomialLassoPathResult = GaussianLassoPathResult;
 
@@ -386,6 +397,20 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<Vector, GlmnetError> {
+    Ok(
+        stat_glmnet_lambdasmax_prebuilt_diagnostics(augmented, p, y, family, config)?
+            .statistic,
+    )
+}
+
+/// Compute the lambdas-max statistic and retain its fitted path for parity diagnostics.
+pub fn stat_glmnet_lambdasmax_prebuilt_diagnostics(
+    augmented: &Matrix,
+    p: usize,
+    y: &Vector,
+    family: GlmnetFamily,
+    config: &GaussianLassoPathConfig,
+) -> Result<KnockoffLambdasMaxDiagnostics, GlmnetError> {
     let (knockoff_nlambda, knockoff_tolerance, knockoff_max_iter) = knockoff_cd_tunables();
     let knockoff_config = GaussianLassoPathConfig {
         nlambda: config.nlambda.min(knockoff_nlambda),
@@ -411,7 +436,11 @@ pub fn stat_glmnet_lambdasmax_prebuilt(
         statistic[j] = original.max(knockoff) * (original - knockoff).signum();
     }
 
-    Ok(Vector::from_ndarray(statistic))
+    Ok(KnockoffLambdasMaxDiagnostics {
+        path,
+        entry_lambda: Vector::from_ndarray(entries),
+        statistic: Vector::from_ndarray(statistic),
+    })
 }
 
 /// Emits one structured profile line per knockoff iteration if the

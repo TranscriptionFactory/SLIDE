@@ -22,6 +22,7 @@ ndarray.workspace = true
 rayon.workspace = true
 serde.workspace = true
 serde_json = "1.0"
+sha2 = "0.10"
 serde_yaml = "0.9"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.28"
@@ -31,3 +32,4 @@ slide-cv = { version = "0.1.0", path = "../slide-cv" }
 slide-data-io = { version = "0.1.0", path = "../slide-data-io" }
 slide-score = { version = "0.1.0", path = "../slide-score" }
 slide-types = { version = "0.1.0", path = "../slide-types" }
+slide-glmnet = { version = "0.1.0", path = "../slide-glmnet" }

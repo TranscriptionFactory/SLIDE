@@ -1,6 +1,6 @@
 """GLMNet-based statistics for knockoff filter."""
 
-from typing import Optional
+from typing import Dict, Optional, Tuple, Union
 import logging
 import warnings
 import numpy as np
@@ -48,8 +48,9 @@ def _lasso_max_lambda_glmnet(
     standardize: bool = True,  # Match R: always standardize X with scale() (ddof=1)
     family: str = 'gaussian',
     use_sklearn: bool = False,  # Force sklearn fallback for R-compatibility
+    return_diagnostics: bool = False,
     **kwargs
-) -> np.ndarray:
+) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, np.ndarray]]]:
     """
     Compute the maximum lambda at which each variable enters the lasso model.
 
@@ -147,6 +148,12 @@ def _lasso_max_lambda_glmnet(
         # alphas are sorted in decreasing order
         lambda_entry = np.where(has_nonzero, alphas[first_nonzero_idx] * n, 0.0)
 
+        if return_diagnostics:
+            return lambda_entry, {
+                'standardized_design': X_std,
+                'lambda': np.asarray(alphas),
+                'coefficients': np.asarray(coefs),
+            }
         return lambda_entry
 
     elif family == 'binomial':
@@ -407,8 +414,10 @@ def stat_glmnet_lambdasmax(
     y: np.ndarray,
     family: str = 'gaussian',
     use_sklearn: bool = False,
+    swap: Optional[np.ndarray] = None,
+    return_diagnostics: bool = False,
     **kwargs
-) -> np.ndarray:
+) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, np.ndarray]]]:
     """
     GLM signed maximum lambda statistic.
 
@@ -440,17 +449,43 @@ def stat_glmnet_lambdasmax(
     p = X.shape[1]
 
     # Randomly swap columns
-    X_swap, Xk_swap, swap = swap_columns(X, X_k)
+    if swap is None:
+        X_swap, Xk_swap, swap = swap_columns(X, X_k)
+    else:
+        swap = np.asarray(swap, dtype=bool)
+        if swap.shape != (p,):
+            raise ValueError(f"swap must have shape ({p},), got {swap.shape}")
+        X_swap = np.where(swap[np.newaxis, :], X_k, X)
+        Xk_swap = np.where(swap[np.newaxis, :], X, X_k)
 
     # Concatenate and compute statistics
     X_combined = np.hstack([X_swap, Xk_swap])
-    Z = _lasso_max_lambda_glmnet(X_combined, y, family=family, use_sklearn=use_sklearn, **kwargs)
+    result = _lasso_max_lambda_glmnet(
+        X_combined,
+        y,
+        family=family,
+        use_sklearn=use_sklearn,
+        return_diagnostics=return_diagnostics,
+        **kwargs,
+    )
+    if return_diagnostics:
+        Z, diagnostics = result
+    else:
+        Z = result
 
     # Compute signed max statistic
     W = compute_signed_max_stat(Z, p)
 
     # Correct for swapping
-    return correct_for_swap(W, swap)
+    W = correct_for_swap(W, swap)
+    if return_diagnostics:
+        diagnostics.update({
+            'entry_lambda_swapped': Z,
+            'swap': swap,
+            'W': W,
+        })
+        return W, diagnostics
+    return W
 
 
 def stat_glmnet_coefdiff(
