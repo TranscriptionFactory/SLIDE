@@ -23,6 +23,8 @@ pub struct GaussianLassoPathConfig {
     pub nlambda: usize,
     pub cv_folds: usize,
     pub lambda: Option<Vector>,
+    /// Allow df/deviance-based truncation before the requested lambda grid ends.
+    pub early_stop_path: bool,
     /// Stop the path early once every coefficient has been non-zero at least once.
     /// Useful for `lambdasmax` which only needs entry lambdas.
     pub early_stop_all_entered: bool,
@@ -113,6 +115,7 @@ impl Default for GaussianLassoPathConfig {
             nlambda: DEFAULT_NLAMBDA,
             cv_folds: 5,
             lambda: None,
+            early_stop_path: true,
             early_stop_all_entered: false,
             scale_ddof: 0,
         }
@@ -450,7 +453,8 @@ pub fn stat_glmnet_lambdasmax_prebuilt_diagnostics(
         nlambda: config.nlambda.min(knockoff_nlambda),
         tolerance: knockoff_tolerance,
         max_iter: knockoff_max_iter,
-        early_stop_all_entered: true,
+        early_stop_path: false,
+        early_stop_all_entered: false,
         ..config.clone()
     };
     let _t0 = std::time::Instant::now();
@@ -553,7 +557,8 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
         nlambda: config.nlambda.min(knockoff_nlambda),
         tolerance: knockoff_tolerance,
         max_iter: knockoff_max_iter,
-        early_stop_all_entered: true,
+        early_stop_path: false,
+        early_stop_all_entered: false,
         ..config.clone()
     };
     let _t0 = std::time::Instant::now();
@@ -1337,15 +1342,17 @@ fn run_gaussian_cd(
             }
         }
 
-        let nnz = ws.beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
-        if nnz >= n {
-            break;
-        }
-        if null_deviance > 0.0 {
-            let rss = ws.residual.dot(&ws.residual);
-            let dev_ratio = 1.0 - rss / null_deviance;
-            if dev_ratio > DEVMAX {
+        if config.early_stop_path {
+            let nnz = ws.beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
+            if nnz >= n {
                 break;
+            }
+            if null_deviance > 0.0 {
+                let rss = ws.residual.dot(&ws.residual);
+                let dev_ratio = 1.0 - rss / null_deviance;
+                if dev_ratio > DEVMAX {
+                    break;
+                }
             }
         }
     }
