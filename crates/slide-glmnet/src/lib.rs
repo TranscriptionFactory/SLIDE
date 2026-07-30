@@ -124,16 +124,26 @@ pub fn gaussian_lasso_path(
     y: &Vector,
     config: &GaussianLassoPathConfig,
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
+    gaussian_lasso_path_with_grid_endpoint(x, y, config, true)
+}
+
+fn gaussian_lasso_path_with_grid_endpoint(
+    x: &Matrix,
+    y: &Vector,
+    config: &GaussianLassoPathConfig,
+    include_lambda_min: bool,
+) -> Result<GaussianLassoPathResult, GlmnetError> {
     validate_inputs(x, y, config)?;
 
     let prepared = PreparedData::from_inputs(x, y, config.standardize, config.scale_ddof);
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
-        None => build_lambda_grid(
+        None => build_gaussian_lambda_grid(
             &prepared.x_scaled,
             &prepared.y_centered,
             config.nlambda,
             config.alpha,
+            include_lambda_min,
         )?,
     };
 
@@ -183,7 +193,14 @@ pub fn gaussian_lasso_path_with_left_cache(
                 .axis_iter(Axis(1))
                 .map(|column| column.dot(y_array).abs() / n_f)
                 .fold(0.0, Scalar::max);
-            build_geometric_lambda_grid(lambda_max_raw, n, 2 * p, config.nlambda, config.alpha)?
+            build_geometric_lambda_grid(
+                lambda_max_raw,
+                n,
+                2 * p,
+                config.nlambda,
+                config.alpha,
+                false,
+            )?
         }
     };
 
@@ -340,6 +357,16 @@ pub fn build_lambda_grid(
     nlambda: usize,
     alpha: Scalar,
 ) -> Result<Vector, GlmnetError> {
+    build_gaussian_lambda_grid(x, y, nlambda, alpha, true)
+}
+
+fn build_gaussian_lambda_grid(
+    x: &Matrix,
+    y: &Vector,
+    nlambda: usize,
+    alpha: Scalar,
+    include_lambda_min: bool,
+) -> Result<Vector, GlmnetError> {
     validate_lambda_grid_inputs(x, y, nlambda, alpha)?;
 
     let x_array = x.as_ndarray();
@@ -351,7 +378,14 @@ pub fn build_lambda_grid(
         .map(|column| column.dot(y_array).abs() / (n as Scalar))
         .fold(0.0, Scalar::max);
 
-    build_geometric_lambda_grid(lambda_max_raw, n, p, nlambda, alpha)
+    build_geometric_lambda_grid(
+        lambda_max_raw,
+        n,
+        p,
+        nlambda,
+        alpha,
+        include_lambda_min,
+    )
 }
 
 pub fn build_binomial_lambda_grid(
@@ -374,7 +408,7 @@ pub fn build_binomial_lambda_grid(
         .map(|column| column.dot(&centered).abs() / (n as Scalar))
         .fold(0.0, Scalar::max);
 
-    build_geometric_lambda_grid(lambda_max_raw, n, p, nlambda, alpha)
+    build_geometric_lambda_grid(lambda_max_raw, n, p, nlambda, alpha, true)
 }
 
 pub fn stat_glmnet_lambdasmax(
@@ -421,7 +455,9 @@ pub fn stat_glmnet_lambdasmax_prebuilt_diagnostics(
     };
     let _t0 = std::time::Instant::now();
     let path = match family {
-        GlmnetFamily::Gaussian => gaussian_lasso_path(augmented, y, &knockoff_config)?,
+        GlmnetFamily::Gaussian => {
+            gaussian_lasso_path_with_grid_endpoint(augmented, y, &knockoff_config, false)?
+        }
         GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, &knockoff_config)?,
     };
     log_knockoff_profile("uncached", &path, _t0);
@@ -807,13 +843,22 @@ fn build_geometric_lambda_grid(
     p: usize,
     nlambda: usize,
     alpha: Scalar,
+    include_lambda_min: bool,
 ) -> Result<Vector, GlmnetError> {
     let alpha_scale = if alpha > 0.0 { alpha } else { 1.0 };
     let lambda_max = (lambda_max_raw / alpha_scale).max(MIN_LAMBDA_FLOOR);
-    let lambda_min_ratio = if n > p { 1.0e-4 } else { 1.0 / 2000.0 };
+    let lambda_min_ratio: Scalar = if n > p { 1.0e-4 } else { 1.0 / 2000.0 };
 
     if nlambda == 1 {
         return Ok(Vector::from_ndarray(Array1::from_vec(vec![lambda_max])));
+    }
+
+    if !include_lambda_min {
+        return Ok(Vector::from_ndarray(Array1::from_iter(
+            (0..nlambda).map(|index| {
+                lambda_max * lambda_min_ratio.powf((index as Scalar) / (nlambda as Scalar))
+            }),
+        )));
     }
 
     let log_max = lambda_max.ln();
