@@ -23,8 +23,6 @@ pub struct GaussianLassoPathConfig {
     pub nlambda: usize,
     pub cv_folds: usize,
     pub lambda: Option<Vector>,
-    /// Allow df/deviance-based truncation before the requested lambda grid ends.
-    pub early_stop_path: bool,
     /// Stop the path early once every coefficient has been non-zero at least once.
     /// Useful for `lambdasmax` which only needs entry lambdas.
     pub early_stop_all_entered: bool,
@@ -115,7 +113,6 @@ impl Default for GaussianLassoPathConfig {
             nlambda: DEFAULT_NLAMBDA,
             cv_folds: 5,
             lambda: None,
-            early_stop_path: true,
             early_stop_all_entered: false,
             scale_ddof: 0,
         }
@@ -127,7 +124,7 @@ pub fn gaussian_lasso_path(
     y: &Vector,
     config: &GaussianLassoPathConfig,
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
-    gaussian_lasso_path_with_grid_endpoint(x, y, config, true)
+    gaussian_lasso_path_with_grid_endpoint(x, y, config, true, true)
 }
 
 fn gaussian_lasso_path_with_grid_endpoint(
@@ -135,6 +132,7 @@ fn gaussian_lasso_path_with_grid_endpoint(
     y: &Vector,
     config: &GaussianLassoPathConfig,
     include_lambda_min: bool,
+    early_stop_path: bool,
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
     validate_inputs(x, y, config)?;
 
@@ -152,7 +150,13 @@ fn gaussian_lasso_path_with_grid_endpoint(
 
     let (n, p) = (x.nrows(), x.ncols());
     let mut ws = GaussianCdWorkspace::new(n, p);
-    Ok(run_gaussian_cd(&prepared, &lambda, config, &mut ws))
+    Ok(run_gaussian_cd(
+        &prepared,
+        &lambda,
+        config,
+        &mut ws,
+        early_stop_path,
+    ))
 }
 
 /// Like `gaussian_lasso_path` but reuses precomputed per-column stats for X
@@ -207,7 +211,7 @@ pub fn gaussian_lasso_path_with_left_cache(
         }
     };
 
-    Ok(run_gaussian_cd(&prepared, &lambda, config, ws))
+    Ok(run_gaussian_cd(&prepared, &lambda, config, ws, false))
 }
 
 pub fn binomial_lasso_path(
@@ -453,14 +457,13 @@ pub fn stat_glmnet_lambdasmax_prebuilt_diagnostics(
         nlambda: config.nlambda.min(knockoff_nlambda),
         tolerance: knockoff_tolerance,
         max_iter: knockoff_max_iter,
-        early_stop_path: false,
         early_stop_all_entered: false,
         ..config.clone()
     };
     let _t0 = std::time::Instant::now();
     let path = match family {
         GlmnetFamily::Gaussian => {
-            gaussian_lasso_path_with_grid_endpoint(augmented, y, &knockoff_config, false)?
+            gaussian_lasso_path_with_grid_endpoint(augmented, y, &knockoff_config, false, false)?
         }
         GlmnetFamily::Binomial => binomial_lasso_path(augmented, y, &knockoff_config)?,
     };
@@ -557,7 +560,6 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
         nlambda: config.nlambda.min(knockoff_nlambda),
         tolerance: knockoff_tolerance,
         max_iter: knockoff_max_iter,
-        early_stop_path: false,
         early_stop_all_entered: false,
         ..config.clone()
     };
@@ -1258,6 +1260,7 @@ fn run_gaussian_cd(
     lambda: &Vector,
     config: &GaussianLassoPathConfig,
     ws: &mut GaussianCdWorkspace,
+    early_stop_path: bool,
 ) -> GaussianLassoPathResult {
     let x_array = prepared.x_scaled.as_ndarray();
     let y_array = prepared.y_centered.as_ndarray();
@@ -1342,7 +1345,7 @@ fn run_gaussian_cd(
             }
         }
 
-        if config.early_stop_path {
+        if early_stop_path {
             let nnz = ws.beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
             if nnz >= n {
                 break;
