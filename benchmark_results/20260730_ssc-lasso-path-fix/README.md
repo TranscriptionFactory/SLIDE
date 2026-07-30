@@ -5,6 +5,7 @@
 - Attribution/evidence baseline: `217dc4b` (`Attribute SSc divergence with paired X-tilde`).
 - Gaussian knockoff grid fix: `6f1e1f1` (`Match Gaussian knockoff grids to R`).
 - Complete knockoff path fix: `64b61c7` (`Retain complete Gaussian knockoff paths`).
+- Paired diagnostic bundle: `9effb02` (`Record SSc lasso-path parity diagnostics`).
 - Input fixtures are byte-for-byte copies of `benchmark_results/20260730_ssc-paired-xtilde`; no knockoffs or swap masks were regenerated.
 - The user-owned `.gitignore` modification was preserved and not staged.
 
