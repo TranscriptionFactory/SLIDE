@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=slide-allbk-turin
-#SBATCH --time=06:00:00
+#SBATCH --time=12:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --cluster=htc
@@ -68,6 +68,11 @@ fi
 
 BACKENDS=(rust rust_r_knockoffs python r_knockoffs pure_r)
 BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
+NITER=${BENCH_NITER:-500}
+BASE_SEED_ARGS=()
+if [ -n "${BENCH_BASE_SEED:-}" ]; then
+    BASE_SEED_ARGS=(--knockoff-base-seed "$BENCH_BASE_SEED")
+fi
 
 echo "=== backend=$BACKEND :: node=$(hostname) job=${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID} ==="
 echo "Output: $BENCH_OUT_DIR"
@@ -105,11 +110,12 @@ python benchmarks/benchmark_backends.py \
     --backends "$BACKEND" \
     --delta 0.01 0.1 \
     --lam 0.1 1.0 \
-    --niter 500 \
+    --niter "$NITER" \
     --threads 4 \
     --out-dir "$BENCH_OUT_DIR" \
     "${RSCRIPT_ARGS[@]}" \
-    "${RUST_BIN_ARGS[@]}"
+    "${RUST_BIN_ARGS[@]}" \
+    "${BASE_SEED_ARGS[@]}"
 RC=$?
 
 echo "=== backend=$BACKEND finished rc=$RC ==="

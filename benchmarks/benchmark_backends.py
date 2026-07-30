@@ -136,8 +136,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Rust knockoff lasso grid size (None=rust default 250; "
                         "set 500 to match R's stat.glmnet_lambdasmax)")
     p.add_argument("--knockoff-base-seed", type=int, default=None,
-                   help="Rust knockoff RNG base seed (None=rust default 42; "
-                        "sweep to probe Monte-Carlo sensitivity of LF selection)")
+                   help="Knockoff RNG base seed for reproducible backend runs")
     p.add_argument("--knockoff-fdr", type=float, default=None,
                    help="Rust per-draw knockoff FDR target q (None=default 0.1; "
                         "raise to loosen per-draw selection and lift borderline-LF "
@@ -273,6 +272,12 @@ def run_python_backend(
     """Run Python or R-knockoffs backend via loveslide API."""
     from loveslide import OptimizeSLIDE
 
+    if args.knockoff_base_seed is not None:
+        np.random.seed(args.knockoff_base_seed)
+        if backend == "r_knockoffs":
+            from rpy2 import robjects
+            robjects.r["set.seed"](args.knockoff_base_seed)
+
     knockoff_backend = "r_knockoffs" if backend == "r_knockoffs" else "python"
     input_params = {
         "x_path": str(args.x_path),
@@ -332,6 +337,8 @@ def run_pure_r_backend(
         "--niter",  str(args.niter),
         "--spec",   str(args.spec),
     ]
+    if args.knockoff_base_seed is not None:
+        cmd.extend(["--base-seed", str(args.knockoff_base_seed)])
     if args.y_factor:
         cmd.append("--y-factor")
 
