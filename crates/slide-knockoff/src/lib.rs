@@ -5,6 +5,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::OnceLock,
 };
 
 use ndarray::{Array1, Array2, Axis};
@@ -776,7 +777,28 @@ fn raw_covariance_is_usable(sigma: &Matrix) -> bool {
     if min <= POSDEF_EIGENVALUE_TOL {
         return false;
     }
+    if match_r_covariance_gate() {
+        // R gates on positive-definiteness ALONE.
+        return true;
+    }
     maximum_eigenvalue(sigma) <= MAX_RAW_COV_CONDITION * min
+}
+
+/// Whether to drop the condition-number half of the covariance gate.
+///
+/// Native-R SLIDE decides raw-vs-shrunk with `knockoff:::is_posdef` only — it has
+/// no condition-number test — so on a chunk that is positive definite but
+/// ill-conditioned, R keeps the raw sample covariance where we shrink. That flips
+/// Sigma, diag_s and every knockoff draw for the chunk. Python exposes the same
+/// choice as `match_r` (`loveslide.knockoff.filter`); this is rust's equivalent.
+/// Set `SLIDE_KNOCKOFF_MATCH_R_COV=1` to match R.
+fn match_r_covariance_gate() -> bool {
+    static MATCH_R_COVARIANCE_GATE: OnceLock<bool> = OnceLock::new();
+    *MATCH_R_COVARIANCE_GATE.get_or_init(|| {
+        std::env::var("SLIDE_KNOCKOFF_MATCH_R_COV")
+            .map(|value| matches!(value.trim(), "1" | "true" | "TRUE"))
+            .unwrap_or(false)
+    })
 }
 
 fn maximum_eigenvalue(matrix: &Matrix) -> Scalar {
@@ -1307,6 +1329,30 @@ mod tests {
         }
         std::fs::write(&out_path, out)
             .unwrap_or_else(|error| panic!("write {out_path}: {error}"));
+
+        // Optionally emit the ASDP diag_s solved from that same Sigma, to A/B
+        // against R's `knockoff::create.solve_asdp` on identical input.
+        if let Ok(diag_s_path) = std::env::var("SLIDE_COV_DIAGS_OUT_CSV") {
+            let method = KnockoffMethod::Asdp {
+                max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+            };
+            let diag_s = solve_diag_s(&sigma, &method)
+                .unwrap_or_else(|error| panic!("solve_diag_s: {error}"));
+            let values = diag_s.as_ndarray();
+            eprintln!(
+                "diag_s: len={} min={:.6e} max={:.6e} sum={:.6e}",
+                values.len(),
+                values.iter().copied().fold(Scalar::INFINITY, Scalar::min),
+                values.iter().copied().fold(Scalar::NEG_INFINITY, Scalar::max),
+                values.sum(),
+            );
+            let text: String = values
+                .iter()
+                .map(|value| format!("{value:.15e}\n"))
+                .collect();
+            std::fs::write(&diag_s_path, text)
+                .unwrap_or_else(|error| panic!("write {diag_s_path}: {error}"));
+        }
     }
 
     /// Diagnostic harness: given Z (`SLIDE_W_Z_CSV`), y (`SLIDE_W_Y_CSV`) and a
