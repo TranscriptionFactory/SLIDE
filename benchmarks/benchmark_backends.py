@@ -456,7 +456,19 @@ def load_python_result(
     if not subdir.exists():
         return None
 
+    # A cell killed mid-run (e.g. wall-clock timeout) leaves Z/A on disk but no
+    # selection output. Loading it would report its empty selected set as a real
+    # result and drive every Jaccard against that cell to 0. sig_LFs.txt and
+    # run_params.txt are both end-of-run artifacts; a cell with neither is
+    # incomplete, whereas a finished run that selected nothing still has one.
     sig_lf_path = subdir / "sig_LFs.txt"
+    if not sig_lf_path.exists() and not (subdir / "run_params.txt").exists():
+        log.warning(
+            "Skipping incomplete %s cell delta=%s lam=%s (no selection output): %s",
+            backend, delta, lam, subdir,
+        )
+        return None
+
     sig_lfs: set[str] = set()
     if sig_lf_path.exists():
         sig_lfs = set(np.loadtxt(sig_lf_path, dtype=str).reshape(-1).tolist())
