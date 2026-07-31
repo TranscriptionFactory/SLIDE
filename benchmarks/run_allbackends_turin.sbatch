@@ -66,8 +66,29 @@ if [ "${AGGREGATE_ONLY:-0}" = "1" ]; then
     exit 0
 fi
 
-BACKENDS=(rust rust_r_knockoffs python r_knockoffs pure_r)
-BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
+# ── task -> work mapping ──
+# Default: one BACKEND per array task over the full delta x lambda grid.
+# BENCH_CELLS="backend:delta:lam,..." instead gives one GRID CELL per array task,
+# so individual cells that timed out can be re-run without recomputing a whole
+# backend. Timings merge by (backend, delta, lam), so a cell re-run slots into the
+# existing benchmark_summary.json rather than replacing it.
+# BENCH_CELLS is comma-separated, so it must be exported into the submitting shell
+# and picked up via plain --export=ALL. Passing it inline as
+# --export=ALL,BENCH_CELLS=a,b would split on the commas and lose every cell but
+# the first.
+if [ -n "${BENCH_CELLS:-}" ]; then
+    IFS=',' read -r -a CELLS <<< "$BENCH_CELLS"
+    CELL=${CELLS[$SLURM_ARRAY_TASK_ID]}
+    BACKEND=${CELL%%:*}
+    CELL_PARAMS=${CELL#*:}
+    DELTAS=${CELL_PARAMS%%:*}
+    LAMS=${CELL_PARAMS##*:}
+else
+    BACKENDS=(rust rust_r_knockoffs python r_knockoffs pure_r)
+    BACKEND=${BACKENDS[$SLURM_ARRAY_TASK_ID]}
+    DELTAS="0.01 0.1"
+    LAMS="0.1 1.0"
+fi
 NITER=${BENCH_NITER:-500}
 BASE_SEED_ARGS=()
 if [ -n "${BENCH_BASE_SEED:-}" ]; then
@@ -75,6 +96,7 @@ if [ -n "${BENCH_BASE_SEED:-}" ]; then
 fi
 
 echo "=== backend=$BACKEND :: node=$(hostname) job=${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID} ==="
+echo "Grid: delta=[$DELTAS] lambda=[$LAMS] niter=$NITER"
 echo "Output: $BENCH_OUT_DIR"
 
 # ── pure_r needs native-R SLIDE in the R 4.4.0 user library (default 4.5.0 lacks it) ──
@@ -108,8 +130,8 @@ unset SLIDE_FORCE_RAW_COV
 
 python benchmarks/benchmark_backends.py \
     --backends "$BACKEND" \
-    --delta 0.01 0.1 \
-    --lam 0.1 1.0 \
+    --delta $DELTAS \
+    --lam $LAMS \
     --niter "$NITER" \
     --threads 4 \
     --out-dir "$BENCH_OUT_DIR" \
