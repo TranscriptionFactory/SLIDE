@@ -509,16 +509,15 @@ fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time
 static KNOCKOFF_PROFILE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(usize, Scalar, usize)> = std::sync::OnceLock::new();
 
-const DEFAULT_KNOCKOFF_NLAMBDA: usize = 500;
-const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
-const DEFAULT_KNOCKOFF_MAX_ITER: usize = 100_000;
+const DEFAULT_KNOCKOFF_NLAMBDA: usize = 100;
+const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
+const DEFAULT_KNOCKOFF_MAX_ITER: usize = 1_000;
 
 /// Returns `(nlambda, tolerance, max_iter)` for the knockoff CD path, allowing
 /// env-var overrides:
-///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 500) — path length cap matching R's
-///     `stat.glmnet_lambdasmax`.
-///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-7) — CD convergence threshold
-///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 100000) — per-lambda CD iter cap
+///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 100) — path length cap
+///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-4) — CD convergence threshold
+///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 1000) — per-lambda CD iter cap
 ///
 /// Read once per process via OnceLock so we don't hit getenv per knockoff iter.
 fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
@@ -1737,11 +1736,11 @@ mod tests {
     const TOL: f64 = 1.0e-8;
 
     #[test]
-    fn knockoff_cd_defaults_match_r_glmnet() {
+    fn knockoff_cd_defaults_use_fast_path() {
         let (nlambda, tolerance, max_iter) = super::knockoff_cd_tunables();
-        assert_eq!(nlambda, 500);
-        assert_eq!(tolerance, 1.0e-7);
-        assert_eq!(max_iter, 100_000);
+        assert_eq!(nlambda, 100);
+        assert_eq!(tolerance, 1.0e-4);
+        assert_eq!(max_iter, 1_000);
     }
 
     #[test]
