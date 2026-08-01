@@ -133,8 +133,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--spec", type=float, default=0.1,
                    help="Selection-frequency threshold (fraction of niter)")
     p.add_argument("--knockoff-nlambda", type=int, default=None,
-                   help="Rust knockoff lasso grid size (None=rust default 250; "
-                        "set 500 to match R's stat.glmnet_lambdasmax)")
+                   help="Rust knockoff lasso grid size "
+                        "(None=R-matching backend default 500)")
     p.add_argument("--knockoff-base-seed", type=int, default=None,
                    help="Knockoff RNG base seed for reproducible backend runs")
     p.add_argument("--knockoff-fdr", type=float, default=None,

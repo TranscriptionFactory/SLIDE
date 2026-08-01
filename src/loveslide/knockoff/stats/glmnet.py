@@ -43,7 +43,7 @@ def _r_scale(X: np.ndarray) -> tuple:
 def _lasso_max_lambda_glmnet(
     X: np.ndarray,
     y: np.ndarray,
-    nlambda: int = 250,
+    nlambda: int = 500,
     intercept: bool = True,
     standardize: bool = True,  # Match R: always standardize X with scale() (ddof=1)
     family: str = 'gaussian',
