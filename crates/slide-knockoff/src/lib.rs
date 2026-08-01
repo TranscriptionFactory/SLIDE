@@ -99,7 +99,7 @@ impl Default for KnockoffConfig {
             knockoff_backend: KnockoffBackend::default(),
             knockoff_offset: 0,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
-            nlambda: 250,
+            nlambda: 500,
             base_seed: 42,
             slide_selection: true,
             f_size: None,
@@ -1256,6 +1256,11 @@ fn select_column_range(x: &Matrix, start: usize, stop: usize) -> Array2<Scalar> 
 mod tests {
     use super::*;
     use ndarray::{arr1, arr2};
+
+    #[test]
+    fn default_lambda_count_matches_r_glmnet() {
+        assert_eq!(KnockoffConfig::default().nlambda, 500);
+    }
 
     fn simple_config() -> KnockoffConfig {
         KnockoffConfig {

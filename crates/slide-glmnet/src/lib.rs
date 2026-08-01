@@ -509,14 +509,16 @@ fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time
 static KNOCKOFF_PROFILE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(usize, Scalar, usize)> = std::sync::OnceLock::new();
 
+const DEFAULT_KNOCKOFF_NLAMBDA: usize = 500;
+const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
+const DEFAULT_KNOCKOFF_MAX_ITER: usize = 100_000;
+
 /// Returns `(nlambda, tolerance, max_iter)` for the knockoff CD path, allowing
 /// env-var overrides:
-///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 100) — path length cap, matching R
-///     glmnet's default `nlambda=100`. Profiling showed ~49% of knockoff CD
-///     solves hit the old 250 cap with the path never truncating early, so the
-///     longer grid was pure cost without matching what R/glmnet computes.
-///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-4) — CD convergence threshold
-///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 1000) — per-lambda CD iter cap
+///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 500) — path length cap matching R's
+///     `stat.glmnet_lambdasmax`.
+///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-7) — CD convergence threshold
+///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 100000) — per-lambda CD iter cap
 ///
 /// Read once per process via OnceLock so we don't hit getenv per knockoff iter.
 fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
@@ -525,17 +527,17 @@ fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&n| n > 0)
-            .unwrap_or(100);
+            .unwrap_or(DEFAULT_KNOCKOFF_NLAMBDA);
         let tolerance = std::env::var("SLIDE_KNOCKOFF_TOL")
             .ok()
             .and_then(|s| s.parse::<Scalar>().ok())
             .filter(|&t| t > 0.0)
-            .unwrap_or(1.0e-4);
+            .unwrap_or(DEFAULT_KNOCKOFF_TOLERANCE);
         let max_iter = std::env::var("SLIDE_KNOCKOFF_MAX_ITER")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&n| n > 0)
-            .unwrap_or(1_000);
+            .unwrap_or(DEFAULT_KNOCKOFF_MAX_ITER);
         (nlambda, tolerance, max_iter)
     })
 }
@@ -1733,6 +1735,14 @@ mod tests {
     use slide_types::{Matrix, Vector};
 
     const TOL: f64 = 1.0e-8;
+
+    #[test]
+    fn knockoff_cd_defaults_match_r_glmnet() {
+        let (nlambda, tolerance, max_iter) = super::knockoff_cd_tunables();
+        assert_eq!(nlambda, 500);
+        assert_eq!(tolerance, 1.0e-7);
+        assert_eq!(max_iter, 100_000);
+    }
 
     #[test]
     fn gaussian_convergence_uses_weighted_squared_update_and_strict_threshold() {
