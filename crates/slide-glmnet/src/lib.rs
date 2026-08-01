@@ -1274,6 +1274,7 @@ fn run_gaussian_cd(
     let mut intercept = Array1::zeros(nlambda);
 
     let null_deviance = y_array.dot(y_array);
+    let convergence_threshold = config.tolerance * null_deviance / n_f;
     let mut n_computed = 0usize;
     let mut n_ever_nonzero = 0usize;
     let mut total_cd_iters = 0usize;
@@ -1305,7 +1306,7 @@ fn run_gaussian_cd(
                 &mut ws.residual,
                 lambda_value,
                 config.alpha,
-                config.tolerance,
+                convergence_threshold,
                 config.max_iter,
                 &ws.candidate_indices,
                 &mut ws.active_indices,
@@ -1391,7 +1392,7 @@ fn coordinate_descent_step(
     residual: &mut Array1<Scalar>,
     lambda: Scalar,
     alpha: Scalar,
-    tolerance: Scalar,
+    convergence_threshold: Scalar,
     max_iter: usize,
     candidate_indices: &[usize],
     active_indices: &mut Vec<usize>,
@@ -1422,7 +1423,7 @@ fn coordinate_descent_step(
                 alpha,
                 n,
             );
-            if max_change > tolerance {
+            if max_change >= convergence_threshold {
                 continue;
             }
         }
@@ -1447,7 +1448,7 @@ fn coordinate_descent_step(
                 .filter(|&j| beta[j].abs() > 0.0),
         );
 
-        if candidate_change.max(max_change) <= tolerance {
+        if candidate_change.max(max_change) < convergence_threshold {
             break;
         }
     }
@@ -1502,7 +1503,7 @@ fn sweep_coordinates(
             residual.scaled_add(delta, &column);
         }
 
-        let change = delta.abs();
+        let change = norm * delta * delta;
         if change > max_change {
             max_change = change;
         }
@@ -1723,14 +1724,54 @@ fn logit(value: Scalar) -> Scalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        binomial_lasso_path, build_binomial_lambda_grid, build_lambda_grid, cross_validated_lambda,
-        gaussian_lasso_path, stat_glmnet_coefdiff, stat_glmnet_lambdadiff, stat_glmnet_lambdasmax,
-        BinomialLassoPathConfig, GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
+        binomial_lasso_path, build_binomial_lambda_grid, build_lambda_grid,
+        coordinate_descent_step, cross_validated_lambda, gaussian_lasso_path, stat_glmnet_coefdiff,
+        stat_glmnet_lambdadiff, stat_glmnet_lambdasmax, sweep_coordinates, BinomialLassoPathConfig,
+        GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
     };
     use ndarray::{arr1, arr2, Axis};
     use slide_types::{Matrix, Vector};
 
     const TOL: f64 = 1.0e-8;
+
+    #[test]
+    fn gaussian_convergence_uses_weighted_squared_update_and_strict_threshold() {
+        let x = arr2(&[[2.0, 0.0], [0.0, 1.0]]);
+        let column_sq_norm = arr1(&[2.0, 0.5]);
+        let mut beta = arr1(&[0.0, 0.0]);
+        let mut residual = arr1(&[2.0, 1.0]);
+
+        let max_update = sweep_coordinates(
+            &x,
+            &column_sq_norm,
+            &mut beta,
+            &mut residual,
+            &[0, 1],
+            0.0,
+            1.0,
+            2,
+        );
+
+        assert!((max_update - 2.0).abs() < f64::EPSILON);
+
+        let mut beta = arr1(&[0.0, 0.0]);
+        let mut residual = arr1(&[2.0, 1.0]);
+        let mut active_indices = Vec::new();
+        let iterations = coordinate_descent_step(
+            &x,
+            &column_sq_norm,
+            &mut beta,
+            &mut residual,
+            0.0,
+            1.0,
+            2.0,
+            2,
+            &[0, 1],
+            &mut active_indices,
+        );
+
+        assert_eq!(iterations, 2);
+    }
 
     #[test]
     fn build_lambda_grid_matches_spec_formula() {
