@@ -67,8 +67,16 @@ Rust's stopping rule is `max(abs(delta_beta)) <= tolerance`; native glmnet stops
 
 A tolerance sweep (`1e-7` through `1e-4`) changed Rust CD iteration totals but did not change its discrete entry lambdas; `1e-3` changed zero treatment abruptly. Therefore changing only the scalar tolerance is not a justified fix.
 
-## Final behavior and next minimal change
+## Pre-change final behavior and next minimal change
 
 Iteration 14/Z10 still disagrees: normalized W `0.9719992044484664 / 0.9719992044484665 / 0.8223245377197124` (R/Python/Rust), producing `false / false / true`. Selected sets differ at iterations 14 and 17; full cumulative votes differ, although Z33/Z44/Z61 remain `6/10/7` for every backend.
 
 Next change should replace only the Gaussian CD convergence test with glmnet's column-norm-weighted squared-update criterion and null-deviance scaling, then rerun this unchanged fixture. Coordinate order, screening, tolerance value, zero threshold, and back-transform should remain untouched until that experiment identifies any subsequent divergence.
+
+## Gaussian convergence experiment — 2026-07-31
+
+Gaussian coordinate descent now compares `max_j[(||x_j||²/n) * delta_beta_j²]` with the strict threshold `tolerance * null_deviance / n`. The unchanged paired 20-draw fixture was rerun with the controls above. Its maximum R/Rust lambda-grid difference remains `2.6645352591003757e-15`. The first material entry-lambda difference remains iteration 0/Z10: normalized R/Python/Rust values are `34.083795227668375 / 34.083795227668375 / 31.11254856250592`. Across all draws, the maximum normalized R/Rust entry-lambda difference is `6.790632130455142`, and the maximum W difference is `2.971246665162454`.
+
+Selection parity improved but is not complete. At iteration 14, R/Python select 22 features while Rust selects the same set except Z75; Z75 W is `1.297493077095639 / 1.2974930770956392 / 0.8099182583545042`, and thresholds are `1.29749307709564 / 1.2974930770956392 / 3.3809194880170903`. At iteration 17, R/Python select 21 features while Rust omits Z18; Z18 W is `0.8477101233831359 / 0.847710123383136 / 0.7621368306024942`, and thresholds are `0.847710123383136 / 0.847710123383136 / 1.5336551213849567`. Rust cumulative votes now differ from R/Python only at Z18 (`0` vs `1`) and Z75 (`2` vs `3`).
+
+This documents only the paired 20-draw fixture. Full 1,000-iteration SSc parity has not been rerun; no further solver operation was changed or tuned after the remaining difference.
