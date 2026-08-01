@@ -99,7 +99,7 @@ impl Default for KnockoffConfig {
             knockoff_backend: KnockoffBackend::default(),
             knockoff_offset: 0,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
-            nlambda: 500,
+            nlambda: 250,
             base_seed: 42,
             slide_selection: true,
             f_size: None,
@@ -1258,8 +1258,8 @@ mod tests {
     use ndarray::{arr1, arr2};
 
     #[test]
-    fn default_lambda_count_matches_r_glmnet() {
-        assert_eq!(KnockoffConfig::default().nlambda, 500);
+    fn default_lambda_count_uses_rust_grid() {
+        assert_eq!(KnockoffConfig::default().nlambda, 250);
     }
 
     fn simple_config() -> KnockoffConfig {
