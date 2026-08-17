@@ -1093,6 +1093,12 @@ fn score_selected_model(
     sig_lfs: &[usize],
     response_type: OptimizeResponseType,
 ) -> Result<Scalar, SlideCoreError> {
+    if sig_lfs.is_empty() && selected_interactions.ncols() == 0 {
+        return Ok(match response_type {
+            OptimizeResponseType::Continuous => 0.0,
+            OptimizeResponseType::Binary => 0.5,
+        });
+    }
     let features = build_selected_feature_matrix(z, selected_interactions, sig_lfs)?;
     let predictions = match response_type {
         OptimizeResponseType::Continuous => fit_linear_predictions(&features, y)?,
@@ -1515,17 +1521,31 @@ mod tests {
     }
 
     #[test]
-    fn score_selected_model_rejects_empty_feature_set() {
+    fn score_selected_model_uses_intercept_only_baseline_for_empty_feature_set() {
         let z = Matrix::from_ndarray(arr2(&[[1.0], [2.0], [3.0]]));
         let interactions = Matrix::from_ndarray(arr2(&[[], [], []]));
         let y = Vector::from_ndarray(arr1(&[1.0, 2.0, 3.0]));
 
-        let error =
-            score_selected_model(&z, &interactions, &y, &[], OptimizeResponseType::Continuous)
-                .err()
-                .unwrap_or_else(|| panic!("expected empty-feature-set error"));
+        let continuous = score_selected_model(
+            &z,
+            &interactions,
+            &y,
+            &[],
+            OptimizeResponseType::Continuous,
+        )
+        .unwrap_or_else(|error| panic!("continuous baseline failed: {error}"));
+        let binary_y = Vector::from_ndarray(arr1(&[0.0, 1.0, 1.0]));
+        let binary = score_selected_model(
+            &z,
+            &interactions,
+            &binary_y,
+            &[],
+            OptimizeResponseType::Binary,
+        )
+        .unwrap_or_else(|error| panic!("binary baseline failed: {error}"));
 
-        assert_eq!(error, SlideCoreError::EmptySelectedFeatureSet);
+        assert_eq!(continuous, 0.0);
+        assert_eq!(binary, 0.5);
     }
 
     #[test]
