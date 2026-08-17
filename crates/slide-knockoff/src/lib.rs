@@ -355,6 +355,7 @@ pub fn knockoff_filter_voting(
     };
 
     let run_iteration_cached = |ws: &mut GaussianCdWorkspace, iteration: usize| {
+        let stage_started = std::time::Instant::now();
         let x_tilde = match &r_samples {
             Some(samples) => samples[iteration].clone(),
             None => match &cache {
@@ -362,8 +363,10 @@ pub fn knockoff_filter_voting(
                 None => unreachable!("validated knockoff backend must provide samples"),
             },
         };
+        log_profile_stage("sample", iteration, stage_started);
 
         // Prepare X_tilde half (fresh each iteration)
+        let stage_started = std::time::Instant::now();
         let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
 
         // Generate swap mask
@@ -371,8 +374,10 @@ pub fn knockoff_filter_voting(
             config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
         );
         let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
+        log_profile_stage("preparation", iteration, stage_started);
 
         // Compute statistic using precomputed column stats and reusable workspace
+        let stage_started = std::time::Instant::now();
         let w = stat_glmnet_lambdasmax_prebuilt_cached(
             &x_cache,
             &tilde_cache,
@@ -385,6 +390,7 @@ pub fn knockoff_filter_voting(
             &glmnet_config,
             ws,
         )?;
+        log_profile_stage("lasso_path", iteration, stage_started);
 
         // Correct W-statistic signs for swapped columns
         let mut w_array = w.into_ndarray();
@@ -394,14 +400,18 @@ pub fn knockoff_filter_voting(
             }
         }
 
-        knockoff_filter(
+        let stage_started = std::time::Instant::now();
+        let selected = knockoff_filter(
             &Vector::from_ndarray(w_array),
             config.fdr,
             config.knockoff_offset,
-        )
+        );
+        log_profile_stage("threshold", iteration, stage_started);
+        selected
     };
 
     let run_iteration_uncached = |augmented: &mut Matrix, swap_buf: &mut Vec<Scalar>, iteration: usize| {
+        let stage_started = std::time::Instant::now();
         let x_tilde = match &r_samples {
             Some(samples) => samples[iteration].clone(),
             None => match &cache {
@@ -409,6 +419,8 @@ pub fn knockoff_filter_voting(
                 None => unreachable!("validated knockoff backend must provide samples"),
             },
         };
+        log_profile_stage("sample", iteration, stage_started);
+        let stage_started = std::time::Instant::now();
         let buf = augmented.as_ndarray_mut();
 
         // Fill X_tilde portion into right half of buffer
@@ -434,8 +446,11 @@ pub fn knockoff_filter_voting(
                 }
             }
         }
+        log_profile_stage("preparation", iteration, stage_started);
 
+        let stage_started = std::time::Instant::now();
         let w = compute_statistic_prebuilt(augmented, p, y, config)?;
+        log_profile_stage("lasso_path", iteration, stage_started);
 
         // Un-swap to restore X columns for next iteration
         let buf = augmented.as_ndarray_mut();
@@ -461,11 +476,14 @@ pub fn knockoff_filter_voting(
             }
         }
 
-        knockoff_filter(
+        let stage_started = std::time::Instant::now();
+        let selected = knockoff_filter(
             &Vector::from_ndarray(w_array),
             config.fdr,
             config.knockoff_offset,
-        )
+        );
+        log_profile_stage("threshold", iteration, stage_started);
+        selected
     };
 
     let init_augmented = || {
@@ -511,6 +529,15 @@ pub fn knockoff_filter_voting(
     };
 
     build_voting_result(x.ncols(), config, selected_list, None)
+}
+
+fn log_profile_stage(stage: &str, iteration: usize, started: std::time::Instant) {
+    if std::env::var_os("SLIDE_KNOCKOFF_PROFILE").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "{{\"event\":\"slide_knockoff_profile\",\"backend\":\"rust\",\"stage\":\"{}\",\"iteration\":{},\"seconds\":{:.9}}}",
+            stage, iteration, started.elapsed().as_secs_f64()
+        );
+    }
 }
 
 pub fn knockoff_filter_voting_slide(

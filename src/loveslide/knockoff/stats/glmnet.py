@@ -3,6 +3,7 @@
 from typing import Dict, Optional, Tuple, Union
 import logging
 import warnings
+import time
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
@@ -49,6 +50,7 @@ def _lasso_max_lambda_glmnet(
     family: str = 'gaussian',
     use_sklearn: bool = False,  # Force sklearn fallback for R-compatibility
     return_diagnostics: bool = False,
+    _preparation_started: Optional[float] = None,
     **kwargs
 ) -> Union[np.ndarray, Tuple[np.ndarray, Dict[str, np.ndarray]]]:
     """
@@ -88,6 +90,7 @@ def _lasso_max_lambda_glmnet(
     n, p = X.shape
 
     # Standardize using R's scale() behavior (ddof=1) if requested
+    preparation_started = _preparation_started or time.perf_counter()
     # This matches R's knockoff package: lasso_max_lambda_glmnet
     if standardize:
         X_std, _, stds = _r_scale(X)
@@ -109,6 +112,9 @@ def _lasso_max_lambda_glmnet(
         lambda_min = lambda_max / 2000
         k = np.arange(nlambda) / nlambda
         lambdas = lambda_max * (lambda_min / lambda_max) ** k
+        from ..filter import _profile_stage
+        _profile_stage("preparation", preparation_started)
+        lasso_started = time.perf_counter()
 
         if HAS_GLMNET and not use_sklearn:
             # Use vendored Fortran glmnet for ~5-10x speedup
@@ -139,6 +145,7 @@ def _lasso_max_lambda_glmnet(
                 except Exception:
                     # Fallback: let sklearn choose alphas
                     alphas, coefs, _ = lasso_path(X_std, y_work, n_alphas=nlambda, max_iter=10000)
+        _profile_stage("lasso_path", lasso_started)
 
         # coefs has shape (p, n_alphas)
         # Find first nonzero entry for each variable (vectorized)
@@ -447,6 +454,7 @@ def stat_glmnet_lambdasmax(
     X_k = np.asarray(X_k, dtype=np.float64)
     y = np.asarray(y)
     p = X.shape[1]
+    preparation_started = time.perf_counter()
 
     # Randomly swap columns
     if swap is None:
@@ -466,6 +474,7 @@ def stat_glmnet_lambdasmax(
         family=family,
         use_sklearn=use_sklearn,
         return_diagnostics=return_diagnostics,
+        _preparation_started=preparation_started,
         **kwargs,
     )
     if return_diagnostics:

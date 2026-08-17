@@ -39,6 +39,7 @@ defaults <- list(
   fdr              = "0.1",
   `thresh-fdr`     = "0.2",
   `slide-top-feats`= "10",
+  threads          = "10",
   `base-seed`      = NA_character_,
   `y-factor`       = FALSE
 )
@@ -52,6 +53,7 @@ opts$fdr               <- as.numeric(opts$fdr)
 opts[["thresh-fdr"]]   <- as.numeric(opts[["thresh-fdr"]])
 opts$niter             <- as.integer(opts$niter)
 opts[["slide-top-feats"]] <- as.integer(opts[["slide-top-feats"]])
+opts$threads           <- as.integer(opts$threads)
 opts[["base-seed"]]    <- as.integer(opts[["base-seed"]])
 opts[["y-factor"]]     <- isTRUE(opts[["y-factor"]])
 
@@ -75,6 +77,7 @@ input_params <- list(
   thresh_fdr      = opts$`thresh-fdr`,
   SLIDE_iter      = opts$niter,
   SLIDE_top_feats = opts$`slide-top-feats`,
+  ncore           = opts$threads,
   do_interacts    = TRUE,
   pure_homo       = TRUE,
   out_path        = out_path,
