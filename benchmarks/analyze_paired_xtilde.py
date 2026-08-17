@@ -98,9 +98,14 @@ def main() -> None:
     aggregate.columns = ["_".join(part for part in column if part) for column in aggregate.columns]
     records = aggregate.to_dict(orient="records")
     (root / "paired_metrics.json").write_text(json.dumps(records, indent=2) + "\n")
+    headers = aggregate.columns.tolist()
+    table = ["| " + " | ".join(headers) + " |",
+             "|" + "|".join("---" for _ in headers) + "|"]
+    table.extend("| " + " | ".join(str(value) for value in row) + " |"
+                 for row in aggregate.itertuples(index=False, name=None))
     lines = ["# Paired knockoff lambda sweep", "", f"{draws} draws; R/Python entry statistics were divided by n={n} for scale-sensitive comparisons.", "",
              "All Rust configurations consumed the same X-tilde and swap fixture per draw. Never-entered agreement is reported separately.", "",
-             aggregate.to_markdown(index=False), ""]
+             *table, ""]
     (root / "comparison.md").write_text("\n".join(lines))
 
 

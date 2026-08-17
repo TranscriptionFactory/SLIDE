@@ -9,7 +9,8 @@ Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 - **Dataset:** SSc UnTx (X.csv / Y.csv), 24 samples × 804 features
 - **Parameter grid:** delta ∈ {0.01, 0.1}, lambda ∈ {0.1, 1.0} → 4 combos per backend
 - **Knockoff iterations:** 500
-- **Threads:** 4
+- **Worker budget:** 10 by default (`python_serial=1`, `python=n_workers`, Rust=Rayon threads)
+- **BLAS threads:** 1 per worker to prevent nested oversubscription
 - **Cluster:** htc (CRC), 150 GB RAM, 4 CPUs per task
 - **SLURM job:** 9447800 (2026-05-22)
 
@@ -118,5 +119,9 @@ pixi run -e dev python benchmarks/benchmark_backends.py
 time target/release/slide run \
     --config benchmark_results/rust/0.01_0.1_out/rust_config.yaml \
     --checkpoint /tmp/bench_checkpoint.json \
-    --threads 4
+    --threads 10
 ```
+
+Add `--profile` to write `profile_summary.csv` with count, total, median, and
+p95 time for sampling, preparation, lasso-path fitting, and thresholding.
+Because workers overlap, summed stage time can exceed cell wall time.

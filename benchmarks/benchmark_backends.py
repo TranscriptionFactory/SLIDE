@@ -113,7 +113,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--y-factor", action="store_true", help="Treat y as binary factor")
     p.add_argument(
         "--backends", nargs="+",
-        default=["rust", "rust_r_knockoffs", "python", "r_knockoffs", "pure_r"],
+        default=["rust", "rust_r_knockoffs", "python_serial", "python", "r_knockoffs", "pure_r"],
         help="Backends to benchmark",
     )
     p.add_argument(
@@ -143,7 +143,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "counts without re-partitioning the stage-one union)")
     p.add_argument("--out-dir", type=Path, default=Path("benchmark_results"))
     p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
-    p.add_argument("--threads", type=int, default=4, help="Thread count")
+    p.add_argument("--threads", type=int, default=10,
+                   help="Common Python worker/Rayon thread budget (default: 10)")
+    p.add_argument("--profile", action="store_true",
+                   help="Enable internal knockoff stage profiling")
     p.add_argument("--skip-run", action="store_true", help="Only compare existing outputs")
     # SLURM
     p.add_argument("--slurm", action="store_true", help="Submit to SLURM instead of running locally")
@@ -266,11 +269,47 @@ def _load_saved_timings(out_dir: Path) -> list[TimingRecord]:
     return records
 
 
+def _write_profile_summary(out_dir: Path) -> None:
+    """Aggregate stages; concurrent stage totals may exceed cell wall time."""
+    records = []
+    paths = list(out_dir.rglob("profile_*.jsonl")) + list(out_dir.rglob("rust.log"))
+    for path in paths:
+        backend = path.relative_to(out_dir).parts[0]
+        cell = path.parent.name if path.name == "rust.log" else path.stem.removeprefix("profile_")
+        for line in path.read_text(errors="replace").splitlines():
+            start = line.find('{"event":"slide_knockoff_profile"')
+            if start < 0:
+                continue
+            try:
+                record = json.loads(line[start:])
+            except json.JSONDecodeError:
+                continue
+            records.append((backend, cell, record["stage"], float(record["seconds"])))
+    if not records:
+        return
+    rows = []
+    for key in sorted({record[:3] for record in records}):
+        values = np.asarray([record[3] for record in records if record[:3] == key])
+        rows.append({"backend": key[0], "cell": key[1], "stage": key[2],
+                     "count": len(values), "total_seconds": float(values.sum()),
+                     "median_seconds": float(np.median(values)),
+                     "p95_seconds": float(np.percentile(values, 95))})
+    with (out_dir / "profile_summary.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def run_python_backend(
     args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
 ) -> TimingRecord:
     """Run Python or R-knockoffs backend via loveslide API."""
     from loveslide import OptimizeSLIDE
+
+    if args.profile:
+        os.environ["SLIDE_KNOCKOFF_PROFILE"] = str(
+            (out_dir / f"profile_{delta}_{lam}.jsonl").resolve()
+        )
 
     if args.knockoff_base_seed is not None:
         np.random.seed(args.knockoff_base_seed)
@@ -279,6 +318,7 @@ def run_python_backend(
             robjects.r["set.seed"](args.knockoff_base_seed)
 
     knockoff_backend = "r_knockoffs" if backend == "r_knockoffs" else "python"
+    workers = 1 if backend == "python_serial" else args.threads
     input_params = {
         "x_path": str(args.x_path),
         "y_path": str(args.y_path),
@@ -290,7 +330,7 @@ def run_python_backend(
         "thresh_fdr": 0.2,
         "pure_homo": True,
         "do_interacts": True,
-        "n_workers": 1,
+        "n_workers": workers,
         "spec": args.spec,
         "love_backend": "python",
         "knockoff_backend": knockoff_backend,
@@ -305,7 +345,8 @@ def run_python_backend(
     start = time.perf_counter()
     try:
         slider = OptimizeSLIDE(input_params)
-        with warnings.catch_warnings():
+        from threadpoolctl import threadpool_limits
+        with warnings.catch_warnings(), threadpool_limits(limits=1):
             warnings.simplefilter("ignore")
             slider.run_pipeline(verbose=True)
         elapsed = time.perf_counter() - start
@@ -336,6 +377,7 @@ def run_pure_r_backend(
         "--lambda", str(lam),
         "--niter",  str(args.niter),
         "--spec",   str(args.spec),
+        "--threads", str(args.threads),
     ]
     if args.knockoff_base_seed is not None:
         cmd.extend(["--base-seed", str(args.knockoff_base_seed)])
@@ -343,11 +385,8 @@ def run_pure_r_backend(
         cmd.append("--y-factor")
 
     env = os.environ.copy()
-    # R SLIDE parallelizes at the process level (makePSOCKcluster, ncore=10
-    # hardcoded in runSLIDE.R) — it ignores RAYON/OMP. Pin BLAS to 1 so the 10
-    # workers don't each spawn BLAS threads (nested oversubscription); BLAS is a
-    # no-op on SLIDE's tiny matrices anyway. R's ncore=10 must match rust
-    # --threads 10 (the benchmark is pinned to 10 for fair head-to-head timing).
+    # R SLIDE parallelizes at the process level. Pin BLAS to 1 so its workers
+    # do not each spawn nested BLAS threads.
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         env[var] = "1"
 
@@ -414,7 +453,7 @@ def run_rust_backend(
     env = os.environ.copy()
     # rust parallelism is rayon (--threads); pin BLAS to 1 so rayon workers
     # don't nest BLAS threads (no-op on tiny matrices, but clean). RAYON mirrors
-    # --threads. Pinned to 10 to match R's hardcoded ncore=10 for fair timing.
+    # --threads.
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         env[var] = "1"
     if args.threads:
@@ -735,16 +774,22 @@ def main(argv: list[str] | None = None) -> int:
     timings: list[TimingRecord] = []
     param_grid = [(d, l) for d in args.delta for l in args.lambdas]
 
-    # Set thread env vars globally
+    # Every process-level worker gets one BLAS thread; backend concurrency is
+    # controlled separately by n_workers or Rayon.
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[var] = "1"
     if args.threads:
-        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "RAYON_NUM_THREADS"):
-            os.environ[var] = str(args.threads)
+        os.environ["RAYON_NUM_THREADS"] = str(args.threads)
 
     if not args.skip_run:
         for backend in args.backends:
             for delta, lam in param_grid:
                 backend_dir = out_dir / backend
                 backend_dir.mkdir(parents=True, exist_ok=True)
+                if args.profile:
+                    os.environ["SLIDE_KNOCKOFF_PROFILE"] = str(
+                        (backend_dir / "knockoff_profile.jsonl").resolve()
+                    )
                 log.info("=== %s delta=%s lambda=%s ===", backend, delta, lam)
 
                 if backend in ("rust", "rust_r_knockoffs"):
@@ -764,6 +809,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Load saved timings from previous runs (complements current-run timings)
     saved_timings = _load_saved_timings(out_dir)
+    if args.profile:
+        _write_profile_summary(out_dir)
     seen = {(t.backend, t.delta, t.lam) for t in timings}
     for st in saved_timings:
         if (st.backend, st.delta, st.lam) not in seen:

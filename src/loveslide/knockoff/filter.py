@@ -7,6 +7,10 @@ import numpy as np
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
+import json
+import os
+import sys
+import time
 from scipy import linalg
 
 logger = logging.getLogger(__name__)
@@ -631,15 +635,34 @@ def _cached_iteration(X, y, cache, statistic, fdr, offset, seed):
     """Single cached knockoff iteration for parallel execution."""
     if seed is not None:
         np.random.seed(seed)
+    started = time.perf_counter()
     Xk = _sample_knockoffs_from_cache(X, cache, seed)
+    _profile_stage("sample", started, seed)
     W = statistic(X, Xk, y)
+    started = time.perf_counter()
     t = knockoff_threshold(W, fdr=fdr, offset=offset)
+    _profile_stage("threshold", started, seed)
     selected = np.where(W >= t)[0]
     logger.debug(
         "_cached_iteration: seed=%s, threshold=%.6f, selected=%d vars",
         seed, t, len(selected),
     )
     return selected
+
+
+def _profile_stage(stage, started, iteration=None):
+    """Emit one JSON profile record without changing public return values."""
+    destination = os.environ.get("SLIDE_KNOCKOFF_PROFILE")
+    if destination:
+        record = {"event": "slide_knockoff_profile", "backend": "python",
+                  "stage": stage, "iteration": iteration,
+                  "seconds": time.perf_counter() - started, "pid": os.getpid()}
+        line = json.dumps(record, separators=(",", ":")) + "\n"
+        if destination not in {"1", "true", "stderr"}:
+            with open(destination, "a") as stream:
+                stream.write(line)
+        else:
+            sys.stderr.write(line)
 
 
 def find_opt_iter(
@@ -951,13 +974,9 @@ def knockoff_filter_voting(
                     np.random.seed(seed)
 
                 try:
-                    # Only random sampling varies per iteration
-                    Xk = _sample_knockoffs_from_cache(X, cache, seed)
-
-                    # Compute statistics and threshold
-                    W = statistic(X, Xk, y)
-                    t = knockoff_threshold(W, fdr=fdr, offset=offset)
-                    selected_iter = np.where(W >= t)[0]
+                    selected_iter = _cached_iteration(
+                        X, y, cache, statistic, fdr, offset, seed
+                    )
 
                     for idx in selected_iter:
                         selection_counts[idx] += 1
