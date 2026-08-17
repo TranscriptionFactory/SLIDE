@@ -15,7 +15,15 @@ import pandas as pd
 from sklearn.datasets import make_classification, make_regression
 from unittest.mock import Mock, patch
 
-from loveslide.score import Estimator, SLIDE_Estimator
+from loveslide.score import Estimator, SLIDE_Estimator, _mean_valid_scores
+
+
+def test_mean_valid_scores_ignores_undefined_resamples():
+    assert _mean_valid_scores(np.array([0.8, None, 0.6], dtype=object)) == pytest.approx(0.7)
+
+
+def test_mean_valid_scores_returns_nan_when_no_split_is_evaluable():
+    assert np.isnan(_mean_valid_scores(np.array([None, np.nan], dtype=object)))
 
 
 class TestEstimatorInit:
