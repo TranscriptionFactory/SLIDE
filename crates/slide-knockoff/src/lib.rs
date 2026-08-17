@@ -1503,9 +1503,8 @@ mod tests {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.1);
-        // Knockoff-path grid length (default 250 = rust production). Set to 500 to
-        // probe whether matching R's lasso_max_lambda grid closes the gap. NB the
-        // path also obeys the SLIDE_KNOCKOFF_NLAMBDA cap (default 100), so raise both.
+        // Knockoff-path grid length (default 250 = Rust production). Set to 500 to
+        // probe whether matching R's lasso_max_lambda grid closes the gap.
         let nlambda: usize = std::env::var("SLIDE_ATTR_NLAMBDA")
             .ok()
             .and_then(|s| s.parse().ok())

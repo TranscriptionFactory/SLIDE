@@ -452,14 +452,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_diagnostics(
     family: GlmnetFamily,
     config: &GaussianLassoPathConfig,
 ) -> Result<KnockoffLambdasMaxDiagnostics, GlmnetError> {
-    let (knockoff_nlambda, knockoff_tolerance, knockoff_max_iter) = knockoff_cd_tunables();
-    let knockoff_config = GaussianLassoPathConfig {
-        nlambda: config.nlambda.min(knockoff_nlambda),
-        tolerance: knockoff_tolerance,
-        max_iter: knockoff_max_iter,
-        early_stop_all_entered: false,
-        ..config.clone()
-    };
+    let knockoff_config = knockoff_path_config(config);
     let _t0 = std::time::Instant::now();
     let path = match family {
         GlmnetFamily::Gaussian => {
@@ -507,26 +500,19 @@ fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time
 }
 
 static KNOCKOFF_PROFILE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(usize, Scalar, usize)> = std::sync::OnceLock::new();
+static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(Scalar, usize)> = std::sync::OnceLock::new();
 
-const DEFAULT_KNOCKOFF_NLAMBDA: usize = 100;
 const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
 const DEFAULT_KNOCKOFF_MAX_ITER: usize = 1_000;
 
-/// Returns `(nlambda, tolerance, max_iter)` for the knockoff CD path, allowing
+/// Returns `(tolerance, max_iter)` for the knockoff CD path, allowing
 /// env-var overrides:
-///   - `SLIDE_KNOCKOFF_NLAMBDA`  (default 100) — path length cap
 ///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-4) — CD convergence threshold
 ///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 1000) — per-lambda CD iter cap
 ///
 /// Read once per process via OnceLock so we don't hit getenv per knockoff iter.
-fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
+fn knockoff_cd_tunables() -> (Scalar, usize) {
     *KNOCKOFF_CD_TUNABLES.get_or_init(|| {
-        let nlambda = std::env::var("SLIDE_KNOCKOFF_NLAMBDA")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .filter(|&n| n > 0)
-            .unwrap_or(DEFAULT_KNOCKOFF_NLAMBDA);
         let tolerance = std::env::var("SLIDE_KNOCKOFF_TOL")
             .ok()
             .and_then(|s| s.parse::<Scalar>().ok())
@@ -537,8 +523,19 @@ fn knockoff_cd_tunables() -> (usize, Scalar, usize) {
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&n| n > 0)
             .unwrap_or(DEFAULT_KNOCKOFF_MAX_ITER);
-        (nlambda, tolerance, max_iter)
+        (tolerance, max_iter)
     })
+}
+
+fn knockoff_path_config(config: &GaussianLassoPathConfig) -> GaussianLassoPathConfig {
+    let (tolerance, max_iter) = knockoff_cd_tunables();
+    GaussianLassoPathConfig {
+        nlambda: config.nlambda,
+        tolerance,
+        max_iter,
+        early_stop_all_entered: false,
+        ..config.clone()
+    }
 }
 
 /// Like `stat_glmnet_lambdasmax_prebuilt` but reuses precomputed per-column
@@ -556,14 +553,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     config: &GaussianLassoPathConfig,
     ws: &mut GaussianCdWorkspace,
 ) -> Result<Vector, GlmnetError> {
-    let (knockoff_nlambda, knockoff_tolerance, knockoff_max_iter) = knockoff_cd_tunables();
-    let knockoff_config = GaussianLassoPathConfig {
-        nlambda: config.nlambda.min(knockoff_nlambda),
-        tolerance: knockoff_tolerance,
-        max_iter: knockoff_max_iter,
-        early_stop_all_entered: false,
-        ..config.clone()
-    };
+    let knockoff_config = knockoff_path_config(config);
     let _t0 = std::time::Instant::now();
     let path = match family {
         GlmnetFamily::Gaussian => {
@@ -1737,10 +1727,42 @@ mod tests {
 
     #[test]
     fn knockoff_cd_defaults_use_fast_path() {
-        let (nlambda, tolerance, max_iter) = super::knockoff_cd_tunables();
-        assert_eq!(nlambda, 100);
+        let (tolerance, max_iter) = super::knockoff_cd_tunables();
         assert_eq!(tolerance, 1.0e-4);
         assert_eq!(max_iter, 1_000);
+    }
+
+    #[test]
+    fn knockoff_path_honors_configured_lambda_count() {
+        let augmented = Matrix::from_ndarray(arr2(&[
+            [1.0, 0.0, 0.5, 0.2],
+            [0.0, 1.0, 0.1, 0.6],
+            [1.0, 1.0, 0.7, 0.8],
+            [2.0, 1.0, 1.2, 0.9],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[1.0, 0.5, 1.5, 2.5]));
+        for nlambda in [100, 250, 500] {
+            let requested = GaussianLassoPathConfig {
+                nlambda,
+                ..GaussianLassoPathConfig::default()
+            };
+            let cached_and_uncached = [
+                super::knockoff_path_config(&requested),
+                super::knockoff_path_config(&requested),
+            ];
+            assert!(cached_and_uncached
+                .iter()
+                .all(|config| config.nlambda == nlambda));
+            let diagnostics = super::stat_glmnet_lambdasmax_prebuilt_diagnostics(
+                &augmented,
+                2,
+                &y,
+                GlmnetFamily::Gaussian,
+                &requested,
+            )
+            .unwrap_or_else(|error| panic!("knockoff path failed: {error}"));
+            assert_eq!(diagnostics.path.lambda.as_ndarray().len(), nlambda);
+        }
     }
 
     #[test]
