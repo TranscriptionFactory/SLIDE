@@ -26,6 +26,7 @@ struct Output {
     threshold: Option<f64>,
     selected: Vec<usize>,
     total_cd_iters: usize,
+    wall_ms: f64,
 }
 
 #[derive(Serialize)]
@@ -71,9 +72,9 @@ fn threshold(w: &[f64], fdr: f64) -> Option<f64> {
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args().collect();
-    if args.len() != 13 {
+    if args.len() != 16 {
         bail!(
-            "usage: paired_xtilde <z.raw> <xtilde.raw> <y.raw> <a.raw> <swap.raw> <n> <p> <a_n> <a_p> <lf_names> <fdr> <output.json>"
+            "usage: paired_xtilde <z.raw> <xtilde.raw> <y.raw> <a.raw> <swap.raw> <n> <p> <a_n> <a_p> <lf_names> <fdr> <nlambda> <tolerance> <max_iter> <output.json>"
         );
     }
     let n: usize = args[6].parse()?;
@@ -81,6 +82,9 @@ fn main() -> Result<()> {
     let a_n: usize = args[8].parse()?;
     let a_p: usize = args[9].parse()?;
     let fdr: f64 = args[11].parse()?;
+    let nlambda: usize = args[12].parse()?;
+    let tolerance: f64 = args[13].parse()?;
+    let max_iter: usize = args[14].parse()?;
     let (z_values, z_sha256) = read_f64(Path::new(&args[1]), n * p)?;
     let (xtilde_values, xtilde_sha256) = read_f64(Path::new(&args[2]), n * p)?;
     let (y_values, y_sha256) = read_f64(Path::new(&args[3]), n)?;
@@ -154,11 +158,14 @@ fn main() -> Result<()> {
         / (n - 1) as f64)
         .sqrt();
     let config = GaussianLassoPathConfig {
-        nlambda: 500,
+        nlambda,
+        tolerance,
+        max_iter,
         standardize: true,
         scale_ddof: 1,
         ..GaussianLassoPathConfig::default()
     };
+    let started = std::time::Instant::now();
     let diagnostics = stat_glmnet_lambdasmax_prebuilt_diagnostics(
         &Matrix::from_ndarray(augmented),
         p,
@@ -166,6 +173,7 @@ fn main() -> Result<()> {
         GlmnetFamily::Gaussian,
         &config,
     )?;
+    let wall_ms = started.elapsed().as_secs_f64() * 1_000.0;
     let entries = diagnostics.entry_lambda.as_ndarray();
     let mut entry_original = vec![0.0; p];
     let mut entry_knockoff = vec![0.0; p];
@@ -217,7 +225,8 @@ fn main() -> Result<()> {
         threshold: cutoff,
         selected,
         total_cd_iters: diagnostics.path.total_cd_iters,
+        wall_ms,
     };
-    fs::write(&args[12], serde_json::to_vec(&output)?)?;
+    fs::write(&args[15], serde_json::to_vec(&output)?)?;
     Ok(())
 }
