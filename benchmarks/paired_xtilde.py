@@ -44,6 +44,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fdr", type=float, default=0.1)
     parser.add_argument("--rscript", type=Path, required=True)
     parser.add_argument("--rust-bin", type=Path, required=True)
+    parser.add_argument("--rust-nlambda", type=int, nargs="+", default=[100, 250, 500])
+    parser.add_argument("--rust-tol", type=float, default=1e-4)
+    parser.add_argument("--rust-max-iter", type=int, default=1000)
     return parser.parse_args()
 
 
@@ -98,7 +101,8 @@ def main() -> None:
     )
 
     (args.out / "diagnostics" / "python").mkdir(parents=True)
-    (args.out / "diagnostics" / "rust").mkdir(parents=True)
+    for nlambda in args.rust_nlambda:
+        (args.out / "diagnostics" / f"rust_{nlambda}").mkdir(parents=True)
     (args.out / "diagnostics" / "r").mkdir(parents=True)
     manifest = list(csv.DictReader((args.out / "xtilde_manifest.csv").open()))
     summary = []
@@ -196,34 +200,19 @@ def main() -> None:
         (args.out / "diagnostics" / "python" / f"{stem}.json").write_text(
             json.dumps(py_output, separators=(",", ":"))
         )
-        rust_out = args.out / "diagnostics" / "rust" / f"{stem}.json"
-        rust_env = env | {
-            "SLIDE_KNOCKOFF_NLAMBDA": "500",
-            "SLIDE_KNOCKOFF_TOL": "1e-7",
-            "SLIDE_KNOCKOFF_MAX_ITER": "100000",
-            "RAYON_NUM_THREADS": "1",
-        }
-        subprocess.run(
-            [
-                str(args.rust_bin),
-                str(inputs / "z.raw"),
-                str(xtilde_path),
-                str(inputs / "y.raw"),
-                str(inputs / "a.raw"),
-                str(swap_path),
-                str(n),
-                str(p),
-                str(a.shape[0]),
-                str(a.shape[1]),
-                str(inputs / "lf_names.txt"),
-                str(args.fdr),
-                str(rust_out),
-            ],
-            check=True,
-            cwd=ROOT,
-            env=rust_env,
-        )
-        for backend in ("r", "python", "rust"):
+        for nlambda in args.rust_nlambda:
+            rust_out = args.out / "diagnostics" / f"rust_{nlambda}" / f"{stem}.json"
+            rust_env = env | {"RAYON_NUM_THREADS": "1"}
+            subprocess.run(
+                [
+                    str(args.rust_bin), str(inputs / "z.raw"), str(xtilde_path),
+                    str(inputs / "y.raw"), str(inputs / "a.raw"), str(swap_path),
+                    str(n), str(p), str(a.shape[0]), str(a.shape[1]),
+                    str(inputs / "lf_names.txt"), str(args.fdr), str(nlambda),
+                    str(args.rust_tol), str(args.rust_max_iter), str(rust_out),
+                ], check=True, cwd=ROOT, env=rust_env,
+            )
+        for backend in ("r", "python", *(f"rust_{n}" for n in args.rust_nlambda)):
             current = json.loads(
                 (args.out / "diagnostics" / backend / f"{stem}.json").read_text()
             )
@@ -243,6 +232,9 @@ def main() -> None:
                     "xtilde_sha256": current["xtilde_sha256"],
                     "threshold": current["threshold"],
                     "selected_indices": ";".join(map(str, current["selected"])),
+                    "path_length": len(current["lambda"]),
+                    "total_cd_iters": current.get("total_cd_iters"),
+                    "wall_ms": current.get("wall_ms"),
                 }
             )
     pd.DataFrame(summary).to_csv(args.out / "paired_iteration_summary.csv", index=False)

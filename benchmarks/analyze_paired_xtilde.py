@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize the paired-X-tilde diagnostic outputs."""
-
+"""Analyze byte-paired R/Python/Rust knockoff statistic sweeps."""
 from __future__ import annotations
 
 import argparse
@@ -10,216 +9,99 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import rankdata
 
 
-BACKENDS = ("r", "python", "rust")
+def corr(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.corrcoef(a, b)[0, 1]) if np.std(a) and np.std(b) else float("nan")
 
 
-def load_iteration(root: Path, iteration: int) -> dict[str, dict]:
-    stem = f"iter_{iteration:03d}.json"
-    return {
-        backend: json.loads((root / "diagnostics" / backend / stem).read_text())
-        for backend in BACKENDS
-    }
-
-
-def maximum_difference(left: object, right: object) -> float:
-    left_array = np.asarray(left, dtype=float)
-    right_array = np.asarray(right, dtype=float)
-    if left_array.shape != right_array.shape:
-        return float("inf")
-    return float(np.max(np.abs(left_array - right_array), initial=0.0))
+def entry_indices(values: np.ndarray, lambdas: np.ndarray, scale: float) -> np.ndarray:
+    normalized = values / scale
+    return np.array([
+        -1 if value == 0 else int(np.argmin(np.abs(lambdas - value)))
+        for value in normalized
+    ])
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
     args = parser.parse_args()
-    manifest = list(csv.DictReader((args.root / "xtilde_manifest.csv").open()))
-    metadata = json.loads((args.root / "inputs" / "metadata.json").read_text())
-    names = metadata["lf_names"]
-    cumulative = {backend: np.zeros(len(names), dtype=int) for backend in BACKENDS}
-    cumulative_rows = []
-    summary_rows = []
-    first_selection_divergence = None
+    root = args.root
+    manifest = list(csv.DictReader((root / "xtilde_manifest.csv").open()))
+    metadata = json.loads((root / "inputs" / "metadata.json").read_text())
+    n = len(metadata["sample_order"])
+    backends = sorted(path.name for path in (root / "diagnostics").iterdir() if path.is_dir())
+    rust_backends = [name for name in backends if name.startswith("rust_")]
+    references = [name for name in ("r", "python") if name in backends]
+    rows: list[dict] = []
+    votes = {name: np.zeros(len(metadata["lf_names"]), dtype=int) for name in backends}
 
-    for manifest_row in manifest:
-        iteration = int(manifest_row["iteration"])
-        diagnostics = load_iteration(args.root, iteration)
-        selections = {
-            backend: diagnostics[backend]["selected"] for backend in BACKENDS
-        }
-        selection_divergence = len({tuple(value) for value in selections.values()}) > 1
-        if selection_divergence and first_selection_divergence is None:
-            first_selection_divergence = iteration
-        for backend in BACKENDS:
-            cumulative[backend][selections[backend]] += 1
-            cumulative_rows.append(
-                {
-                    "backend": backend,
-                    "iteration": iteration,
-                    "lf_names": names,
-                    "counts": cumulative[backend].tolist(),
-                }
-            )
-            summary_rows.append(
-                {
-                    "backend": backend,
-                    "iteration": iteration,
-                    "a_sha256": diagnostics[backend]["a_sha256"],
-                    "lf_names_sha256": diagnostics[backend]["lf_names_sha256"],
-                    "z_sha256": diagnostics[backend]["z_sha256"],
-                    "y_sha256": diagnostics[backend]["y_sha256"],
-                    "xtilde_sha256": diagnostics[backend]["xtilde_sha256"],
-                    "xtilde_max_abs_reload_difference": 0.0,
-                    "threshold": diagnostics[backend]["threshold"],
-                    "selected_indices": ";".join(map(str, selections[backend])),
-                    "selection_diverges_this_iteration": selection_divergence,
-                    "first_selection_divergence": iteration
-                    == first_selection_divergence,
-                }
-            )
+    for item in manifest:
+        iteration = int(item["iteration"])
+        stem = f"iter_{iteration:03d}.json"
+        data = {name: json.loads((root / "diagnostics" / name / stem).read_text()) for name in backends}
+        hashes = {value["xtilde_sha256"] for value in data.values()}
+        if hashes != {item["xtilde_sha256"]}:
+            raise RuntimeError(f"iteration {iteration}: consumers did not share X-tilde")
+        for name, value in data.items():
+            votes[name][value["selected"]] += 1
+        for reference in references:
+            ref = data[reference]
+            ref_w = np.asarray(ref["w"], float) / n  # R/Python store lambda*n.
+            ref_lambda = np.asarray(ref["lambda"], float)
+            for backend in rust_backends:
+                rust = data[backend]
+                rust_w = np.asarray(rust["w"], float)
+                rust_lambda = np.asarray(rust["lambda"], float)
+                ref_orig = np.asarray(ref["entry_original"], float)
+                ref_ko = np.asarray(ref["entry_knockoff"], float)
+                rust_orig = np.asarray(rust["entry_original"], float)
+                rust_ko = np.asarray(rust["entry_knockoff"], float)
+                ro = entry_indices(ref_orig, ref_lambda, n)
+                rk = entry_indices(ref_ko, ref_lambda, n)
+                uo = entry_indices(rust_orig, rust_lambda, 1.0)
+                uk = entry_indices(rust_ko, rust_lambda, 1.0)
+                entered = (ro >= 0) & (uo >= 0)
+                entered_ko = (rk >= 0) & (uk >= 0)
+                rt = None if ref["threshold"] is None else ref["threshold"] / n
+                ut = rust["threshold"]
+                rows.append({
+                    "iteration": iteration, "reference": reference, "backend": backend,
+                    "pearson_w": corr(ref_w, rust_w),
+                    "spearman_w": corr(rankdata(ref_w), rankdata(rust_w)),
+                    "sign_agreement": float(np.mean(np.sign(ref_w) == np.sign(rust_w))),
+                    "top10_overlap": len(set(np.argsort(-np.abs(ref_w))[:10]) & set(np.argsort(-np.abs(rust_w))[:10])),
+                    "original_entry_index_mae": float(np.mean(np.abs(ro[entered] - uo[entered]))) if entered.any() else None,
+                    "knockoff_entry_index_mae": float(np.mean(np.abs(rk[entered_ko] - uk[entered_ko]))) if entered_ko.any() else None,
+                    "original_never_entered_agreement": float(np.mean((ro < 0) == (uo < 0))),
+                    "knockoff_never_entered_agreement": float(np.mean((rk < 0) == (uk < 0))),
+                    "normalized_threshold_difference": None if rt is None or ut is None else abs(rt - ut),
+                    "rust_path_length": len(rust_lambda),
+                    "rust_cd_iters": rust.get("total_cd_iters"), "rust_wall_ms": rust.get("wall_ms"),
+                })
 
-    pd.DataFrame(summary_rows).to_csv(
-        args.root / "paired_iteration_summary.csv", index=False
-    )
-    (args.root / "cumulative_votes.json").write_text(
-        json.dumps(cumulative_rows, separators=(",", ":"))
-    )
-
-    first = load_iteration(args.root, 0)
-    r_lambda = np.asarray(first["r"]["lambda"])
-    rust_lambda = np.asarray(first["rust"]["lambda"])
-    first_grid_index = int(
-        np.flatnonzero(
-            ~np.isclose(
-                r_lambda[: len(rust_lambda)],
-                rust_lambda,
-                rtol=1e-14,
-                atol=1e-14,
-            )
-        )[0]
-    )
-    first_grid_values = {
-        backend: load_iteration(args.root, 0)[backend]["lambda"][first_grid_index]
-        for backend in BACKENDS
-    }
-    divergent_iteration = (
-        first_selection_divergence if first_selection_divergence is not None else 0
-    )
-    divergent = load_iteration(args.root, divergent_iteration)
-    all_indices = sorted(
-        set().union(*(set(divergent[backend]["selected"]) for backend in BACKENDS))
-    )
-    first_feature = next(
-        index
-        for index in all_indices
-        if len(
-            {
-                index in divergent[backend]["selected"]
-                for backend in BACKENDS
-            }
-        )
-        > 1
-    )
-    scaled_rust_w = divergent["rust"]["w"][first_feature] * len(
-        metadata["sample_order"]
-    )
-    votes = {
-        backend: {
-            name: int(cumulative[backend][index]) for index, name in enumerate(names)
-        }
-        for backend in BACKENDS
-    }
-    stage_rows = [
-        (
-            "Raw A/Z/y and X-tilde",
-            "equal",
-            "All consumer SHA-256 values match; X-tilde reload max absolute difference is 0.",
-        ),
-        (
-            "Centering/scaling",
-            "equal within floating arithmetic",
-            "All use sample SD (ddof=1); standardized summaries agree to roundoff.",
-        ),
-        (
-            "Lambda grid / lasso path",
-            "DIFFERS",
-            f"First grid difference: iteration 0, grid index {first_grid_index}; "
-            f"R={first_grid_values['r']:.17g}, Python={first_grid_values['python']:.17g}, "
-            f"Rust={first_grid_values['rust']:.17g}. R/Python use k/nlambda; "
-            "Rust uses k/(nlambda-1) and stops once all observed features have entered.",
-        ),
-        (
-            "Lambda-entry convention",
-            "DIFFERS by representation",
-            "R/Python report lambda*n; Rust reports raw lambda. Multiplying Rust entries/W "
-            "by n removes this global scale only; feature-specific grid/solver differences remain.",
-        ),
-        (
-            "W / threshold / selections",
-            "first final divergence",
-            f"Iteration {divergent_iteration}, LF {names[first_feature]} (index {first_feature}): "
-            f"W R={divergent['r']['w'][first_feature]:.17g}, "
-            f"Python={divergent['python']['w'][first_feature]:.17g}, "
-            f"Rust={divergent['rust']['w'][first_feature]:.17g} "
-            f"(Rust*n={scaled_rust_w:.17g}); selected R/Python/Rust="
-            f"{first_feature in divergent['r']['selected']}/"
-            f"{first_feature in divergent['python']['selected']}/"
-            f"{first_feature in divergent['rust']['selected']}.",
-        ),
-        (
-            "Vote aggregation / indexing",
-            "equal implementation",
-            "Zero-based indices map directly to canonical LF names; cumulative counts are "
-            "the sums of per-iteration selections.",
-        ),
-    ]
-    lines = [
-        "# First divergence",
-        "",
-        "**Decision: B. Lasso-path/solver mismatch.**",
-        "",
-        "| Stage | Result | Evidence |",
-        "|---|---|---|",
-    ]
-    lines.extend(f"| {stage} | {result} | {evidence} |" for stage, result, evidence in stage_rows)
-    lines.extend(
-        [
-            "",
-            "## Z33/Z61 paired evidence",
-            "",
-            f"Across {len(manifest)} byte-paired iterations:",
-            "",
-            "| Backend | Z33 votes | Z44 votes | Z61 votes |",
-            "|---|---:|---:|---:|",
-        ]
-    )
-    lines.extend(
-        f"| {backend} | {votes[backend]['Z33']} | {votes[backend]['Z44']} | "
-        f"{votes[backend]['Z61']} |"
-        for backend in BACKENDS
-    )
-    lines.extend(
-        [
-            "",
-            "Z33 and Z61 have identical per-iteration selections and final vote counts across "
-            "all three consumers in this paired run. Therefore their persistent native-R versus "
-            "Rust preference is not produced by downstream voting when realized X-tilde and swap "
-            "masks are fixed. It comes from knockoff generation/unpaired RNG streams. The distinct "
-            f"downstream path mismatch first changes a final selected set at iteration "
-            f"{divergent_iteration}, but not the Z33/Z61 counts.",
-            "",
-            "## Minimal proposed change (not implemented)",
-            "",
-            "Match R/Python's Gaussian grid exponent `k / nlambda` instead of "
-            "`k / (nlambda - 1)`, then rerun this fixture. Separately decide whether public Rust "
-            "diagnostics should report `lambda*n`; that scale does not affect threshold selection. "
-            "Production fix intentionally deferred for approval.",
-            "",
-        ]
-    )
-    (args.root / "first_divergence.md").write_text("\n".join(lines))
+    frame = pd.DataFrame(rows)
+    frame.to_csv(root / "paired_metrics.csv", index=False)
+    vote_rows = []
+    draws = len(manifest)
+    for reference in references:
+        for backend in rust_backends:
+            differences = votes[backend] / draws - votes[reference] / draws
+            for index, difference in enumerate(differences):
+                vote_rows.append({"reference": reference, "backend": backend, "feature_index": index,
+                                  "feature": metadata["lf_names"][index], "vote_frequency_difference": difference})
+    pd.DataFrame(vote_rows).to_csv(root / "vote_frequency_differences.csv", index=False)
+    numeric = [column for column in frame.columns if column not in {"iteration", "reference", "backend"}]
+    aggregate = frame.groupby(["reference", "backend"])[numeric].agg(["mean", "median"]).reset_index()
+    aggregate.columns = ["_".join(part for part in column if part) for column in aggregate.columns]
+    records = aggregate.to_dict(orient="records")
+    (root / "paired_metrics.json").write_text(json.dumps(records, indent=2) + "\n")
+    lines = ["# Paired knockoff lambda sweep", "", f"{draws} draws; R/Python entry statistics were divided by n={n} for scale-sensitive comparisons.", "",
+             "All Rust configurations consumed the same X-tilde and swap fixture per draw. Never-entered agreement is reported separately.", "",
+             aggregate.to_markdown(index=False), ""]
+    (root / "comparison.md").write_text("\n".join(lines))
 
 
 if __name__ == "__main__":
