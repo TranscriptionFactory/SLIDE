@@ -19,6 +19,13 @@ from .plotting import Plotter
 from .score import Estimator, SLIDE_Estimator
 
 
+def _format_interaction_pairs(interaction_pairs):
+    """Serialize a 2-by-N interaction index matrix for backend comparison."""
+    if np.size(interaction_pairs) == 0:
+        return []
+    return [f"Z{left}.Z{right}" for left, right in np.asarray(interaction_pairs).T]
+
+
 class SLIDE:
     def __init__(self, input_params, x=None, y=None):
         self.data, self.input_params = init_data(input_params, x, y)
@@ -745,7 +752,9 @@ class OptimizeSLIDE(SLIDE):
 
             self.sig_interacts = [f"Z{j}" for i, j in self.interaction_pairs.T]
             np.savetxt(
-                os.path.join(outpath, "sig_interacts.txt"), self.sig_interacts, fmt="%s"
+                os.path.join(outpath, "sig_interacts.txt"),
+                _format_interaction_pairs(self.interaction_pairs),
+                fmt="%s",
             )
 
         else:
