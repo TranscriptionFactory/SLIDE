@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -241,26 +242,36 @@ def submit_slurm(args: argparse.Namespace) -> int:
 # Backend runners
 # ---------------------------------------------------------------------------
 def _save_timing(record: TimingRecord, out_dir: Path) -> None:
-    """Persist a single timing record to a per-backend JSON file."""
+    """Persist one timing record without a shared-file write race."""
     timing_dir = out_dir / record.backend
     timing_dir.mkdir(parents=True, exist_ok=True)
-    path = timing_dir / "timings.json"
-    existing: list[dict] = []
-    if path.exists():
-        with path.open() as f:
-            existing = json.load(f)
-    # Replace any existing entry for the same (delta, lam)
-    existing = [
-        t for t in existing
-        if not (abs(t["delta"] - record.delta) < 1e-9 and abs(t["lam"] - record.lam) < 1e-9)
-    ]
-    existing.append(dataclasses.asdict(record))
-    with path.open("w") as f:
-        json.dump(existing, f, indent=2)
+    shard_dir = timing_dir / "timing_shards"
+    shard_dir.mkdir(exist_ok=True)
+    path = shard_dir / f"{record.delta}_{record.lam}.json"
+    pending = path.with_suffix(f".json.{os.getpid()}.pending")
+    with pending.open("w") as f:
+        json.dump(dataclasses.asdict(record), f, indent=2)
+    pending.replace(path)
+
+
+def _merge_timing_shards(out_dir: Path) -> None:
+    """Merge per-cell timing shards into the legacy backend timing files."""
+    for backend_dir in sorted(path for path in out_dir.iterdir() if path.is_dir()):
+        shard_dir = backend_dir / "timing_shards"
+        if not shard_dir.is_dir():
+            continue
+        records = []
+        for shard in sorted(shard_dir.glob("*.json")):
+            with shard.open() as stream:
+                records.append(json.load(stream))
+        records.sort(key=lambda item: (item["delta"], item["lam"]))
+        with (backend_dir / "timings.json").open("w") as stream:
+            json.dump(records, stream, indent=2)
 
 
 def _load_saved_timings(out_dir: Path) -> list[TimingRecord]:
     """Load all persisted timing records from per-backend JSON files."""
+    _merge_timing_shards(out_dir)
     records = []
     for timing_path in sorted(out_dir.glob("*/timings.json")):
         with timing_path.open() as f:
@@ -300,6 +311,47 @@ def _write_profile_summary(out_dir: Path) -> None:
         writer.writerows(rows)
 
 
+def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None:
+    """Record the execution context needed to interpret benchmark timings."""
+    metadata = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "git_sha": subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip(),
+        "hostname": socket.gethostname(),
+        "cpu_count": os.cpu_count(),
+        "threads": args.threads,
+        "blas_threads": {
+            name: os.environ.get(name)
+            for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+        },
+        "python": sys.version,
+        "platform": sys.platform,
+        "seed": args.knockoff_base_seed,
+        "niter": args.niter,
+    }
+    with (out_dir / "benchmark_environment.json").open("w") as stream:
+        json.dump(metadata, stream, indent=2)
+
+
+def _merge_cell_summaries(out_dir: Path) -> None:
+    """Aggregate cell-local summaries without relying on backend shared files."""
+    for backend_dir in sorted(path for path in out_dir.iterdir() if path.is_dir()):
+        rows = []
+        for summary_path in sorted(backend_dir.glob("*_out/benchmark_summary.csv")):
+            with summary_path.open(newline="") as stream:
+                rows.extend(csv.DictReader(stream))
+        if not rows:
+            continue
+        rows.sort(key=lambda row: (float(row["delta"]), float(row["lambda"])))
+        fields = list(rows[0])
+        with (backend_dir / "benchmark_cell_summary.csv").open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+
+
 def run_python_backend(
     args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
 ) -> TimingRecord:
@@ -307,8 +359,9 @@ def run_python_backend(
     from loveslide import OptimizeSLIDE
 
     if args.profile:
+        run_id = dt.datetime.now().strftime("%Y%m%dT%H%M%S%f")
         os.environ["SLIDE_KNOCKOFF_PROFILE"] = str(
-            (out_dir / f"profile_{delta}_{lam}.jsonl").resolve()
+            (out_dir / f"profile_{delta}_{lam}_{run_id}_{os.getpid()}.jsonl").resolve()
         )
 
     if args.knockoff_base_seed is not None:
@@ -782,14 +835,11 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["RAYON_NUM_THREADS"] = str(args.threads)
 
     if not args.skip_run:
+        _write_environment_metadata(args, out_dir)
         for backend in args.backends:
             for delta, lam in param_grid:
                 backend_dir = out_dir / backend
                 backend_dir.mkdir(parents=True, exist_ok=True)
-                if args.profile:
-                    os.environ["SLIDE_KNOCKOFF_PROFILE"] = str(
-                        (backend_dir / "knockoff_profile.jsonl").resolve()
-                    )
                 log.info("=== %s delta=%s lambda=%s ===", backend, delta, lam)
 
                 if backend in ("rust", "rust_r_knockoffs"):
@@ -809,6 +859,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Load saved timings from previous runs (complements current-run timings)
     saved_timings = _load_saved_timings(out_dir)
+    _merge_cell_summaries(out_dir)
     if args.profile:
         _write_profile_summary(out_dir)
     seen = {(t.backend, t.delta, t.lam) for t in timings}
