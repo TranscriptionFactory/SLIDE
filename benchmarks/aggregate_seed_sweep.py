@@ -94,7 +94,9 @@ def write_outputs(summary: dict, out_dir: Path) -> None:
     comparisons = summary["comparisons"]
     if comparisons:
         with (out_dir / "seed_sweep_comparisons.csv").open("w", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(comparisons[0]))
+            writer = csv.DictWriter(
+                stream, fieldnames=list(comparisons[0]), lineterminator="\n"
+            )
             writer.writeheader()
             writer.writerows(comparisons)
     lines = [
