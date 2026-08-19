@@ -572,6 +572,10 @@ pub fn calc_default_fsize(n_rows: usize, k: usize) -> usize {
     f_size
 }
 
+pub fn subproblem_base_seed(base_seed: u64, niter: usize, index: usize) -> u64 {
+    base_seed + (niter as u64) * (index as u64)
+}
+
 pub fn select_short_freq(
     x: &Matrix,
     y: &Vector,
@@ -604,7 +608,10 @@ pub fn select_short_freq(
             let start = chunk_index * feature_split;
             let stop = (start + feature_split).min(p);
             let chunk = Matrix::from_ndarray(select_column_range(x, start, stop));
-            let chunk_result = knockoff_filter_voting_slide(&chunk, y, config)?;
+            let mut chunk_config = config.clone();
+            chunk_config.base_seed =
+                subproblem_base_seed(config.base_seed, config.niter, chunk_index);
+            let chunk_result = knockoff_filter_voting_slide(&chunk, y, &chunk_config)?;
             Ok(chunk_result
                 .selected
                 .into_iter()
@@ -619,7 +626,9 @@ pub fn select_short_freq(
     }
 
     let screened = Matrix::from_ndarray(select_columns(x, &stage_one_union));
-    let mut stage_two = knockoff_filter_voting_slide(&screened, y, config)?;
+    let mut stage_two_config = config.clone();
+    stage_two_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, n_splits);
+    let mut stage_two = knockoff_filter_voting_slide(&screened, y, &stage_two_config)?;
     stage_two.selected = stage_two
         .selected
         .into_iter()
@@ -1911,6 +1920,13 @@ mod tests {
         for index in result.selected {
             assert!(union.binary_search(&index).is_ok());
         }
+    }
+
+    #[test]
+    fn subproblem_seeds_use_disjoint_iteration_ranges() {
+        assert_eq!(subproblem_base_seed(42, 500, 0), 42);
+        assert_eq!(subproblem_base_seed(42, 500, 1), 542);
+        assert_eq!(subproblem_base_seed(42, 500, 4), 2042);
     }
 
     #[test]

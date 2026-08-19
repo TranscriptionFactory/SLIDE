@@ -401,6 +401,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_method="asdp",
         knockoff_shrink=False,
         knockoff_offset=0,
+        knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
     ):
 
@@ -418,6 +419,7 @@ class OptimizeSLIDE(SLIDE):
             method=knockoff_method,
             shrink=knockoff_shrink,
             offset=knockoff_offset,
+            base_seed=knockoff_base_seed,
             fstat=fstat,
         )
 
@@ -436,6 +438,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_method="asdp",
         knockoff_shrink=False,
         knockoff_offset=0,
+        knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
         use_r_style=True,
     ):
@@ -511,7 +514,8 @@ class OptimizeSLIDE(SLIDE):
             used_marginals = set()
             retry_with_higher_spec = False
 
-            for marg_idx in self.marginal_idxs:
+            seed_stride = niter * (n_lfs + 1)
+            for marginal_position, marg_idx in enumerate(self.marginal_idxs):
                 used_marginals.add(marg_idx)
                 z_marginal = z_all[:, marg_idx]
 
@@ -543,6 +547,10 @@ class OptimizeSLIDE(SLIDE):
                     method=knockoff_method,
                     shrink=knockoff_shrink,
                     offset=knockoff_offset,
+                    base_seed=(
+                        None if knockoff_base_seed is None
+                        else knockoff_base_seed + (marginal_position + 1) * seed_stride
+                    ),
                     fstat=fstat,
                 )
 
@@ -592,6 +600,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_method="asdp",
         knockoff_shrink=False,
         knockoff_offset=0,
+        knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
     ):
         """
@@ -626,6 +635,7 @@ class OptimizeSLIDE(SLIDE):
             method=knockoff_method,
             shrink=knockoff_shrink,
             offset=knockoff_offset,
+            base_seed=knockoff_base_seed,
             fstat=fstat,
         )
 
@@ -665,6 +675,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_method="asdp",
         knockoff_shrink=False,
         knockoff_offset=0,
+        knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
     ):
 
@@ -692,6 +703,7 @@ class OptimizeSLIDE(SLIDE):
             knockoff_method=knockoff_method,
             knockoff_shrink=knockoff_shrink,
             knockoff_offset=knockoff_offset,
+            knockoff_base_seed=knockoff_base_seed,
             fstat=fstat,
         )
 
@@ -724,6 +736,7 @@ class OptimizeSLIDE(SLIDE):
                 knockoff_method=knockoff_method,
                 knockoff_shrink=knockoff_shrink,
                 knockoff_offset=knockoff_offset,
+                knockoff_base_seed=knockoff_base_seed,
                 fstat=fstat,
             )
 
@@ -820,6 +833,7 @@ class OptimizeSLIDE(SLIDE):
                     knockoff_method=self.input_params.get("knockoff_method", "asdp"),
                     knockoff_shrink=self.input_params.get("knockoff_shrink", False),
                     knockoff_offset=self.input_params.get("knockoff_offset", 0),
+                    knockoff_base_seed=self.input_params.get("knockoff_base_seed"),
                     fstat=self.input_params.get("fstat", "glmnet_lambdasmax"),
                 )
 

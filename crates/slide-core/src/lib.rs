@@ -444,17 +444,22 @@ pub fn find_interaction_lfs(
     let knockoff_config = config.to_knockoff_config();
 
     // Run marginals serially; each select_short_freq parallelizes over niter.
+    let seed_stride = config.niter as u64 * (ncols as u64 + 1);
     let results: Vec<Option<InteractionVotingResult>> = sig_lfs
         .iter()
         .zip(candidate_sets.iter())
-        .map(|(&marginal_lf, candidate_lfs)| {
+        .enumerate()
+        .map(|(marginal_position, (&marginal_lf, candidate_lfs))| {
             if candidate_lfs.is_empty() {
                 return Ok(None);
             }
             let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
             let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
             let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
-            let voting = select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
+            let mut interaction_config = knockoff_config.clone();
+            interaction_config.base_seed =
+                knockoff_config.base_seed + (marginal_position as u64 + 1) * seed_stride;
+            let voting = select_short_freq(&interaction_terms, &corrected_y, &interaction_config)?;
             let selected_interactors: Vec<_> = voting
                 .selected
                 .iter()
@@ -552,10 +557,12 @@ fn find_interaction_lfs_with_progress(
     let completed = std::sync::atomic::AtomicUsize::new(0);
 
     // Run marginals serially; each select_short_freq parallelizes over niter.
+    let seed_stride = config.niter as u64 * (ncols as u64 + 1);
     let results: Vec<Option<InteractionVotingResult>> = sig_lfs
         .iter()
         .zip(candidate_sets.iter())
-        .map(|(&marginal_lf, candidate_lfs)| {
+        .enumerate()
+        .map(|(marginal_position, (&marginal_lf, candidate_lfs))| {
             if candidate_lfs.is_empty() {
                 completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return Ok(None);
@@ -563,7 +570,10 @@ fn find_interaction_lfs_with_progress(
             let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
             let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
             let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
-            let voting = select_short_freq(&interaction_terms, &corrected_y, &knockoff_config)?;
+            let mut interaction_config = knockoff_config.clone();
+            interaction_config.base_seed =
+                knockoff_config.base_seed + (marginal_position as u64 + 1) * seed_stride;
+            let voting = select_short_freq(&interaction_terms, &corrected_y, &interaction_config)?;
             let selected_interactors: Vec<_> = voting
                 .selected
                 .iter()

@@ -7,6 +7,7 @@ from loveslide.knockoff.filter import (
     VotingResult,
     _partition_iteration_seeds,
     knockoff_filter_voting,
+    knockoff_filter_voting_slide,
 )
 from loveslide.knockoff.stats.glmnet import stat_glmnet_lambdasmax
 
@@ -68,3 +69,24 @@ def test_unseeded_iteration_batches_keep_iteration_identity():
     assert [item for batch in batches for item in batch] == [
         (0, None), (1, None), (2, None),
     ]
+
+
+def test_chunk_and_screen_stages_use_disjoint_seed_ranges(monkeypatch):
+    seeds = []
+
+    def fake_voting(x, _y, **kwargs):
+        seeds.append(kwargs["base_seed"])
+        return VotingResult(
+            selection_counts=np.ones(x.shape[1], dtype=int),
+            selection_frequency=np.ones(x.shape[1]),
+            selected=np.array([0]), threshold=0.1, niter=2, spec=0.1,
+            min_selections=1, selected_list=[np.array([0])], optimal_iter=0,
+        )
+
+    monkeypatch.setattr("loveslide.knockoff.filter.knockoff_filter_voting", fake_voting)
+    x = np.random.RandomState(1).normal(size=(4, 6))
+    y = np.random.RandomState(2).normal(size=4)
+
+    knockoff_filter_voting_slide(x, y, niter=2, f_size=2, base_seed=10)
+
+    assert seeds == [10, 12, 14, 16]

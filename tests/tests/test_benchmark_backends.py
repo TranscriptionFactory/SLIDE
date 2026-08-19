@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import types
 
 
 MODULE_PATH = Path(__file__).parents[2] / "benchmarks" / "benchmark_backends.py"
@@ -69,3 +70,30 @@ def test_cell_summaries_are_aggregated_without_shared_input(tmp_path):
     assert [(row["delta"], row["lambda"]) for row in rows] == [
         ("0.01", "0.1"), ("0.1", "1.0"),
     ]
+
+
+def test_python_runner_passes_base_seed_into_pipeline(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeOptimizeSLIDE:
+        def __init__(self, input_params):
+            captured.update(input_params)
+
+        def run_pipeline(self, verbose):
+            assert verbose is True
+
+    monkeypatch.setitem(
+        sys.modules, "loveslide",
+        types.SimpleNamespace(OptimizeSLIDE=FakeOptimizeSLIDE),
+    )
+    monkeypatch.setattr(benchmark, "np", __import__("numpy"))
+    args = types.SimpleNamespace(
+        profile=False, knockoff_base_seed=123, threads=2,
+        x_path="x.csv", y_path="y.csv", y_factor=False,
+        niter=5, spec=0.1,
+    )
+
+    result = benchmark.run_python_backend(args, "python", 0.1, 1.0, tmp_path)
+
+    assert result.status == "success"
+    assert captured["knockoff_base_seed"] == 123
