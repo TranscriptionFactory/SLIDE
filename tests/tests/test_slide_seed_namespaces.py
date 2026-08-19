@@ -2,7 +2,13 @@ import numpy as np
 import pandas as pd
 
 from loveslide.knockoffs import Knockoffs
-from loveslide.slide import OptimizeSLIDE
+from loveslide.slide import OptimizeSLIDE, _format_interaction_pairs
+
+
+def test_interaction_pairs_are_serialized_with_both_latent_factors():
+    pairs = np.array([[44, 61], [59, 50]])
+
+    assert _format_interaction_pairs(pairs) == ["Z44.Z59", "Z61.Z50"]
 
 
 def test_interaction_subproblems_use_disjoint_seed_ranges(monkeypatch):
