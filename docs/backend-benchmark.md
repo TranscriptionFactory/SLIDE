@@ -2,7 +2,49 @@
 
 Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 
-**Status (2026-05-22):** Rust is 6-15x faster than Python/R. Correctness diverges on knockoff variable selection — Z/A matrices need investigation.
+**Status (2026-08-19):** Rust remains substantially faster. A ten-seed,
+high-delta sweep now measures parity by stable selections rather than by a
+single stochastic run; marginal parity improved, but interaction parity and
+the `lambda=1.0` Rust marginal core still diverge from native R.
+
+## 2026-08-19 high-delta seed sweep
+
+The latest run used `delta=0.1`, `lambda in {0.1, 1.0}`, 500 knockoff
+iterations, 10 workers, and seeds 42, 1000, ..., 9000. A stable core contains
+features selected in at least half of the ten runs.
+
+| Backend | Lambda | Marginal Jaccard | Marginal recall | Interaction Jaccard | Interaction recall |
+|---|---:|---:|---:|---:|---:|
+| Python | 0.1 | 0.500 | 0.667 | 0.333 | 1.000 |
+| Python | 1.0 | 0.667 | 0.667 | 0.400 | 0.571 |
+| Rust | 0.1 | 1.000 | 1.000 | 0.214 | 1.000 |
+| Rust | 1.0 | 0.250 | 0.333 | 0.214 | 0.429 |
+
+All comparisons use native R as the reference. The machine-readable report is
+in `benchmark_results/20260819_high-delta-seeds/`.
+
+Changes validated by this sweep:
+
+- Benchmark cells write isolated timing/profile artifacts before aggregation,
+  avoiding concurrent lost updates.
+- Python now batches cached knockoff iterations into a bounded number of jobs,
+  reducing dispatch and serialization overhead without changing seed order.
+- Python and Rust assign disjoint deterministic seed ranges to chunks, stage-2
+  voting, and interaction subproblems. The benchmark seed is now passed into
+  the Python pipeline.
+- Python interaction output now records the complete factor pair, matching the
+  R and Rust artifact schema.
+
+Profiling attributes 97--99% of Python knockoff time to Lasso-path fitting and
+less than 1% to preparation, so no speculative preparation refactor was made.
+Wall times varied materially across cluster nodes; batching is structurally
+cheaper, but this sweep does not support a clean wall-time speedup claim.
+
+Increasing Rust's path from 250 to 500 lambdas improved paired per-draw
+statistics but did not improve the stable-core result, so the faster production
+default remains unchanged. The remaining high-delta mismatch is therefore
+most consistent with cumulative stochastic/path/threshold sensitivity and
+needs a separately scoped numerical investigation rather than a special case.
 
 ## Setup
 
@@ -118,7 +160,7 @@ pixi run -e dev python benchmarks/benchmark_backends.py
 # Single-combo test: delta=0.01, lam=0.1 on SSc UnTx
 time target/release/slide run \
     --config benchmark_results/rust/0.01_0.1_out/rust_config.yaml \
-    --checkpoint /tmp/bench_checkpoint.json \
+    --checkpoint .tmpfiles/bench_checkpoint.json \
     --threads 10
 ```
 
