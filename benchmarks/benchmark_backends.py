@@ -390,6 +390,7 @@ def run_python_backend(
         "knockoff_method": "asdp",
         "knockoff_shrink": False,
         "knockoff_offset": 0,
+        "knockoff_base_seed": args.knockoff_base_seed,
         "fstat": "glmnet_lambdasmax",
         "delta": [delta],
         "lambda": [lam],

@@ -1305,7 +1305,9 @@ def knockoff_filter_voting_slide(
             niter=niter,
             spec=spec,
             n_jobs=n_jobs,
-            base_seed=base_seed,
+            base_seed=(
+                None if base_seed is None else base_seed + chunk_idx * niter
+            ),
             verbose=verbose,
             match_r=match_r,
             use_cache=use_cache,
@@ -1364,7 +1366,9 @@ def knockoff_filter_voting_slide(
         niter=niter,
         spec=spec,
         n_jobs=n_jobs,
-        base_seed=base_seed,
+        base_seed=(
+            None if base_seed is None else base_seed + n_splits * niter
+        ),
         verbose=verbose,
         match_r=match_r,
         use_cache=use_cache,
