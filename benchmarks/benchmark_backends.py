@@ -739,6 +739,7 @@ def write_report(
             "n_sig_lfs": len(r.sig_lfs),
             "sig_lfs": sorted(r.sig_lfs),
             "n_sig_interacts": len(r.sig_interacts),
+            "sig_interacts": sorted(r.sig_interacts),
             "score": r.score,
         }
     with (out_dir / "benchmark_summary.json").open("w") as f:
