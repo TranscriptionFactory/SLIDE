@@ -3,7 +3,11 @@ import json
 import numpy as np
 import pytest
 
-from loveslide.knockoff.filter import VotingResult, knockoff_filter_voting
+from loveslide.knockoff.filter import (
+    VotingResult,
+    _partition_iteration_seeds,
+    knockoff_filter_voting,
+)
 from loveslide.knockoff.stats.glmnet import stat_glmnet_lambdasmax
 
 
@@ -48,3 +52,19 @@ def test_serial_and_parallel_voting_match_for_fixed_seeds(monkeypatch):
     parallel = _run(monkeypatch, 2)
     assert np.array_equal(serial.selection_counts, parallel.selection_counts)
     assert np.array_equal(serial.selected, parallel.selected)
+
+
+def test_iteration_batches_cover_ordered_seeds_once():
+    batches = _partition_iteration_seeds(niter=23, n_jobs=2, base_seed=100)
+    flattened = [item for batch in batches for item in batch]
+
+    assert len(batches) == 8
+    assert flattened == [(i, 100 + i) for i in range(23)]
+
+
+def test_unseeded_iteration_batches_keep_iteration_identity():
+    batches = _partition_iteration_seeds(niter=3, n_jobs=10, base_seed=None)
+
+    assert [item for batch in batches for item in batch] == [
+        (0, None), (1, None), (2, None),
+    ]
