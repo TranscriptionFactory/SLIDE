@@ -160,11 +160,27 @@ writeLines(shift_to_0idx(marginal_vars),
 writeLines(shift_interacts_to_0idx(interaction_vars),
            file.path(combo_dir, "sig_interacts.txt"))
 
+# A cell-local summary is safe when a SLURM array runs multiple cells in the
+# same backend directory. SLIDE's shared summary_table.csv is not.
+z_path <- file.path(combo_dir, "z_matrix.csv")
+zdf <- if (file.exists(z_path)) {
+  utils::read.csv(z_path, row.names = 1, check.names = FALSE)
+} else {
+  NULL
+}
+cell_summary <- data.frame(
+  delta = opts$delta,
+  lambda = opts$lambda,
+  Num_of_LFs = if (!is.null(zdf)) ncol(zdf) else NA_integer_,
+  Num_of_Sig_LFs = length(marginal_vars),
+  Num_of_Interactors = length(interaction_vars)
+)
+utils::write.csv(cell_summary, file.path(combo_dir, "benchmark_summary.csv"),
+                 row.names = FALSE)
+
 # Rewrite z_matrix.csv with 0-indexed column names so the loader's z-corr
 # comparison aligns column-for-column with the python/rust z_matrix.csv.
-z_path <- file.path(combo_dir, "z_matrix.csv")
-if (file.exists(z_path)) {
-  zdf <- utils::read.csv(z_path, row.names = 1, check.names = FALSE)
+if (!is.null(zdf)) {
   cn <- colnames(zdf)
   if (all(grepl("^[Zz][0-9]+$", cn))) {
     colnames(zdf) <- paste0("Z", as.integer(sub("^[Zz]", "", cn)) - 1L)
