@@ -650,6 +650,28 @@ def _cached_iteration(X, y, cache, statistic, fdr, offset, seed):
     return selected
 
 
+def _partition_iteration_seeds(niter, n_jobs, base_seed):
+    """Split ordered iteration seeds into a small number of worker batches."""
+    indices = np.arange(niter)
+    n_batches = min(niter, 4 * n_jobs)
+    return [
+        [
+            (int(i), None if base_seed is None else base_seed + int(i))
+            for i in batch
+        ]
+        for batch in np.array_split(indices, n_batches)
+        if len(batch)
+    ]
+
+
+def _cached_iteration_batch(X, y, cache, statistic, fdr, offset, indexed_seeds):
+    """Run a deterministic batch while reusing invariant worker inputs."""
+    return [
+        (iteration, _cached_iteration(X, y, cache, statistic, fdr, offset, seed))
+        for iteration, seed in indexed_seeds
+    ]
+
+
 def _profile_stage(stage, started, iteration=None):
     """Emit one JSON profile record without changing public return values."""
     destination = os.environ.get("SLIDE_KNOCKOFF_PROFILE")
@@ -953,14 +975,18 @@ def knockoff_filter_voting(
         # Fast path with caching - supports both sequential and parallel
         if n_jobs > 1:
             from joblib import Parallel, delayed
-            results_list = Parallel(n_jobs=n_jobs, backend="loky")(
-                delayed(_cached_iteration)(
-                    X, y, cache, statistic, fdr, offset,
-                    None if base_seed is None else base_seed + i
+            batches = _partition_iteration_seeds(niter, n_jobs, base_seed)
+            batch_results = Parallel(n_jobs=n_jobs, backend="loky")(
+                delayed(_cached_iteration_batch)(
+                    X, y, cache, statistic, fdr, offset, batch
                 )
-                for i in range(niter)
+                for batch in batches
             )
-            for i, selected_iter in enumerate(results_list):
+            indexed_results = sorted(
+                (result for batch in batch_results for result in batch),
+                key=lambda result: result[0],
+            )
+            for _, selected_iter in indexed_results:
                 for idx in selected_iter:
                     selection_counts[idx] += 1
                 if selected_list is not None:
