@@ -120,6 +120,7 @@ fn optimize_slide_matches_committed_r_hiv_fixture() {
             nlambda: 250,
             base_seed: 42,
             slide_selection: false,
+            interaction_size_cap: true,
             family: GlmnetFamily::Binomial,
         },
         final_cv: None,
