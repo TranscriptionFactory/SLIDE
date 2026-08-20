@@ -96,6 +96,9 @@ def load_config(config_path):
         "knockoff_shrink": slide.get("knockoff_shrink", False),
         "knockoff_offset": slide.get("knockoff_offset", 0),
         "fstat": slide.get("fstat", "glmnet_lambdasmax"),
+        # False (default) reports the frequency/stability set; True restores R
+        # findOptIter, which reports a single draw out of niter.
+        "slide_selection": slide.get("slide_selection", False),
         # cv
         "cv_enabled": cv.get("enabled", True),
         "cv_nrep": cv.get("nrep", 10),
@@ -133,6 +136,7 @@ def run_backend(backend, cfg, out_base):
         "knockoff_shrink": cfg["knockoff_shrink"],
         "knockoff_offset": cfg["knockoff_offset"],
         "fstat": cfg["fstat"],
+        "slide_selection": cfg["slide_selection"],
         "delta": cfg["deltas"],
         "lambda": cfg["lambdas"],
     }

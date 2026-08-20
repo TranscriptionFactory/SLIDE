@@ -90,10 +90,11 @@ def test_python_runner_passes_base_seed_into_pipeline(monkeypatch, tmp_path):
     args = types.SimpleNamespace(
         profile=False, knockoff_base_seed=123, threads=2,
         x_path="x.csv", y_path="y.csv", y_factor=False,
-        niter=5, spec=0.1,
+        niter=5, spec=0.1, slide_selection=False,
     )
 
     result = benchmark.run_python_backend(args, "python", 0.1, 1.0, tmp_path)
 
     assert result.status == "success"
     assert captured["knockoff_base_seed"] == 123
+    assert captured["slide_selection"] is False
