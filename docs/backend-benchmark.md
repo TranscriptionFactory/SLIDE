@@ -4,9 +4,9 @@ Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 
 **Status (2026-08-20):** Rust remains substantially faster. Switching every
 backend to the stability selection rule made Python and Rust individually more
-reproducible but did **not** improve agreement with native R — see
-"2026-08-20 stability-rule seed sweep" below, which is a negative result for
-that hypothesis.
+reproducible but *widened* cross-backend divergence, so the change was measured
+and reverted — see "2026-08-20 stability-rule seed sweep" below. `findOptIter`
+remains the default everywhere; the stability rule is opt-in per run.
 
 ## 2026-08-20 stability-rule seed sweep
 
@@ -60,6 +60,36 @@ shortest draw.
 
 At `lambda=1.0` every backend's numbers are bit-identical to the baseline: the
 selection is already degenerate there, so the rule does not bite.
+
+### It fails without privileging R either
+
+The goal was bounded cross-backend divergence, which does not require treating
+R as the reference. Measured over all three backend pairs on the four
+comparable `delta=0.1` cells:
+
+| Pair | Marginal (base → stability) | Interaction (base → stability) |
+|---|---|---|
+| `rust`/`python`, λ=0.1 | 0.500 → 0.500 | 0.278 → 0.294 |
+| `rust`/`pure_r`, λ=0.1 | 1.000 → **0.333** | 0.214 → **0.125** |
+| `python`/`pure_r`, λ=0.1 | 0.500 → **0.333** | 0.333 → **0.167** |
+| `rust`/`python`, λ=1.0 | 0.333 → 0.333 | 0.308 → 0.308 |
+| `rust`/`pure_r`, λ=1.0 | 0.250 → 0.250 | 0.214 → 0.214 |
+| `python`/`pure_r`, λ=1.0 | 0.667 → 0.667 | 0.400 → 0.400 |
+
+**Mean pairwise stable-core Jaccard: 0.416 → 0.327.** The R-free `rust`/`python`
+pair is flat, so this is not "R is the odd one out" — the rule simply does not
+move the backends toward each other.
+
+### Disposition
+
+The defaults were reverted to `findOptIter` on 2026-08-20. What was kept:
+
+- the `slide_selection` flag on all three backends, and `SLIDE_R_SOURCE=vendor`,
+  which is the first time the full-pipeline R benchmark can see *any* edit to
+  the vendored tree (it previously called the installed `SLIDE::optimizeSLIDE`);
+- the Rust interaction size cap, which closes the last structural difference as
+  a hypothesis even though it never fires here;
+- these measurements, so the hypothesis is not retried.
 
 ### delta=0.01 (new, no committed baseline)
 
@@ -124,27 +154,27 @@ Every backend ends each knockoff stage with a choice of two rules:
   report a *single* draw out of `niter`: the one with maximal overlap with the
   frequent set, ties broken by shortest.
 
-`findOptIter` is a variance amplifier by construction, and it dominates
-cross-backend disagreement. Native R cannot reproduce itself under it: in the
-2026-08-19 sweep `pure_r` selected 11 distinct marginal factors across ten
-seeds at `delta=0.1`/`lambda=0.1`, of which only two appeared in most runs.
-No amount of numerical alignment can lift any backend above that floor while
-`findOptIter` is the final rule.
+`findOptIter` is a variance amplifier by construction, and native R does not
+reproduce itself under it: in the 2026-08-19 sweep `pure_r` selected 11 distinct
+marginal factors across ten seeds at `delta=0.1`/`lambda=0.1`, of which only two
+appeared in most runs.
 
-The stability rule is therefore the default in Rust
-(`KnockoffConfig::slide_selection`) and Python
-(`Knockoffs.select_short_freq_slide`). **From here on, "parity with R" in this
-document means parity with R running the stability rule.** Exact fidelity to
-published native-R SLIDE is not the target; bounded cross-backend divergence
-is.
+That made the stability rule an obvious candidate for reducing cross-backend
+divergence. It was tried as the default and **measured not to work** — mean
+pairwise stable-core Jaccard fell from 0.416 to 0.327, and the one cell where
+Rust and native R agreed perfectly dropped from 1.000 to 0.333. See the
+2026-08-20 sweep below. **`findOptIter` therefore remains the default on every
+backend**, and "parity with R" keeps its original meaning: parity with stock
+native-R SLIDE.
 
-Reaching the rule per backend:
+The stability rule stays available per run, because it does reduce run-to-run
+variance *within* a backend, which is a separate and sometimes useful property:
 
-| Backend | Stability rule (default) | `findOptIter` |
+| Backend | `findOptIter` (default) | Stability rule |
 |---|---|---|
-| Rust | default | `slide_selection: true` in the run YAML |
-| Python | default | `slide_selection=True` keyword |
-| R | `SLIDE_R_SOURCE=vendor` + `SLIDE_OPT_ITER=0` | default (installed package) |
+| Rust | default | `slide_selection: false` in the run YAML |
+| Python | default | `slide_selection=False` keyword |
+| R | default (installed package) | `SLIDE_R_SOURCE=vendor` + `SLIDE_OPT_ITER=0` |
 
 The vendored SLIDE clone keeps `findOptIter` as *its* default deliberately: it
 is third-party source, and an unflagged change there would make the
@@ -152,9 +182,9 @@ vendor-vs-installed equivalence check meaningless. `benchmarks/run_slide_r.R`
 evaluates the vendored tree into an environment parented on the installed
 package's imports, so unqualified calls resolve exactly as they do inside the
 package. `benchmarks/benchmark_backends.py --slide-selection /
---no-slide-selection` sets all of this for every backend at once; an explicit
-`SLIDE_R_SOURCE` or `SLIDE_OPT_ITER` in the environment wins over the derived
-value.
+--no-slide-selection` sets all of this for every backend at once (default
+`--slide-selection`); an explicit `SLIDE_R_SOURCE` or `SLIDE_OPT_ITER` in the
+environment wins over the derived value.
 
 `vendor/` is gitignored, so the `SLIDE_OPT_ITER` gate itself lives only in the
 working tree. Reapply it after a fresh checkout or a re-vendor with `git apply

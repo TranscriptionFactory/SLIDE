@@ -278,7 +278,7 @@ SLIDE_iter: 7
         assert_eq!(opt_config.knockoff.spec, 0.3);
         assert_eq!(opt_config.knockoff.fdr, 0.2);
         assert_eq!(opt_config.knockoff.niter, 7);
-        assert!(!opt_config.knockoff.slide_selection);
+        assert!(opt_config.knockoff.slide_selection);
     }
 
     #[test]

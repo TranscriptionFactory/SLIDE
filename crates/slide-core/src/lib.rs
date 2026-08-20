@@ -1483,6 +1483,11 @@ mod tests {
         (z, y)
     }
 
+    /// `slide_selection: false` is pinned deliberately: these tests steer the
+    /// number of selected interactors through `spec`, and only the frequency
+    /// rule responds to it. Under `findOptIter` the result is one draw out of
+    /// `niter` and barely moves with the threshold, so the cap could not be
+    /// driven over and under its limit on demand.
     fn cap_config(niter: usize, spec: Scalar) -> MarginalLfSelectionConfig {
         MarginalLfSelectionConfig {
             f_size: Some(64),
@@ -1492,6 +1497,7 @@ mod tests {
             nlambda: 30,
             knockoff_method: KnockoffMethod::Equi,
             family: GlmnetFamily::Gaussian,
+            slide_selection: false,
             ..MarginalLfSelectionConfig::default()
         }
     }

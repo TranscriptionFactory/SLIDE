@@ -410,7 +410,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_offset=0,
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
-        slide_selection=False,
+        slide_selection=True,
     ):
 
         machop = Knockoffs(y=self.data.Y.values, z2=latent_factors.values)
@@ -450,7 +450,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
         use_r_style=True,
-        slide_selection=False,
+        slide_selection=True,
     ):
         """
         Find interacting latent factors using knockoff filter.
@@ -614,7 +614,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_offset=0,
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
-        slide_selection=False,
+        slide_selection=True,
     ):
         """
         Legacy batch interaction detection (original Python implementation).
@@ -691,7 +691,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_offset=0,
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
-        slide_selection=False,
+        slide_selection=True,
     ):
 
         f_size = self.calc_default_fsize(latent_factors.shape[1])
@@ -854,7 +854,7 @@ class OptimizeSLIDE(SLIDE):
                     knockoff_offset=self.input_params.get("knockoff_offset", 0),
                     knockoff_base_seed=self.input_params.get("knockoff_base_seed"),
                     fstat=self.input_params.get("fstat", "glmnet_lambdasmax"),
-                    slide_selection=self.input_params.get("slide_selection", False),
+                    slide_selection=self.input_params.get("slide_selection", True),
                 )
 
                 if verbose:
