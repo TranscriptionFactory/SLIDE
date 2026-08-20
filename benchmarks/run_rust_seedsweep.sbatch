@@ -48,7 +48,10 @@
 #   sbatch --export=ALL,BENCH_PARENT=benchmark_results/rust_seedsweep_$(date +%Y%m%d_%H%M%S) \
 #          benchmarks/run_rust_seedsweep.sbatch
 #
-# Submit (one seed per array task --- same script, far less wall time):
+# Submit (one seed per array task --- same script, far less wall time). Array tasks
+# share one cargo target dir, so PREBUILD first; the script refuses to build inline
+# under --array:
+#   cargo build --release -p slide-rs
 #   sbatch --array=0-9 --export=ALL,BENCH_PARENT=...,BACKENDS="rust python pure_r",\
 #          SEEDS="42 1000 2000 3000 4000 5000 6000 7000 8000 9000" \
 #          benchmarks/run_rust_seedsweep.sbatch
@@ -92,13 +95,25 @@ echo "Parent output: $BENCH_PARENT"
 echo "Backends: $BACKENDS (threads=$THREADS)"
 
 # ── build rust release once (system cc; pixi conda gcc sysroot is incompatible) ──
+# Array tasks share one cargo target dir, so concurrent builds deadlock on the
+# package cache and can SIGBUS the linker. Array submissions must therefore
+# prebuild and pass SKIP_BUILD=1; a single-job submission builds inline.
 RUST_BIN_ARGS=()
 if [[ " $BACKENDS " == *" rust "* || " $BACKENDS " == *" rust_r_knockoffs "* ]]; then
-    echo "Building slide-rs (release)..."
-    ORIG_PATH="$PATH"
-    export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '.pixi/envs' | tr '\n' ':')"
-    cargo build --release -p slide-rs || { echo "BUILD FAILED"; exit 1; }
-    export PATH="$ORIG_PATH"
+    if [ "${SKIP_BUILD:-0}" = "1" ] || [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+        if [ ! -x target/release/slide ]; then
+            echo "ERROR: target/release/slide missing. Prebuild before submitting an"
+            echo "       array: cargo build --release -p slide-rs"
+            exit 1
+        fi
+        echo "Using prebuilt target/release/slide ($(date -r target/release/slide))"
+    else
+        echo "Building slide-rs (release)..."
+        ORIG_PATH="$PATH"
+        export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '.pixi/envs' | tr '\n' ':')"
+        cargo build --release -p slide-rs || { echo "BUILD FAILED"; exit 1; }
+        export PATH="$ORIG_PATH"
+    fi
     RUST_BIN_ARGS=(--rust-bin target/release/slide)
 fi
 
