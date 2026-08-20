@@ -65,6 +65,9 @@ pub struct RunConfig {
     pub slide_selection: Option<bool>,
 
     #[serde(default)]
+    pub interaction_size_cap: Option<bool>,
+
+    #[serde(default)]
     pub nlambda: Option<usize>,
 
     #[serde(default)]
@@ -186,6 +189,9 @@ fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfi
     }
     if let Some(v) = cfg.slide_selection {
         opt_config.knockoff.slide_selection = v;
+    }
+    if let Some(v) = cfg.interaction_size_cap {
+        opt_config.knockoff.interaction_size_cap = v;
     }
     if let Some(v) = cfg.nlambda {
         opt_config.knockoff.nlambda = v;

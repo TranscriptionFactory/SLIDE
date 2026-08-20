@@ -37,7 +37,18 @@ pub struct MarginalLfSelectionConfig {
     pub nlambda: usize,
     pub base_seed: u64,
     pub slide_selection: bool,
+    /// Cap the interaction model at `n - #marginals` selected interactors per
+    /// marginal and, when a marginal exceeds it, raise `spec` by 0.1 and rerun
+    /// the whole interaction pass. This is R `interactionSLIDE`'s
+    /// `while (greater_than_m)` loop, which Python mirrors. `serde(default)`
+    /// keeps checkpoints written before the field existed deserializable.
+    #[serde(default = "default_true")]
+    pub interaction_size_cap: bool,
     pub family: GlmnetFamily,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for MarginalLfSelectionConfig {
@@ -55,6 +66,7 @@ impl Default for MarginalLfSelectionConfig {
             nlambda: knockoff.nlambda,
             base_seed: knockoff.base_seed,
             slide_selection: knockoff.slide_selection,
+            interaction_size_cap: true,
             family: knockoff.family,
         }
     }
@@ -411,96 +423,16 @@ pub fn find_interaction_lfs(
     sig_lfs: &[usize],
     config: &MarginalLfSelectionConfig,
 ) -> Result<InteractionLfSelection, SlideCoreError> {
-    if y.len() != z.nrows() {
-        return Err(SlideCoreError::ResponseLengthMismatch {
-            expected: z.nrows(),
-            actual: y.len(),
-        });
-    }
-
-    let ncols = z.ncols();
-    for &marginal_lf in sig_lfs {
-        if marginal_lf >= ncols {
-            return Err(SlideCoreError::MarginalLfOutOfBounds {
-                index: marginal_lf,
-                ncols,
-            });
-        }
-    }
-
-    // Precompute candidate sets: iteration i excludes sig_lfs[0..=i]
-    let candidate_sets: Vec<Vec<usize>> = sig_lfs
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let excluded: HashSet<usize> = sig_lfs[..=i].iter().copied().collect();
-            (0..ncols).filter(|idx| !excluded.contains(idx)).collect()
-        })
-        .collect();
-
-    // parallel: true (via to_knockoff_config) — parallelism lives in each
-    // select_short_freq's niter voting loop (width 500), not this narrow
-    // marginal loop (width = #sig_LFs, typically ~2).
-    let knockoff_config = config.to_knockoff_config();
-
-    // Run marginals serially; each select_short_freq parallelizes over niter.
-    let seed_stride = config.niter as u64 * (ncols as u64 + 1);
-    let results: Vec<Option<InteractionVotingResult>> = sig_lfs
-        .iter()
-        .zip(candidate_sets.iter())
-        .enumerate()
-        .map(|(marginal_position, (&marginal_lf, candidate_lfs))| {
-            if candidate_lfs.is_empty() {
-                return Ok(None);
-            }
-            let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
-            let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
-            let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
-            let mut interaction_config = knockoff_config.clone();
-            interaction_config.base_seed =
-                knockoff_config.base_seed + (marginal_position as u64 + 1) * seed_stride;
-            let voting = select_short_freq(&interaction_terms, &corrected_y, &interaction_config)?;
-            let selected_interactors: Vec<_> = voting
-                .selected
-                .iter()
-                .map(|&local_index| candidate_lfs[local_index])
-                .collect();
-            Ok(Some(InteractionVotingResult {
-                marginal_lf,
-                candidate_lfs: candidate_lfs.clone(),
-                corrected_y,
-                selected_interactors,
-                voting,
-            }))
-        })
-        .collect::<Result<Vec<_>, SlideCoreError>>()?;
-
-    // Sequential post-processing: count total interactions, pre-allocate matrix
-    let mut interaction_pairs = Vec::new();
-    let mut voting_results = Vec::new();
-    let flattened: Vec<_> = results.into_iter().flatten().collect();
-    let total_interactions: usize = flattened.iter().map(|r| r.selected_interactors.len()).sum();
-
-    let nrows = z.nrows();
-    let mut interaction_matrix = Array2::zeros((nrows, total_interactions));
-    let mut col_idx = 0;
-
-    for result in flattened {
-        for &interactor in &result.selected_interactors {
-            interaction_pairs.push((result.marginal_lf, interactor));
-            let marginal_col = z.as_ndarray().column(result.marginal_lf);
-            let interactor_col = z.as_ndarray().column(interactor);
-            let mut dst = interaction_matrix.column_mut(col_idx);
-            ndarray::azip!((d in &mut dst, &m in &marginal_col, &i in &interactor_col) *d = m * i);
-            col_idx += 1;
-        }
-        voting_results.push(result);
-    }
-
-    Ok(InteractionLfSelection {
-        sig_interacts: interaction_pairs,
-        interaction_terms: Matrix::from_ndarray(interaction_matrix),
-        voting: voting_results,
+    // `write_progress` is a no-op without a destination path, so the plain
+    // variant is the progress variant with nowhere to report to. Sharing one
+    // body keeps the candidate sets, the seed stride and the size-cap retry
+    // loop from drifting apart between the two entry points.
+    find_interaction_lfs_with_progress(z, y, sig_lfs, config, None, &|phase| ProgressReport {
+        grid_index: 0,
+        total_grid: 0,
+        delta: 0.0,
+        lambda: 0.0,
+        phase,
     })
 }
 
@@ -540,6 +472,20 @@ fn find_interaction_lfs_with_progress(
         }),
     );
 
+    // R's interactionSLIDE targets a model size of m = n - #marginals (SLIDE.R
+    // computes it as `m <- n - length(marginal_vars)`); python mirrors this in
+    // `_find_interaction_LFs`. With m <= 0 there is no room for any interaction
+    // at all, which R signals by returning NULL.
+    let headroom = (z.nrows() as isize) - (sig_lfs.len() as isize);
+    if config.interaction_size_cap && headroom <= 0 {
+        return Ok(InteractionLfSelection {
+            sig_interacts: Vec::new(),
+            interaction_terms: Matrix::from_ndarray(Array2::zeros((z.nrows(), 0))),
+            voting: Vec::new(),
+        });
+    }
+    let max_interactions = headroom.max(0) as usize;
+
     // Precompute candidate sets: iteration i excludes sig_lfs[0..=i]
     let candidate_sets: Vec<Vec<usize>> = sig_lfs
         .iter()
@@ -553,19 +499,29 @@ fn find_interaction_lfs_with_progress(
     // parallel: true (via to_knockoff_config) — parallelism lives in each
     // select_short_freq's niter voting loop (width 500), not this narrow
     // marginal loop (width = #sig_LFs, typically ~2).
-    let knockoff_config = config.to_knockoff_config();
-    let completed = std::sync::atomic::AtomicUsize::new(0);
-
-    // Run marginals serially; each select_short_freq parallelizes over niter.
     let seed_stride = config.niter as u64 * (ncols as u64 + 1);
-    let results: Vec<Option<InteractionVotingResult>> = sig_lfs
-        .iter()
-        .zip(candidate_sets.iter())
-        .enumerate()
-        .map(|(marginal_position, (&marginal_lf, candidate_lfs))| {
+
+    // R reruns the whole interaction pass at a stricter spec as soon as one
+    // marginal overshoots the cap, discarding the marginals already done. Retry
+    // cost is the same 500 knockoff draws: `spec` is a selection threshold and
+    // does not touch the RNG stream (base_seed is unchanged), so a retry redraws
+    // identical knockoffs and differs only in where the frequency cut falls.
+    let mut spec = config.spec;
+    let flattened: Vec<InteractionVotingResult> = loop {
+        let mut knockoff_config = config.to_knockoff_config();
+        knockoff_config.spec = spec;
+
+        let mut pass: Vec<InteractionVotingResult> = Vec::new();
+        let mut completed = 0usize;
+        let mut over_cap = false;
+
+        // Run marginals serially; each select_short_freq parallelizes over niter.
+        for (marginal_position, (&marginal_lf, candidate_lfs)) in
+            sig_lfs.iter().zip(candidate_sets.iter()).enumerate()
+        {
             if candidate_lfs.is_empty() {
-                completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return Ok(None);
+                completed += 1;
+                continue;
             }
             let marginal = Vector::from_ndarray(z.as_ndarray().column(marginal_lf).to_owned());
             let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
@@ -579,28 +535,49 @@ fn find_interaction_lfs_with_progress(
                 .iter()
                 .map(|&local_index| candidate_lfs[local_index])
                 .collect();
-            let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+            if config.interaction_size_cap && selected_interactors.len() > max_interactions {
+                over_cap = true;
+                break;
+            }
+
+            completed += 1;
             write_progress(
                 progress_path,
                 &mk(Phase::KnockoffInteraction {
-                    marginal_lf: done,
+                    marginal_lf: completed,
                     total_marginals,
                 }),
             );
-            Ok(Some(InteractionVotingResult {
+            pass.push(InteractionVotingResult {
                 marginal_lf,
                 candidate_lfs: candidate_lfs.clone(),
                 corrected_y,
                 selected_interactors,
                 voting,
-            }))
-        })
-        .collect::<Result<Vec<_>, SlideCoreError>>()?;
+            });
+        }
+
+        if !over_cap {
+            break pass;
+        }
+
+        spec += 0.1;
+        eprintln!(
+            "[SLIDE] interaction model exceeded {} terms; increasing spec to {:.2}",
+            max_interactions, spec
+        );
+        // R and python let selection empty out naturally as spec climbs. Bound it
+        // here so a pathological run cannot spin forever.
+        if spec > 1.0 {
+            eprintln!("[SLIDE] interaction spec exceeded 1.0; returning no interactions");
+            break Vec::new();
+        }
+    };
 
     // Sequential post-processing: count total interactions, pre-allocate matrix
     let mut interaction_pairs = Vec::new();
     let mut voting_results = Vec::new();
-    let flattened: Vec<_> = results.into_iter().flatten().collect();
     let total_interactions: usize = flattened.iter().map(|r| r.selected_interactors.len()).sum();
 
     let nrows = z.nrows();
@@ -1309,12 +1286,12 @@ mod tests {
         OptimizeResponseType, OptimizeSlideCheckpoint, OptimizeSlideConfig, OptimizeSlideResult,
         SlideCoreError, SlideRunResult,
     };
-    use ndarray::{arr1, arr2, Array2};
+    use ndarray::{arr1, arr2, Array1, Array2};
     use slide_cv::FinalCvConfig;
     use slide_glmnet::GlmnetFamily;
     use slide_knockoff::{KnockoffConfig, KnockoffError, KnockoffMethod};
     use slide_love::{LoveConfig, LoveResult, NonPureMethod};
-    use slide_types::{Matrix, Vector};
+    use slide_types::{Matrix, Scalar, Vector};
     use tempfile::tempdir;
 
     fn empty_voting(ncols: usize) -> super::VotingResult {
@@ -1491,6 +1468,99 @@ mod tests {
             .iter()
             .all(|(marginal, interactor)| *marginal < *interactor));
         assert_eq!(result.sig_interacts.len(), result.interaction_terms.ncols());
+    }
+
+    /// Deterministic fixture for the interaction size cap. `nrows` fixes the cap
+    /// at `nrows - sig_lfs.len()`; the values are arbitrary but fixed, and the
+    /// knockoff draws are seeded, so the selection ladders below are stable.
+    fn cap_fixture(nrows: usize, ncols: usize) -> (Matrix, Vector) {
+        let z = Matrix::from_ndarray(Array2::from_shape_fn((nrows, ncols), |(i, j)| {
+            (((i * ncols + j) as Scalar) * 0.37).sin() + (j as Scalar) * 0.11
+        }));
+        let y = Vector::from_ndarray(Array1::from_shape_fn(nrows, |i| {
+            ((i as Scalar) * 0.7).cos()
+        }));
+        (z, y)
+    }
+
+    fn cap_config(niter: usize, spec: Scalar) -> MarginalLfSelectionConfig {
+        MarginalLfSelectionConfig {
+            f_size: Some(64),
+            niter,
+            spec,
+            fdr: 0.9,
+            nlambda: 30,
+            knockoff_method: KnockoffMethod::Equi,
+            family: GlmnetFamily::Gaussian,
+            ..MarginalLfSelectionConfig::default()
+        }
+    }
+
+    #[test]
+    fn interaction_size_cap_escalates_spec_when_a_marginal_exceeds_the_model_size() {
+        // 4 rows, one marginal -> the model holds at most 3 interactions. This
+        // fixture selects 10 at spec 0.1 and 0.2 (min_selections 1) and 3 at spec
+        // 0.3 (min_selections 2), so the loop must escalate twice and then settle.
+        let (z, y) = cap_fixture(4, 12);
+
+        let result = find_interaction_lfs(&z, &y, &[0], &cap_config(4, 0.1))
+            .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
+
+        assert_eq!(result.sig_interacts.len(), 3);
+        assert_eq!(result.sig_interacts.len(), result.interaction_terms.ncols());
+        let threshold = result.voting[0].voting.threshold;
+        assert!(
+            (0.25..0.35).contains(&threshold),
+            "expected the surviving pass at spec ~0.3, got {threshold}"
+        );
+    }
+
+    #[test]
+    fn interaction_size_cap_disabled_keeps_the_uncapped_single_pass() {
+        let (z, y) = cap_fixture(4, 12);
+        let config = MarginalLfSelectionConfig {
+            interaction_size_cap: false,
+            ..cap_config(4, 0.1)
+        };
+
+        let result = find_interaction_lfs(&z, &y, &[0], &config)
+            .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
+
+        // One pass at the configured spec, cap of 3 ignored.
+        assert_eq!(result.sig_interacts.len(), 10);
+        assert_eq!(result.voting.len(), 1);
+        assert_eq!(result.voting[0].voting.threshold, 0.1);
+    }
+
+    #[test]
+    fn interaction_size_cap_stops_escalating_past_spec_one() {
+        // With niter = 1, min_selections is ceil(1 * spec) = 1 for every legal
+        // spec, so escalation cannot shrink the selection: this fixture keeps 6
+        // interactions against a cap of 3 no matter how high spec climbs. The
+        // guard has to give up at spec > 1.0 instead of looping (and instead of
+        // handing select_short_freq an out-of-range spec).
+        let (z, y) = cap_fixture(4, 8);
+
+        let result = find_interaction_lfs(&z, &y, &[0], &cap_config(1, 0.1))
+            .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
+
+        assert!(result.sig_interacts.is_empty());
+        assert!(result.voting.is_empty());
+        assert_eq!(result.interaction_terms.ncols(), 0);
+    }
+
+    #[test]
+    fn interaction_size_cap_returns_empty_when_marginals_leave_no_headroom() {
+        // 3 rows and 3 marginals -> m = 0, which R signals by returning NULL.
+        let (z, y) = cap_fixture(3, 6);
+
+        let result = find_interaction_lfs(&z, &y, &[0, 1, 2], &cap_config(4, 0.1))
+            .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
+
+        assert!(result.sig_interacts.is_empty());
+        assert!(result.voting.is_empty());
+        assert_eq!(result.interaction_terms.ncols(), 0);
+        assert_eq!(result.interaction_terms.nrows(), 3);
     }
 
     #[test]
