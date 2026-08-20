@@ -1,0 +1,57 @@
+# Applies the SLIDE_OPT_ITER selection-rule gate to the vendored SLIDE clone.
+#
+# vendor/ is gitignored, so the edit itself cannot be committed. Reapply it after a
+# fresh checkout or a re-vendor with:
+#
+#   git apply benchmarks/vendor_slide_opt_iter.patch
+#
+# SLIDE_OPT_ITER=1 (default) keeps stock findOptIter; SLIDE_OPT_ITER=0 reports the
+# frequency/stability set. benchmarks/run_slide_r.R refuses to run with
+# SLIDE_OPT_ITER=0 against a vendored tree that has not been patched, so a missing
+# patch fails loudly rather than silently producing stock-rule numbers.
+--- a/vendor/SLIDE-jishnu/R/selectShortFreq.R	2026-08-20 00:49:44.038760063 -0400
++++ b/vendor/SLIDE-jishnu/R/selectShortFreq.R	2026-08-20 00:49:44.048903879 -0400
+@@ -17,6 +17,13 @@
+ #' @export
+ 
+ selectShortFreq <- function(z, y, spec = 0.3, fdr = 0.1, elbow = FALSE, niter = 1000, f_size = 100, parallel = TRUE) {
++  ## :DIAG: SLIDE_OPT_ITER selects the final selection rule. Default "1" keeps stock
++  ## findOptIter (one draw out of niter, max overlap with the frequent set, shortest
++  ## wins). "0" reports freq_vars -- the frequency/stability set -- instead. The single
++  ## draw is a variance amplifier and dominates cross-backend selection divergence; the
++  ## flag lets a benchmark opt into the stability rule without changing stock behaviour.
++  .ssf_opt_iter <- !identical(Sys.getenv("SLIDE_OPT_ITER", unset = "1"), "0")
++
+   ## :DIAG: env-gated instrumentation (SLIDE_DUMP_DIR) for the rust-vs-pure_r ranking-flip
+   ## probe. Dumps per-chunk tab_data, the stage-one union, and stage-two tab_data so R's
+   ## per-LF selection counts can be compared head-to-head with rust's. No effect when unset.
+@@ -85,8 +92,12 @@
+     }
+     ## find variables selected in the optimal run of knockoffs
+     if (length(freq_vars) > 0) {
+-      selected_vars <- findOptIter(freq_vars = freq_vars,
+-                                   selected_list = selected_list)
++      selected_vars <- if (.ssf_opt_iter) {
++        findOptIter(freq_vars = freq_vars,
++                    selected_list = selected_list)
++      } else {
++        freq_vars
++      }
+       screen_var <- c(screen_var, selected_vars)
+       screen_tab <- c(screen_tab, tab_data)
+     }
+@@ -131,8 +142,12 @@
+         }
+         ## find which variables were selected frequently enough
+         if (!is.null(freq_vars)) {
+-          final_var <- findOptIter(freq_vars = freq_vars,
+-                                   selected_list = selected_list)
++          final_var <- if (.ssf_opt_iter) {
++            findOptIter(freq_vars = freq_vars,
++                        selected_list = selected_list)
++          } else {
++            freq_vars
++          }
+         } else {
+           final_var <- NULL
+         }

@@ -64,6 +64,50 @@ for (k in c("x-path", "y-path", "out-dir", "delta", "lambda")) {
 suppressPackageStartupMessages(library(SLIDE))
 if (!is.na(opts[["base-seed"]])) set.seed(opts[["base-seed"]])
 
+# SLIDE_R_SOURCE=vendor runs the repo's vendored SLIDE clone (vendor/SLIDE-jishnu/R)
+# instead of the installed package, so the env-gated edits there -- notably
+# SLIDE_OPT_ITER in selectShortFreq -- actually take effect. The vendored files are
+# evaluated into an environment whose parent is the installed package's imports
+# environment, so every unqualified call inside them resolves exactly as it does
+# inside the package: vendored definition first, then the package's imports, then
+# base. library(SLIDE) above stays -- it is what makes that imports environment (and
+# the package's dependencies) available. Default "installed" is stock behaviour.
+slide_source <- Sys.getenv("SLIDE_R_SOURCE", unset = "installed")
+if (identical(slide_source, "vendor")) {
+  script_arg  <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  script_dir  <- if (length(script_arg) > 0) {
+    dirname(normalizePath(sub("^--file=", "", script_arg[[1]])))
+  } else {
+    getwd()
+  }
+  vendor_dir <- Sys.getenv("SLIDE_VENDOR_DIR", unset = "")
+  if (!nzchar(vendor_dir)) {
+    vendor_dir <- file.path(dirname(script_dir), "vendor", "SLIDE-jishnu", "R")
+  }
+  if (!dir.exists(vendor_dir)) {
+    stop("SLIDE_R_SOURCE=vendor but no vendored R sources at: ", vendor_dir)
+  }
+  slide_env    <- new.env(parent = parent.env(asNamespace("SLIDE")))
+  vendor_files <- sort(list.files(vendor_dir, pattern = "\\.[Rr]$", full.names = TRUE))
+  for (vendor_file in vendor_files) sys.source(vendor_file, envir = slide_env)
+  optimize_slide <- get("optimizeSLIDE", envir = slide_env)
+  # vendor/ is gitignored, so a fresh checkout has the pristine upstream tree and
+  # SLIDE_OPT_ITER=0 would silently produce stock findOptIter numbers. Fail loudly
+  # instead; benchmarks/vendor_slide_opt_iter.patch reapplies the gate.
+  if (identical(Sys.getenv("SLIDE_OPT_ITER", unset = "1"), "0") &&
+      !any(grepl("SLIDE_OPT_ITER",
+                 deparse(get("selectShortFreq", envir = slide_env)), fixed = TRUE))) {
+    stop("SLIDE_OPT_ITER=0 requested but the vendored selectShortFreq does not honour ",
+         "it. Apply benchmarks/vendor_slide_opt_iter.patch to ", vendor_dir, ".")
+  }
+  cat(sprintf("[pure_r] SLIDE_R_SOURCE=vendor: sourced %d files from %s (SLIDE_OPT_ITER=%s)\n",
+              length(vendor_files), vendor_dir,
+              Sys.getenv("SLIDE_OPT_ITER", unset = "1")))
+} else {
+  optimize_slide <- SLIDE::optimizeSLIDE
+  cat("[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE\n")
+}
+
 out_path <- normalizePath(opts$`out-dir`, mustWork = FALSE)
 dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
 
@@ -91,7 +135,7 @@ cat(sprintf("[pure_r] delta=%g lambda=%g niter=%d out=%s\n",
             opts$delta, opts$lambda, opts$niter, out_path))
 
 t0 <- Sys.time()
-SLIDE::optimizeSLIDE(input_params, sink_file = FALSE)
+optimize_slide(input_params, sink_file = FALSE)
 elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
 cat(sprintf("[pure_r] optimizeSLIDE elapsed: %.2fs\n", elapsed))
 

@@ -410,6 +410,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_offset=0,
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
+        slide_selection=False,
     ):
 
         machop = Knockoffs(y=self.data.Y.values, z2=latent_factors.values)
@@ -428,6 +429,7 @@ class OptimizeSLIDE(SLIDE):
             offset=knockoff_offset,
             base_seed=knockoff_base_seed,
             fstat=fstat,
+            slide_selection=slide_selection,
         )
 
         self.marginal_idxs = marginal_idxs
@@ -448,6 +450,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
         use_r_style=True,
+        slide_selection=False,
     ):
         """
         Find interacting latent factors using knockoff filter.
@@ -502,6 +505,7 @@ class OptimizeSLIDE(SLIDE):
                 knockoff_shrink,
                 knockoff_offset,
                 fstat,
+                slide_selection=slide_selection,
             )
             return
 
@@ -559,6 +563,7 @@ class OptimizeSLIDE(SLIDE):
                         else knockoff_base_seed + (marginal_position + 1) * seed_stride
                     ),
                     fstat=fstat,
+                    slide_selection=slide_selection,
                 )
 
                 # R interactionSLIDE reruns the whole interaction pass with a
@@ -609,6 +614,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_offset=0,
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
+        slide_selection=False,
     ):
         """
         Legacy batch interaction detection (original Python implementation).
@@ -644,6 +650,7 @@ class OptimizeSLIDE(SLIDE):
             offset=knockoff_offset,
             base_seed=knockoff_base_seed,
             fstat=fstat,
+            slide_selection=slide_selection,
         )
 
         if len(sig_interactions) == 0:
@@ -684,6 +691,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_offset=0,
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
+        slide_selection=False,
     ):
 
         f_size = self.calc_default_fsize(latent_factors.shape[1])
@@ -712,6 +720,7 @@ class OptimizeSLIDE(SLIDE):
             knockoff_offset=knockoff_offset,
             knockoff_base_seed=knockoff_base_seed,
             fstat=fstat,
+            slide_selection=slide_selection,
         )
 
         if len(self.marginal_idxs) == 0:
@@ -745,6 +754,7 @@ class OptimizeSLIDE(SLIDE):
                 knockoff_offset=knockoff_offset,
                 knockoff_base_seed=knockoff_base_seed,
                 fstat=fstat,
+                slide_selection=slide_selection,
             )
 
             if verbose:
@@ -844,6 +854,7 @@ class OptimizeSLIDE(SLIDE):
                     knockoff_offset=self.input_params.get("knockoff_offset", 0),
                     knockoff_base_seed=self.input_params.get("knockoff_base_seed"),
                     fstat=self.input_params.get("fstat", "glmnet_lambdasmax"),
+                    slide_selection=self.input_params.get("slide_selection", False),
                 )
 
                 if verbose:
