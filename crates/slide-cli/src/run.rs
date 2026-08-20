@@ -272,7 +272,7 @@ SLIDE_iter: 7
         assert_eq!(opt_config.knockoff.spec, 0.3);
         assert_eq!(opt_config.knockoff.fdr, 0.2);
         assert_eq!(opt_config.knockoff.niter, 7);
-        assert!(opt_config.knockoff.slide_selection);
+        assert!(!opt_config.knockoff.slide_selection);
     }
 
     #[test]
@@ -295,6 +295,24 @@ rscript: /opt/R/bin/Rscript
                 rscript: "/opt/R/bin/Rscript".into()
             }
         );
+    }
+
+    #[test]
+    fn yaml_can_enable_slide_selection() {
+        let cfg = parse_config(
+            r#"
+x_path: x.csv
+y_path: y.csv
+delta: [0.1]
+lambda: [0.5]
+slide_selection: true
+"#,
+        );
+
+        let opt_config = optimize_config_from_run_config(&cfg)
+            .unwrap_or_else(|error| panic!("optimize config should build: {error}"));
+
+        assert!(opt_config.knockoff.slide_selection);
     }
 
     #[test]

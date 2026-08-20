@@ -81,6 +81,10 @@ pub struct KnockoffConfig {
     pub statistic: KnockoffStatistic,
     pub nlambda: usize,
     pub base_seed: u64,
+    /// Apply R `findOptIter` after voting: discard the frequency table and
+    /// report the single draw with maximal overlap with the frequent set.
+    /// Defaults to `false` — the frequency (stability) set is reported
+    /// instead, because the single-draw rule amplifies run-to-run variance.
     pub slide_selection: bool,
     pub f_size: Option<usize>,
     pub family: GlmnetFamily,
@@ -101,7 +105,7 @@ impl Default for KnockoffConfig {
             statistic: KnockoffStatistic::GlmnetLambdasMax,
             nlambda: 250,
             base_seed: 42,
-            slide_selection: true,
+            slide_selection: false,
             f_size: None,
             family: GlmnetFamily::Gaussian,
             parallel: true,

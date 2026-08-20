@@ -846,7 +846,7 @@ class Knockoffs:
         n_jobs=-1,
         backend="python",
         verbose=False,
-        slide_selection=True,
+        slide_selection=False,
         **kwargs,
     ) -> VotingResult:
         """
@@ -882,6 +882,12 @@ class Knockoffs:
             - 'r_knockoffs': R knockoff generation + Python voting (best R concordance)
         verbose : bool
             Print progress information. Default: False.
+        slide_selection : bool
+            Apply R's findOptIter refinement, which discards the frequency
+            table and reports the single draw with maximal overlap with the
+            frequent set. Default: False -- the frequency (stability) set is
+            reported instead, because the single-draw rule amplifies
+            run-to-run variance.
         **kwargs
             Additional arguments passed to knockoff_filter_voting_slide.
 
