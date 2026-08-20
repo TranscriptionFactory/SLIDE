@@ -138,6 +138,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "(default 250; explicit 100, 250, or 500 are honored exactly)")
     p.add_argument("--knockoff-base-seed", type=int, default=None,
                    help="Knockoff RNG base seed for reproducible backend runs")
+    p.add_argument("--slide-selection", action=argparse.BooleanOptionalAction,
+                   default=False,
+                   help="Final selection rule for every backend. Default "
+                        "(--no-slide-selection) reports the frequency/stability "
+                        "set; --slide-selection restores R findOptIter, which "
+                        "reports a single draw out of niter. For the R backends "
+                        "this drives SLIDE_R_SOURCE/SLIDE_OPT_ITER; set either "
+                        "variable in the environment to override the derived "
+                        "value (needed to run the vendor-vs-installed "
+                        "equivalence check).")
     p.add_argument("--knockoff-fdr", type=float, default=None,
                    help="Rust per-draw knockoff FDR target q (None=default 0.1; "
                         "raise to loosen per-draw selection and lift borderline-LF "
@@ -330,6 +340,7 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
         "platform": sys.platform,
         "seed": args.knockoff_base_seed,
         "niter": args.niter,
+        "slide_selection": args.slide_selection,
     }
     with (out_dir / "benchmark_environment.json").open("w") as stream:
         json.dump(metadata, stream, indent=2)
@@ -392,6 +403,7 @@ def run_python_backend(
         "knockoff_offset": 0,
         "knockoff_base_seed": args.knockoff_base_seed,
         "fstat": "glmnet_lambdasmax",
+        "slide_selection": args.slide_selection,
         "delta": [delta],
         "lambda": [lam],
     }
@@ -443,6 +455,12 @@ def run_pure_r_backend(
     # do not each spawn nested BLAS threads.
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         env[var] = "1"
+    # The stability rule only exists in the vendored SLIDE tree, so reaching it
+    # means running run_slide_r.R against vendor/ rather than the installed
+    # package. An explicit environment setting wins, which is how the
+    # vendor-vs-installed equivalence check is run.
+    env.setdefault("SLIDE_R_SOURCE", "installed" if args.slide_selection else "vendor")
+    env.setdefault("SLIDE_OPT_ITER", "1" if args.slide_selection else "0")
 
     combo_log = out_dir / f"pure_r_{delta}_{lam}.log"
     log.info("Running pure_r: %s", " ".join(cmd))
@@ -486,6 +504,7 @@ def run_rust_backend(
         "SLIDE_iter": args.niter,
         "do_interacts": True,
         "knockoff_backend": "r" if backend == "rust_r_knockoffs" else "rust",
+        "slide_selection": args.slide_selection,
     }
     if backend == "rust_r_knockoffs":
         rust_config["rscript"] = args.rscript or _DEFAULT_RSCRIPT

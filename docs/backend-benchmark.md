@@ -46,6 +46,71 @@ default remains unchanged. The remaining high-delta mismatch is therefore
 most consistent with cumulative stochastic/path/threshold sensitivity and
 needs a separately scoped numerical investigation rather than a special case.
 
+## Final selection rule (`slide_selection`)
+
+Every backend ends each knockoff stage with a choice of two rules:
+
+- **stability rule (default)** — report the frequency set: every factor whose
+  selection count reaches `ceil(niter * spec)`.
+- **`findOptIter`** — R SLIDE's original rule. Discard the frequency table and
+  report a *single* draw out of `niter`: the one with maximal overlap with the
+  frequent set, ties broken by shortest.
+
+`findOptIter` is a variance amplifier by construction, and it dominates
+cross-backend disagreement. Native R cannot reproduce itself under it: in the
+2026-08-19 sweep `pure_r` selected 11 distinct marginal factors across ten
+seeds at `delta=0.1`/`lambda=0.1`, of which only two appeared in most runs.
+No amount of numerical alignment can lift any backend above that floor while
+`findOptIter` is the final rule.
+
+The stability rule is therefore the default in Rust
+(`KnockoffConfig::slide_selection`) and Python
+(`Knockoffs.select_short_freq_slide`). **From here on, "parity with R" in this
+document means parity with R running the stability rule.** Exact fidelity to
+published native-R SLIDE is not the target; bounded cross-backend divergence
+is.
+
+Reaching the rule per backend:
+
+| Backend | Stability rule (default) | `findOptIter` |
+|---|---|---|
+| Rust | default | `slide_selection: true` in the run YAML |
+| Python | default | `slide_selection=True` keyword |
+| R | `SLIDE_R_SOURCE=vendor` + `SLIDE_OPT_ITER=0` | default (installed package) |
+
+The vendored SLIDE clone keeps `findOptIter` as *its* default deliberately: it
+is third-party source, and an unflagged change there would make the
+vendor-vs-installed equivalence check meaningless. `benchmarks/run_slide_r.R`
+evaluates the vendored tree into an environment parented on the installed
+package's imports, so unqualified calls resolve exactly as they do inside the
+package. `benchmarks/benchmark_backends.py --slide-selection /
+--no-slide-selection` sets all of this for every backend at once; an explicit
+`SLIDE_R_SOURCE` or `SLIDE_OPT_ITER` in the environment wins over the derived
+value.
+
+`vendor/` is gitignored, so the `SLIDE_OPT_ITER` gate itself lives only in the
+working tree. Reapply it after a fresh checkout or a re-vendor with `git apply
+benchmarks/vendor_slide_opt_iter.patch`. `run_slide_r.R` refuses to run with
+`SLIDE_OPT_ITER=0` against an unpatched tree, so a forgotten patch fails loudly
+rather than quietly reporting stock-rule numbers.
+
+Note that `loveslide.knockoff.filter.knockoff_filter_voting_slide` — the
+low-level wrapper, not the pipeline entry point — still defaults to
+`slide_selection=True`. The pipeline always passes the flag explicitly, so this
+affects only direct callers of that function.
+
+## Interaction model size cap
+
+R `interactionSLIDE` caps the interaction model at `m = n - #marginals` and
+reruns the whole interaction pass with `spec + 0.1` whenever a marginal
+overshoots it. Python mirrored this; Rust did not, and ran a single pass at a
+fixed `spec` with no cap. Rust now implements the same control flow
+(`MarginalLfSelectionConfig::interaction_size_cap`, default on), plus a
+termination guard that returns no interactions once `spec` would exceed 1.0.
+Set `interaction_size_cap: false` in the run YAML for the old single-pass
+behaviour. Expect Rust interaction counts to differ from runs made before this
+landed.
+
 ## Setup
 
 - **Dataset:** SSc UnTx (X.csv / Y.csv), 24 samples × 804 features

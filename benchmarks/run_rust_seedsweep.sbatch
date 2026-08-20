@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=slide-rust-seedsweep
-#SBATCH --time=03:00:00
+#SBATCH --job-name=slide-seedsweep
+#SBATCH --time=12:00:00
 #SBATCH --mem=64G
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=10
 #SBATCH --cluster=htc
 #SBATCH --constraint=turin
 #SBATCH --export=ALL
@@ -36,12 +36,26 @@
 #   benchmark_results/rust_nlambda500_20260619_115012/    (the base_seed=42 rust point;
 #                                                          also == the spec=0.1 nl=250 baseline)
 #
-# Submit:
+# MULTI-BACKEND: BACKENDS (default "rust") drives one benchmark_backends.py call per
+# seed, so a single seed_<N>/benchmark_summary.json holds every backend --- which is
+# what benchmarks/aggregate_seed_sweep.py reads. THREADS defaults to 10 because R
+# SLIDE's ncore is hardcoded to 10 in runSLIDE.R and ignores --threads/RAYON/OMP;
+# matching rust and python to it is the only way the comparison is thread-fair (BLAS
+# stays at 1 --- the harness re-pins it per backend). SLIDE_SELECTION=1 restores R
+# findOptIter across all backends; the default reports the frequency/stability set.
+#
+# Submit (serial over SEEDS):
 #   sbatch --export=ALL,BENCH_PARENT=benchmark_results/rust_seedsweep_$(date +%Y%m%d_%H%M%S) \
+#          benchmarks/run_rust_seedsweep.sbatch
+#
+# Submit (one seed per array task --- same script, far less wall time):
+#   sbatch --array=0-9 --export=ALL,BENCH_PARENT=...,BACKENDS="rust python pure_r",\
+#          SEEDS="42 1000 2000 3000 4000 5000 6000 7000 8000 9000" \
 #          benchmarks/run_rust_seedsweep.sbatch
 #
 # Then aggregate seed-averaged rust vs pure_r:
 #   python benchmarks/compare_specsweep.py --seedsweep <BENCH_PARENT>
+#   python benchmarks/aggregate_seed_sweep.py <BENCH_PARENT> --reference pure_r
 
 set -uo pipefail
 
@@ -56,10 +70,13 @@ exec > "${BENCH_PARENT}/seedsweep-${SLURM_JOB_ID}.out" 2>&1
 export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH"
 export CONDA_PREFIX="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1
-export OMP_NUM_THREADS=4
-export OPENBLAS_NUM_THREADS=4
-export MKL_NUM_THREADS=4
-export RAYON_NUM_THREADS=4
+# BLAS pinned to 1: rust parallelism is rayon and R's is PSOCK, so multi-thread BLAS
+# would nest-oversubscribe. The harness re-pins per backend (python keeps BLAS=threads).
+THREADS="${THREADS:-10}"
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export RAYON_NUM_THREADS="$THREADS"
 
 cd /ix/djishnu/Aaron/1_general_use/omni-SLIDE
 
@@ -68,15 +85,42 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/lib:${LD_LIBRARY_PATH:-}"
 
-echo "=== rust base_seed sweep :: node=$(hostname) job=${SLURM_JOB_ID} ==="
+BACKENDS="${BACKENDS:-rust}"
+
+echo "=== base_seed sweep :: node=$(hostname) job=${SLURM_JOB_ID} ==="
 echo "Parent output: $BENCH_PARENT"
+echo "Backends: $BACKENDS (threads=$THREADS)"
 
 # ── build rust release once (system cc; pixi conda gcc sysroot is incompatible) ──
-echo "Building slide-rs (release)..."
-ORIG_PATH="$PATH"
-export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '.pixi/envs' | tr '\n' ':')"
-cargo build --release -p slide-rs || { echo "BUILD FAILED"; exit 1; }
-export PATH="$ORIG_PATH"
+RUST_BIN_ARGS=()
+if [[ " $BACKENDS " == *" rust "* || " $BACKENDS " == *" rust_r_knockoffs "* ]]; then
+    echo "Building slide-rs (release)..."
+    ORIG_PATH="$PATH"
+    export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '.pixi/envs' | tr '\n' ':')"
+    cargo build --release -p slide-rs || { echo "BUILD FAILED"; exit 1; }
+    export PATH="$ORIG_PATH"
+    RUST_BIN_ARGS=(--rust-bin target/release/slide)
+fi
+
+# ── pure_r needs native-R SLIDE in the R 4.4.0 user library (default 4.5.0 lacks it) ──
+RSCRIPT_ARGS=()
+if [[ " $BACKENDS " == *" pure_r "* ]]; then
+    source /etc/profile.d/modules.sh 2>/dev/null || true
+    module load r/4.4.0 2>/dev/null || true
+    export R_LIBS="/ihome/djishnu/aar126/R/x86_64-pc-linux-gnu-library/4.4:${R_LIBS:-}"
+    RSCRIPT_BIN="/software/rhel9/manual/install/r/4.4.0/bin/Rscript"
+    RSCRIPT_ARGS=(--rscript "$RSCRIPT_BIN")
+    echo "Rscript: $RSCRIPT_BIN -> $("$RSCRIPT_BIN" --version 2>&1 | head -1)"
+fi
+
+# Final selection rule. Default = frequency/stability set on every backend; for the R
+# backends benchmark_backends.py turns this into SLIDE_R_SOURCE=vendor + SLIDE_OPT_ITER=0.
+if [ "${SLIDE_SELECTION:-0}" = "1" ]; then
+    SELECTION_ARGS=(--slide-selection)
+else
+    SELECTION_ARGS=(--no-slide-selection)
+fi
+echo "Selection rule: ${SELECTION_ARGS[*]}"
 
 # base_seed=42 is rust's current default (== the existing baseline); included so the sweep
 # is self-contained on one node and the variance estimate has the anchor point in it.
@@ -89,6 +133,16 @@ export PATH="$ORIG_PATH"
 # Override via --export=ALL,...,SEEDS="42 1000 2000 ...".
 SEEDS=(${SEEDS:-42 1000 2000 3000 4000})
 
+# One seed per array task when submitted with --array; otherwise loop over all of them
+# in this job. Same script, same per-seed output layout either way.
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    if [ "$SLURM_ARRAY_TASK_ID" -ge "${#SEEDS[@]}" ]; then
+        echo "array task $SLURM_ARRAY_TASK_ID has no seed (${#SEEDS[@]} seeds); nothing to do"
+        exit 0
+    fi
+    SEEDS=("${SEEDS[$SLURM_ARRAY_TASK_ID]}")
+fi
+
 # Dataset + niter are overridable so the same sweep can target CD4 (n>p full-SDP
 # path) or any other X/Y. Defaults = SSc/UnTx (the original parity dataset). For
 # CD4 use niter=1000 and seeds >= niter apart (e.g. 42 2000 4000 6000 8000) so each
@@ -96,24 +150,30 @@ SEEDS=(${SEEDS:-42 1000 2000 3000 4000})
 X_PATH="${X_PATH:-/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/X.csv}"
 Y_PATH="${Y_PATH:-/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/Y.csv}"
 NITER="${NITER:-500}"
+DELTAS="${DELTAS:-0.01 0.1}"
+LAMS="${LAMS:-0.1 1.0}"
+SPEC="${SPEC:-0.1}"
 echo "Dataset: X=$X_PATH niter=$NITER seeds=${SEEDS[*]}"
+echo "Grid: delta=[$DELTAS] lambda=[$LAMS] spec=$SPEC"
 
 for SEED in "${SEEDS[@]}"; do
     OUT="${BENCH_PARENT}/seed_${SEED}"
-    echo "=== rust base_seed=${SEED}, spec=0.1 -> ${OUT} ==="
+    echo "=== base_seed=${SEED}, spec=${SPEC} -> ${OUT} ==="
     python benchmarks/benchmark_backends.py \
-        --backends rust \
+        --backends $BACKENDS \
         --x-path "$X_PATH" \
         --y-path "$Y_PATH" \
-        --delta 0.01 0.1 \
-        --lam 0.1 1.0 \
+        --delta $DELTAS \
+        --lam $LAMS \
         --niter "$NITER" \
-        --spec 0.1 \
+        --spec "$SPEC" \
         --knockoff-base-seed "${SEED}" \
-        --threads 4 \
+        --threads "$THREADS" \
         --out-dir "$OUT" \
-        --rust-bin target/release/slide
-    echo "=== rust base_seed=${SEED} finished rc=$? ==="
+        "${SELECTION_ARGS[@]}" \
+        "${RSCRIPT_ARGS[@]}" \
+        "${RUST_BIN_ARGS[@]}"
+    echo "=== base_seed=${SEED} finished rc=$? ==="
 done
 
 echo "=== base_seed sweep DONE ==="
