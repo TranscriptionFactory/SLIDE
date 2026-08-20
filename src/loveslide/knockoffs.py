@@ -846,7 +846,7 @@ class Knockoffs:
         n_jobs=-1,
         backend="python",
         verbose=False,
-        slide_selection=False,
+        slide_selection=True,
         **kwargs,
     ) -> VotingResult:
         """
@@ -885,9 +885,10 @@ class Knockoffs:
         slide_selection : bool
             Apply R's findOptIter refinement, which discards the frequency
             table and reports the single draw with maximal overlap with the
-            frequent set. Default: False -- the frequency (stability) set is
-            reported instead, because the single-draw rule amplifies
-            run-to-run variance.
+            frequent set. Default: True, matching native-R SLIDE. Set False to
+            report the frequency (stability) set instead; that lowers
+            run-to-run variance within a backend but measurably widens
+            cross-backend divergence (see docs/backend-benchmark.md).
         **kwargs
             Additional arguments passed to knockoff_filter_voting_slide.
 

@@ -96,9 +96,9 @@ def load_config(config_path):
         "knockoff_shrink": slide.get("knockoff_shrink", False),
         "knockoff_offset": slide.get("knockoff_offset", 0),
         "fstat": slide.get("fstat", "glmnet_lambdasmax"),
-        # False (default) reports the frequency/stability set; True restores R
-        # findOptIter, which reports a single draw out of niter.
-        "slide_selection": slide.get("slide_selection", False),
+        # True (default) is R findOptIter, which reports a single draw out of
+        # niter; False reports the frequency/stability set instead.
+        "slide_selection": slide.get("slide_selection", True),
         # cv
         "cv_enabled": cv.get("enabled", True),
         "cv_nrep": cv.get("nrep", 10),

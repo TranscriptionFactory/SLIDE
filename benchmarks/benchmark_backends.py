@@ -139,11 +139,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--knockoff-base-seed", type=int, default=None,
                    help="Knockoff RNG base seed for reproducible backend runs")
     p.add_argument("--slide-selection", action=argparse.BooleanOptionalAction,
-                   default=False,
+                   default=True,
                    help="Final selection rule for every backend. Default "
-                        "(--no-slide-selection) reports the frequency/stability "
-                        "set; --slide-selection restores R findOptIter, which "
-                        "reports a single draw out of niter. For the R backends "
+                        "(--slide-selection) is R findOptIter, which reports a "
+                        "single draw out of niter; --no-slide-selection reports "
+                        "the frequency/stability set instead. For the R backends "
                         "this drives SLIDE_R_SOURCE/SLIDE_OPT_ITER; set either "
                         "variable in the environment to override the derived "
                         "value (needed to run the vendor-vs-installed "

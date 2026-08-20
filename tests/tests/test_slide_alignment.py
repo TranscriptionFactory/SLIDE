@@ -724,16 +724,15 @@ class TestKnockoffFilterVotingSlide:
         assert result.spec == 0.1  # R default
         assert result.niter == 5   # Our override
 
-    def test_stability_rule_is_the_default(self, simple_data):
+    def test_stability_rule_returns_the_frequency_set(self, simple_data):
         """
-        Knockoffs.select_short_freq_slide -- the entry point the SLIDE pipeline
-        uses -- now defaults to the stability rule: the reported selection is
-        exactly the frequency set, every feature whose selection_counts reach
-        ceil(niter * spec) and nothing else.
+        slide_selection=False reports exactly the frequency set: every feature
+        whose selection_counts reach ceil(niter * spec), and nothing else.
 
-        findOptIter, by contrast, discards the frequency table and reports a
-        single draw out of niter, which makes the result swing between runs that
-        are otherwise identical. It stays reachable via slide_selection=True.
+        The default is True (R findOptIter), which discards the frequency table
+        and reports a single draw out of niter. The stability rule lowers
+        run-to-run variance within a backend but widens cross-backend
+        divergence, so it stays opt-in -- see docs/backend-benchmark.md.
         """
         import math
 
@@ -742,22 +741,22 @@ class TestKnockoffFilterVotingSlide:
         X, y, _ = simple_data
         niter, spec = 20, 0.1
 
-        result = Knockoffs.select_short_freq_slide(
+        stable = Knockoffs.select_short_freq_slide(
             X, y, niter=niter, spec=spec, fdr=0.2, f_size=100, base_seed=42,
+            slide_selection=False,
         )
 
         min_selections = math.ceil(niter * spec)
-        expected = np.where(np.asarray(result.selection_counts) >= min_selections)[0]
+        expected = np.where(np.asarray(stable.selection_counts) >= min_selections)[0]
 
-        assert np.array_equal(np.sort(result.selected), np.sort(expected))
-        assert result.optimal_iter is None
+        assert np.array_equal(np.sort(stable.selected), np.sort(expected))
+        assert stable.optimal_iter is None
 
-        # Opting back in must still reach the R rule: one draw out of niter.
-        refined = Knockoffs.select_short_freq_slide(
+        # The default stays on R's rule: one draw out of niter.
+        default = Knockoffs.select_short_freq_slide(
             X, y, niter=niter, spec=spec, fdr=0.2, f_size=100, base_seed=42,
-            slide_selection=True,
         )
-        assert refined.optimal_iter is not None
+        assert default.optimal_iter is not None
 
     def test_end_to_end_synthetic(self, simple_data):
         """
