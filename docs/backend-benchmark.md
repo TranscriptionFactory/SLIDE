@@ -2,10 +2,78 @@
 
 Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 
-**Status (2026-08-19):** Rust remains substantially faster. A ten-seed,
-high-delta sweep now measures parity by stable selections rather than by a
-single stochastic run; marginal parity improved, but interaction parity and
-the `lambda=1.0` Rust marginal core still diverge from native R.
+**Status (2026-08-20):** Rust remains substantially faster. Switching every
+backend to the stability selection rule made Python and Rust individually more
+reproducible but did **not** improve agreement with native R — see
+"2026-08-20 stability-rule seed sweep" below, which is a negative result for
+that hypothesis.
+
+## 2026-08-20 stability-rule seed sweep
+
+Same grid as the 2026-08-19 sweep plus `delta=0.01`: seeds 42, 1000, ..., 9000,
+500 knockoff iterations, `spec=0.1`, 10 workers, BLAS pinned to 1, Turin nodes.
+Every backend ran the stability rule (`--no-slide-selection`); all 40 `pure_r`
+cells are confirmed to have run `SLIDE_R_SOURCE=vendor` with `SLIDE_OPT_ITER=0`.
+Results in `benchmark_results/20260819_stability-rule-seeds/`.
+
+Stable-core Jaccard against `pure_r`, versus the 2026-08-19 baseline:
+
+| Backend | Delta | Lambda | Marginal (base → stability) | Interaction (base → stability) |
+|---|---:|---:|---|---|
+| Rust | 0.1 | 0.1 | 1.000 → **0.333** | 0.214 → **0.125** |
+| Rust | 0.1 | 1.0 | 0.250 → 0.250 | 0.214 → 0.214 |
+| Python | 0.1 | 0.1 | 0.500 → **0.333** | 0.333 → **0.167** |
+| Python | 0.1 | 1.0 | 0.667 → 0.667 | 0.400 → 0.400 |
+
+The plan's success criteria — Jaccard materially up at `lambda=1.0` and on both
+interaction rows, with `lambda=0.1` holding at 1.000 — are **not met**.
+
+### Why: the reference moved, the backends did not
+
+Per-LF selection rates at `delta=0.1`/`lambda=0.1` locate the cause precisely:
+
+| Backend | Distinct LFs (base → stability) | Stable core (base → stability) |
+|---|---|---|
+| `pure_r` | 11 → 12 | `{Z5, Z44, Z61}` → `{Z5, Z25, Z33, Z44, Z53}` |
+| `rust` | 4 → 4 | `{Z5, Z44, Z61}` → `{Z5, Z44, Z61}` (unchanged) |
+| `python` | 11 → 8 | `{Z25, Z44, Z61}` → `{Z25, Z44, Z61}` (unchanged) |
+
+Rust's stable core is identical under both rules; Python's is too. The entire
+Jaccard drop is `pure_r` moving away from them. The predicted mechanism — R's
+11-LF scatter collapsing toward its stable core — did not occur: R's scatter is
+essentially unchanged (11 → 12 distinct) while its core gained three factors and
+lost `Z61`.
+
+The rule did deliver reproducibility *within* the non-R backends, which is a real
+if separate result: Python's marginal scatter fell from 11 to 8 distinct factors
+and its interaction scatter from 65 to 47; Rust's `lambda=1.0` marginal scatter
+fell to zero (2 distinct factors, both in the core).
+
+R does not stabilize because `selectShortFreq` applies the frequency cut twice
+under `SLIDE_OPT_ITER=0` — once per chunk, then again in stage-two aggregation —
+whereas `findOptIter` hands stage two a whole draw including sub-threshold
+variables. The two rules therefore screen different candidate sets, so this is
+not a like-for-like threshold change. In a five-seed probe the stability rule
+returned an empty selection on 2 of 5 seeds: the honest answer when nothing
+clears 50/500 in stage two, where `findOptIter` instead returns an arbitrary
+shortest draw.
+
+At `lambda=1.0` every backend's numbers are bit-identical to the baseline: the
+selection is already degenerate there, so the rule does not bite.
+
+### delta=0.01 (new, no committed baseline)
+
+Agreement at low delta is strong and was not measured before: Rust marginal
+Jaccard 1.000 at `lambda=0.1` and 0.800 at `lambda=1.0`; Python 0.667 and 1.000.
+Cores largely coincide, e.g. all three backends return `{Z18, Z27, Z45, Z136}`
+plus one factor at `delta=0.01`/`lambda=0.1`.
+
+### Interaction size cap
+
+The Rust cap never fired in any of the 40 Rust cells: with `n=24` the cap is
+`24 - #marginals` (about 20) and no marginal selected more than six interactors.
+The change is therefore correct but unexercised on this dataset, and every
+interaction movement above is attributable to the selection rule alone.
 
 ## 2026-08-19 high-delta seed sweep
 
