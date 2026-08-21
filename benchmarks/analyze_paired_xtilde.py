@@ -4,12 +4,54 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata
+from loveslide.knockoff.filter import find_opt_iter
+
+
+def jaccard(left: set[int], right: set[int]) -> float:
+    union = left | right
+    return len(left & right) / len(union) if union else 1.0
+
+
+def validate_hashes(data: dict[str, dict], manifest: dict, inputs: dict) -> None:
+    expected = {
+        "a_sha256": inputs["hashes"]["a.raw"],
+        "z_sha256": inputs["hashes"]["z.raw"],
+        "y_sha256": inputs["hashes"]["y.raw"],
+        "lf_names_sha256": inputs["lf_names_sha256"],
+        "xtilde_sha256": manifest["xtilde_sha256"],
+        "swap_sha256": manifest["swap_sha256"],
+    }
+    for backend, output in data.items():
+        for field, value in expected.items():
+            if output.get(field) != value:
+                raise RuntimeError(f"{backend} iteration {manifest['iteration']}: {field} mismatch")
+
+
+def aggregate_selection(selected_list: list[set[int]], feature_count: int, spec: float) -> dict:
+    counts = np.zeros(feature_count, dtype=int)
+    cumulative = []
+    for iteration, selected in enumerate(selected_list):
+        if selected:
+            counts[list(selected)] += 1
+        cumulative.append({"iteration": iteration, "votes": counts.tolist()})
+    minimum = int(np.ceil(len(selected_list) * spec))
+    frequent = np.flatnonzero(counts >= minimum)
+    final, optimal_iter = find_opt_iter(
+        frequent, [np.asarray(sorted(value), dtype=int) for value in selected_list]
+    )
+    return {
+        "votes": counts.tolist(), "minimum_votes": minimum, "frequent": frequent.tolist(),
+        "findOptIter": {"selected": np.asarray(final, dtype=int).tolist(),
+                        "optimal_iteration": optimal_iter},
+        "cumulative": cumulative,
+    }
 
 
 def corr(a: np.ndarray, b: np.ndarray) -> float:
@@ -32,21 +74,26 @@ def main() -> None:
     manifest = list(csv.DictReader((root / "xtilde_manifest.csv").open()))
     metadata = json.loads((root / "inputs" / "metadata.json").read_text())
     n = len(metadata["sample_order"])
-    backends = sorted(path.name for path in (root / "diagnostics").iterdir() if path.is_dir())
+    backends = sorted(path.name for path in (root / "diagnostics").iterdir()
+                      if path.is_dir() and path.name != "r_raw")
     rust_backends = [name for name in backends if name.startswith("rust_")]
     references = [name for name in ("r", "python") if name in backends]
     rows: list[dict] = []
     votes = {name: np.zeros(len(metadata["lf_names"]), dtype=int) for name in backends}
+    selected_lists = {name: [] for name in backends}
+    draw_jaccards = []
 
     for item in manifest:
         iteration = int(item["iteration"])
         stem = f"iter_{iteration:03d}.json"
         data = {name: json.loads((root / "diagnostics" / name / stem).read_text()) for name in backends}
-        hashes = {value["xtilde_sha256"] for value in data.values()}
-        if hashes != {item["xtilde_sha256"]}:
-            raise RuntimeError(f"iteration {iteration}: consumers did not share X-tilde")
+        validate_hashes(data, item, metadata)
         for name, value in data.items():
             votes[name][value["selected"]] += 1
+            selected_lists[name].append(set(value["selected"]))
+        for left, right in itertools.combinations(backends, 2):
+            draw_jaccards.append({"iteration": iteration, "left": left, "right": right,
+                                  "jaccard": jaccard(selected_lists[left][-1], selected_lists[right][-1])})
         for reference in references:
             ref = data[reference]
             ref_w = np.asarray(ref["w"], float) / n  # R/Python store lambda*n.
@@ -107,6 +154,31 @@ def main() -> None:
              "All Rust configurations consumed the same X-tilde and swap fixture per draw. Never-entered agreement is reported separately.", "",
              *table, ""]
     (root / "comparison.md").write_text("\n".join(lines))
+
+    selections = {
+        name: aggregate_selection(values, len(metadata["lf_names"]), metadata["spec"])
+        for name, values in selected_lists.items()
+    }
+    pairwise = []
+    for left, right in itertools.combinations(backends, 2):
+        per_draw = [row["jaccard"] for row in draw_jaccards
+                    if row["left"] == left and row["right"] == right]
+        pairwise.append({
+            "left": left, "right": right,
+            "mean_per_draw_jaccard": float(np.mean(per_draw)),
+            "final_findOptIter_jaccard": jaccard(
+                set(selections[left]["findOptIter"]["selected"]),
+                set(selections[right]["findOptIter"]["selected"])),
+        })
+    pd.DataFrame(draw_jaccards).to_csv(root / "pairwise_draw_jaccard.csv", index=False)
+    pd.DataFrame(pairwise).to_csv(root / "pairwise_final_jaccard.csv", index=False)
+    attribution = {
+        "cell_label": metadata["cell_label"], "draws": draws,
+        "parameters": {key: metadata[key] for key in ("seed", "fdr", "spec", "rust_nlambda")},
+        "hashes_validated": True, "backends": selections, "pairwise": pairwise,
+    }
+    (root / "attribution_summary.json").write_text(json.dumps(attribution, indent=2) + "\n")
+    print(json.dumps({"cell_label": metadata["cell_label"], "hashes_validated": True}))
 
 
 if __name__ == "__main__":
