@@ -36,12 +36,14 @@ def load_raw(path: Path, shape: tuple[int, ...]) -> np.ndarray:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--cell-label", required=True)
     parser.add_argument("--z-csv", type=Path, required=True)
     parser.add_argument("--a-csv", type=Path, required=True)
     parser.add_argument("--y-csv", type=Path, required=True)
     parser.add_argument("--niter", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fdr", type=float, default=0.1)
+    parser.add_argument("--spec", type=float, default=0.1)
     parser.add_argument("--rscript", type=Path, required=True)
     parser.add_argument("--rust-bin", type=Path, required=True)
     parser.add_argument("--rust-nlambda", type=int, nargs="+", default=[100, 250, 500])
@@ -70,6 +72,12 @@ def main() -> None:
         "lf_names": z_frame.columns.tolist(),
         "sample_order": z_frame.index.tolist(),
         "ordering": "raw IEEE-754 float64, little-endian, row-major (C order)",
+        "cell_label": args.cell_label,
+        "niter": args.niter,
+        "seed": args.seed,
+        "fdr": args.fdr,
+        "spec": args.spec,
+        "rust_nlambda": args.rust_nlambda,
         "hashes": {name: sha256(inputs / name) for name in ("a.raw", "z.raw", "y.raw")},
         "lf_names_sha256": sha256(inputs / "lf_names.txt"),
     }
@@ -130,6 +138,7 @@ def main() -> None:
             "a_sha256": str(r_meta["a_sha256"]),
             "lf_names_sha256": str(r_meta["lf_names_sha256"]),
             "xtilde_sha256": sha256(xtilde_path),
+            "swap_sha256": sha256(swap_path),
             "z_sha256": metadata["hashes"]["z.raw"],
             "y_sha256": metadata["hashes"]["y.raw"],
             "shape": [n, p],
@@ -178,6 +187,7 @@ def main() -> None:
             "a_sha256": sha256(inputs / "a.raw"),
             "lf_names_sha256": sha256(inputs / "lf_names.txt"),
             "xtilde_sha256": sha256(xtilde_path),
+            "swap_sha256": sha256(swap_path),
             "z_sha256": sha256(inputs / "z.raw"),
             "y_sha256": sha256(inputs / "y.raw"),
             "shape": [n, p],
@@ -218,6 +228,8 @@ def main() -> None:
             )
             if current["xtilde_sha256"] != row["xtilde_sha256"]:
                 raise RuntimeError(f"{backend} iteration {iteration}: X-tilde hash mismatch")
+            if current["swap_sha256"] != row["swap_sha256"]:
+                raise RuntimeError(f"{backend} iteration {iteration}: swap hash mismatch")
             if current["a_sha256"] != metadata["hashes"]["a.raw"]:
                 raise RuntimeError(f"{backend}: A hash mismatch")
             if current["lf_names_sha256"] != metadata["lf_names_sha256"]:
@@ -230,6 +242,7 @@ def main() -> None:
                     "z_sha256": current["z_sha256"],
                     "y_sha256": current["y_sha256"],
                     "xtilde_sha256": current["xtilde_sha256"],
+                    "swap_sha256": current["swap_sha256"],
                     "threshold": current["threshold"],
                     "selected_indices": ";".join(map(str, current["selected"])),
                     "path_length": len(current["lambda"]),

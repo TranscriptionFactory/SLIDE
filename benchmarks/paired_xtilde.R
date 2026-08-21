@@ -58,6 +58,7 @@ diag_s <- tryCatch(
   knockoff::create.solve_asdp(sigma),
   error = function(e) knockoff::create.solve_equi(sigma)
 )
+glmnet::glmnet.control(fdev = 0)
 
 manifest <- vector("list", niter)
 set.seed(seed)
@@ -127,6 +128,7 @@ for (iteration in seq_len(niter)) {
     xtilde_file = file.path("xtilde", paste0(stem, ".raw")),
     xtilde_sha256 = sha256(xtilde_path),
     swap_file = file.path("xtilde", paste0(stem, "_swap.raw")),
+    swap_sha256 = sha256(swap_path),
     rows = n,
     columns = p
   )

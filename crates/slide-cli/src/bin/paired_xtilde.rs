@@ -14,6 +14,7 @@ struct Output {
     a_sha256: String,
     lf_names_sha256: String,
     xtilde_sha256: String,
+    swap_sha256: String,
     z_sha256: String,
     y_sha256: String,
     shape: [usize; 2],
@@ -99,6 +100,7 @@ fn main() -> Result<()> {
         bail!("LF name file has wrong number of names");
     }
     let swap_bytes = fs::read(&args[5])?;
+    let swap_sha256 = format!("{:x}", Sha256::digest(&swap_bytes));
     if swap_bytes.len() != p {
         bail!("swap mask has {} bytes; expected {p}", swap_bytes.len());
     }
@@ -208,6 +210,7 @@ fn main() -> Result<()> {
         a_sha256,
         lf_names_sha256,
         xtilde_sha256,
+        swap_sha256,
         z_sha256,
         y_sha256,
         shape: [n, p],
