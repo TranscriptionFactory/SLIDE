@@ -421,6 +421,18 @@ def _cov_shrink_corpcor(X: np.ndarray) -> np.ndarray:
     return Sigma
 
 
+def _estimate_covariance_corpcor(
+    X: np.ndarray, shrink: bool = False
+) -> np.ndarray:
+    """Match R's sample-covariance fallback to ``corpcor::cov.shrink``."""
+    Sigma = np.cov(X, rowvar=False, ddof=1)
+    if Sigma.ndim == 0:
+        Sigma = np.array([[Sigma]])
+    if shrink or not is_posdef(Sigma):
+        Sigma = _cov_shrink_corpcor(X)
+    return Sigma
+
+
 def _prepare_knockoff_cache(
     X: np.ndarray,
     method: str = 'asdp',
@@ -446,7 +458,8 @@ def _prepare_knockoff_cache(
     shrink : bool, default=False
         Whether to shrink the estimated covariance matrix.
     match_r : bool, default=False
-        If True, skip the condition number check for auto-shrinkage.
+        Retained for API compatibility. Native Python covariance estimation is
+        R-compatible regardless of this value.
 
     Returns
     -------
@@ -466,57 +479,10 @@ def _prepare_knockoff_cache(
     if method not in ['asdp', 'sdp', 'equi']:
         raise ValueError(f"method must be 'asdp', 'sdp', or 'equi', got '{method}'")
 
-    # Auto-enable shrinkage for n <= 1.25*p (R-style regularization)
-    # Skip this check if match_r=True (R doesn't auto-shrink based on n/p ratio)
-    if not shrink and not match_r and n <= 1.25 * p:
-        warnings.warn(
-            f"n={n}, p={p} (n/p={n/p:.2f}): Insufficient samples for stable covariance. "
-            f"Auto-enabling Ledoit-Wolf shrinkage for better knockoff power."
-        )
-        shrink = True
-
     # Estimate the mean vector
     mu = np.mean(X, axis=0)
 
-    # Estimate the covariance matrix
-    if not shrink:
-        Sigma = np.cov(X, rowvar=False, ddof=1)
-        if Sigma.ndim == 0:
-            Sigma = np.array([[Sigma]])
-
-        if not is_posdef(Sigma):
-            shrink = True
-
-        # Auto-enable shrinkage for ill-conditioned matrices (unless match_r)
-        if not shrink and not match_r:
-            cond_num = np.linalg.cond(Sigma)
-            if cond_num > 1e5:
-                warnings.warn(
-                    f"Covariance matrix is ill-conditioned (cond={cond_num:.1e}). "
-                    f"Auto-enabling Ledoit-Wolf shrinkage for better knockoff power."
-                )
-                shrink = True
-
-    if shrink:
-        if match_r:
-            # Use Schäfer-Strimmer (2005) shrinkage to match R's corpcor::cov.shrink
-            Sigma = _cov_shrink_corpcor(X)
-        else:
-            try:
-                from sklearn.covariance import LedoitWolf
-                lw = LedoitWolf()
-                lw.fit(X)
-                Sigma = lw.covariance_
-            except ImportError:
-                warnings.warn(
-                    "sklearn is not installed. Using manual shrinkage."
-                )
-                S = np.cov(X, rowvar=False, ddof=1)
-                if S.ndim == 0:
-                    S = np.array([[S]])
-                trace_S = np.trace(S)
-                shrinkage_param = min(1.0, max(0.0, (p / n)))
-                Sigma = (1 - shrinkage_param) * S + shrinkage_param * (trace_S / p) * np.eye(p)
+    Sigma = _estimate_covariance_corpcor(X, shrink=shrink)
 
     # Compute diag_s using the solver (or external solver, e.g. R's SDP)
     if sdp_solver is not None:
@@ -843,9 +809,8 @@ def knockoff_filter_voting(
     verbose : bool, default=False
         Print progress information.
     match_r : bool, default=True
-        If True (default), skip the automatic Ledoit-Wolf shrinkage condition
-        number check to match R's knockoff.filter behavior exactly. Set to False
-        to enable Python's more conservative auto-shrinkage for ill-conditioned cases.
+        Retained for API compatibility. Native Python covariance estimation is
+        R-compatible regardless of this value.
     use_cache : bool, default=True
         If True (default), pre-compute invariant quantities (covariance, SDP solution,
         Cholesky decomposition) once before the voting loop. This provides 3-4x speedup
@@ -1194,8 +1159,8 @@ def knockoff_filter_voting_slide(
     verbose : bool, default=False
         Print progress information.
     match_r : bool, default=True
-        If True (default), skip the automatic Ledoit-Wolf shrinkage condition number
-        check to match R's knockoff.filter behavior.
+        Retained for API compatibility. Native Python covariance estimation is
+        R-compatible regardless of this value.
     use_cache : bool, default=True
         If True (default), pre-compute invariant quantities once per chunk.
 
