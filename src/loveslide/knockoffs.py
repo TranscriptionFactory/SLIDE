@@ -56,7 +56,6 @@ from .knockoff.stats import (
     stat_lasso_coefdiff,
 )
 from .knockoff.solve import create_solve_equi, create_solve_sdp, create_solve_asdp
-from .knockoff.utils import is_posdef
 
 
 def _rlist_get(robj, name):
@@ -353,7 +352,7 @@ class Knockoffs:
             - 'sdp': Full semidefinite programming, more power but may fail
             - 'equi': Equicorrelated, always works but lower power
         shrink : bool
-            Whether to use Ledoit-Wolf covariance shrinkage.
+            Whether to force R-compatible Schäfer-Strimmer covariance shrinkage.
         offset : int
             Knockoff procedure offset:
             - 0: Original knockoff (more power, controls modified FDR) - R default
@@ -402,18 +401,9 @@ class Knockoffs:
         # Pre-compute covariance and SDP solution (OPTIMIZATION: avoid recomputing each iteration)
         mu = np.mean(z, axis=0)
 
-        if not shrink:
-            Sigma = np.cov(z, rowvar=False)
-            if Sigma.ndim == 0:
-                Sigma = np.array([[Sigma]])
-            if not is_posdef(Sigma):
-                shrink = True
+        from .knockoff.filter import _estimate_covariance_corpcor
 
-        if shrink:
-            from sklearn.covariance import LedoitWolf
-
-            lw = LedoitWolf().fit(z)
-            Sigma = lw.covariance_
+        Sigma = _estimate_covariance_corpcor(z, shrink=shrink)
 
         # Solve SDP once (OPTIMIZATION: this is expensive and doesn't change between iterations)
         p = z.shape[1]
@@ -627,7 +617,7 @@ class Knockoffs:
             - 'sdp': Full semidefinite programming, more power but slower
             - 'equi': Equicorrelated, always works but lower power
         shrink : bool
-            Whether to use Ledoit-Wolf covariance shrinkage (Python backend only).
+            Whether to force R-compatible covariance shrinkage (Python backend only).
         offset : int
             Knockoff procedure offset:
             - 0: Original knockoff (more power, controls modified FDR) - R default
@@ -719,7 +709,7 @@ class Knockoffs:
             - 'sdp': Full semidefinite programming, more power but slower
             - 'equi': Equicorrelated, always works but lower power
         shrink : bool
-            Whether to use Ledoit-Wolf covariance shrinkage (Python backend only).
+            Whether to force R-compatible covariance shrinkage (Python backend only).
         offset : int
             Knockoff procedure offset:
             - 0: Original knockoff (more power, controls modified FDR) - R default

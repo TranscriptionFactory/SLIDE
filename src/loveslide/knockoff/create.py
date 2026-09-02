@@ -8,7 +8,7 @@ from scipy import linalg
 
 from .utils import (
     normc, canonical_svd, rnorm_matrix, with_seed,
-    is_posdef, diag_pre_multiply, diag_post_multiply
+    diag_pre_multiply, diag_post_multiply
 )
 from .solve import create_solve_equi, create_solve_sdp, create_solve_asdp
 
@@ -391,10 +391,8 @@ def create_second_order(
     shrink : bool, default=False
         Whether to shrink the estimated covariance matrix.
     match_r : bool, default=False
-        If True, skip the automatic Ledoit-Wolf shrinkage condition number
-        check (cond > 1e5) to match R's knockoff.filter behavior. R uses
-        raw sample covariance without this check, which can cause divergence
-        in n ~ p boundary cases. Use this for exact R compatibility testing.
+        Retained for API compatibility. Native Python covariance estimation is
+        R-compatible regardless of this value.
 
     Returns
     -------
@@ -403,14 +401,9 @@ def create_second_order(
 
     Notes
     -----
-    If shrink=True, uses Ledoit-Wolf shrinkage for covariance estimation.
-    Even if shrink=False, shrinkage will be applied if the estimated
-    covariance matrix is not positive-definite.
-
-    When match_r=True, the condition number check that triggers automatic
-    shrinkage is bypassed, allowing ill-conditioned covariance matrices
-    to be used directly (as R does). This may result in suboptimal knockoffs
-    but ensures compatibility with R's knockoff.filter output.
+    The ordinary sample covariance is used when positive definite. Otherwise,
+    or when ``shrink=True``, Schäfer-Strimmer shrinkage matching
+    ``corpcor::cov.shrink`` is applied.
 
     References
     ----------
@@ -423,66 +416,13 @@ def create_second_order(
     if method not in ['asdp', 'sdp', 'equi']:
         raise ValueError(f"method must be 'asdp', 'sdp', or 'equi', got '{method}'")
 
-    # FIX: Force Ledoit-Wolf shrinkage when n <= 1.25*p (R-style regularization)
-    # When n <= p, the sample covariance matrix is singular (rank at most n-1).
-    # When n is close to p (n/p < 1.25), covariance estimation is unstable with
-    # insufficient degrees of freedom per parameter, causing the SDP solver to
-    # produce suboptimal diag_s values and inconsistent knockoffs.
-    # R's knockoff.filter automatically applies shrinkage in similar cases.
-    if not shrink and not match_r and n <= 1.25 * p:
-        warnings.warn(
-            f"n={n}, p={p} (n/p={n/p:.2f}): Insufficient samples for stable covariance. "
-            f"Auto-enabling Ledoit-Wolf shrinkage to match R's knockoff.filter behavior."
-        )
-        shrink = True
-
     # Estimate the mean vector
     mu = np.mean(X, axis=0)
 
-    # Estimate the covariance matrix
-    # Use ddof=1 to match R's cov() function (sample covariance with n-1 denominator)
-    if not shrink:
-        Sigma = np.cov(X, rowvar=False, ddof=1)
-        # Ensure it's 2D for single feature case
-        if Sigma.ndim == 0:
-            Sigma = np.array([[Sigma]])
+    # Local import avoids a module-import cycle: filter imports this constructor.
+    from .filter import _estimate_covariance_corpcor
 
-        # Verify positive-definiteness
-        if not is_posdef(Sigma):
-            shrink = True
-
-        # Auto-enable shrinkage for ill-conditioned matrices
-        # High condition number causes degenerate SDP solutions
-        # Skip this check if match_r=True (R doesn't do this check)
-        if not shrink and not match_r:
-            cond_num = np.linalg.cond(Sigma)
-            if cond_num > 1e5:  # Threshold for ill-conditioning
-                warnings.warn(
-                    f"Covariance matrix is ill-conditioned (cond={cond_num:.1e}). "
-                    f"Auto-enabling Ledoit-Wolf shrinkage for better knockoff power."
-                )
-                shrink = True
-
-    if shrink:
-        try:
-            from sklearn.covariance import LedoitWolf
-            lw = LedoitWolf()
-            lw.fit(X)
-            Sigma = lw.covariance_
-        except ImportError:
-            warnings.warn(
-                "sklearn is not installed. Using manual shrinkage."
-            )
-            # Manual shrinkage: λ * I + (1 - λ) * S
-            # Use ddof=1 to match R's cov() function (sample covariance with n-1 denominator)
-            S = np.cov(X, rowvar=False, ddof=1)
-            if S.ndim == 0:
-                S = np.array([[S]])
-            n, p = X.shape
-            trace_S = np.trace(S)
-            # Simple shrinkage towards identity
-            shrinkage = min(1.0, max(0.0, (p / n)))
-            Sigma = (1 - shrinkage) * S + shrinkage * (trace_S / p) * np.eye(p)
+    Sigma = _estimate_covariance_corpcor(X, shrink=shrink)
 
     # Sample the Gaussian knockoffs
     return create_gaussian(X, mu, Sigma, method=method)

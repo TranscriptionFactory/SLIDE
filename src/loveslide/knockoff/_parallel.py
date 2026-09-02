@@ -17,7 +17,11 @@ import multiprocessing
 
 from .create import create_gaussian, create_second_order
 from .solve import create_solve_sdp, create_solve_asdp, create_solve_equi
-from .filter import knockoff_threshold, VotingResult
+from .filter import (
+    _estimate_covariance_corpcor,
+    knockoff_threshold,
+    VotingResult,
+)
 
 
 def _precompute_knockoff_params(
@@ -39,8 +43,7 @@ def _precompute_knockoff_params(
         Method for diag_s optimization: 'sdp', 'asdp', 'equi', or 'auto'.
         'auto' uses ASDP for p > 500, else SDP.
     shrink : bool, default=False
-        Whether to use Ledoit-Wolf shrinkage for covariance estimation.
-        Auto-enabled when n <= 1.25 * p.
+        Whether to force R-compatible Schäfer-Strimmer covariance shrinkage.
 
     Returns
     -------
@@ -56,27 +59,7 @@ def _precompute_knockoff_params(
     # Estimate mean
     mu = np.mean(X, axis=0)
 
-    # Force Ledoit-Wolf when n <= 1.25*p (matches R behavior)
-    if not shrink and n <= 1.25 * p:
-        shrink = True
-
-    # Estimate covariance
-    if shrink:
-        try:
-            from sklearn.covariance import LedoitWolf
-            Sigma = LedoitWolf().fit(X).covariance_
-        except ImportError:
-            # Manual shrinkage fallback
-            S = np.cov(X, rowvar=False, ddof=1)
-            if S.ndim == 0:
-                S = np.array([[S]])
-            trace_S = np.trace(S)
-            shrinkage = min(1.0, max(0.0, p / n))
-            Sigma = (1 - shrinkage) * S + shrinkage * (trace_S / p) * np.eye(p)
-    else:
-        Sigma = np.cov(X, rowvar=False, ddof=1)
-        if Sigma.ndim == 0:
-            Sigma = np.array([[Sigma]])
+    Sigma = _estimate_covariance_corpcor(X, shrink=shrink)
 
     # Determine method
     if method == 'auto':
