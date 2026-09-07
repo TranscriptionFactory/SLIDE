@@ -474,7 +474,8 @@ class OptimizeSLIDE(SLIDE):
         niter : int
             Number of knockoff iterations.
         f_size : int
-            Feature size for knockoff subsets.
+            Feature size for the legacy batch path. The R-style interaction
+            path uses 100, matching R's selectShortFreq default.
         n_workers : int
             Number of parallel workers.
         knockoff_backend : str
@@ -552,7 +553,8 @@ class OptimizeSLIDE(SLIDE):
                     spec=current_spec,
                     fdr=fdr,
                     niter=niter,
-                    f_size=f_size,
+                    # R interactionSLIDE omits f_size, using the default 100.
+                    f_size=100,
                     n_workers=n_workers,
                     backend=knockoff_backend,
                     method=knockoff_method,
