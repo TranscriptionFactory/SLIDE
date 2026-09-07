@@ -29,6 +29,7 @@ pub struct MarginalLfSelectionConfig {
     pub fdr: Scalar,
     pub spec: Scalar,
     pub niter: usize,
+    /// Marginal chunk size; interactions use R's selectShortFreq default of 100.
     pub f_size: Option<usize>,
     pub knockoff_method: KnockoffMethod,
     pub knockoff_backend: KnockoffBackend,
@@ -510,6 +511,8 @@ fn find_interaction_lfs_with_progress(
     let flattened: Vec<InteractionVotingResult> = loop {
         let mut knockoff_config = config.to_knockoff_config();
         knockoff_config.spec = spec;
+        // R interactionSLIDE omits f_size, using selectShortFreq's default 100.
+        knockoff_config.f_size = Some(100);
 
         let mut pass: Vec<InteractionVotingResult> = Vec::new();
         let mut completed = 0usize;
@@ -1499,6 +1502,44 @@ mod tests {
             family: GlmnetFamily::Gaussian,
             slide_selection: false,
             ..MarginalLfSelectionConfig::default()
+        }
+    }
+
+    #[test]
+    fn interaction_chunks_match_r_default_without_changing_marginal_config() {
+        for ncols in [88, 173] {
+            let (z, y) = cap_fixture(24, ncols);
+            for f_size in [None, Some(24)] {
+                let config = MarginalLfSelectionConfig {
+                    f_size,
+                    niter: 2,
+                    spec: 0.1,
+                    nlambda: 30,
+                    base_seed: 42,
+                    knockoff_method: KnockoffMethod::Equi,
+                    interaction_size_cap: false,
+                    ..MarginalLfSelectionConfig::default()
+                };
+                let candidates: Vec<_> = (1..ncols).collect();
+                let terms = super::build_interaction_terms(&z, 0, &candidates);
+                let marginal = Vector::from_ndarray(z.as_ndarray().column(0).to_owned());
+                let corrected_y = super::correct_y_for_marginal(&y, &marginal, 0)
+                    .unwrap_or_else(|error| panic!("correct_y failed: {error}"));
+                let mut expected_config = config.to_knockoff_config();
+                expected_config.f_size = Some(100);
+                expected_config.base_seed += config.niter as u64 * (ncols as u64 + 1);
+                let expected = super::select_short_freq(&terms, &corrected_y, &expected_config)
+                    .unwrap_or_else(|error| panic!("reference voting failed: {error}"));
+
+                let result = find_interaction_lfs(&z, &y, &[0], &config)
+                    .unwrap_or_else(|error| panic!("interaction selection failed: {error}"));
+
+                assert_eq!(
+                    result.voting[0].voting, expected,
+                    "ncols={ncols}, f_size={f_size:?}"
+                );
+                assert_eq!(config.to_knockoff_config().f_size, f_size);
+            }
         }
     }
 
