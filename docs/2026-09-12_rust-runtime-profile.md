@@ -40,7 +40,7 @@ recorded 100 samples: 95.43% of sampled cycles in
 The sample supports SDP factorization as the preparation bottleneck, not a
 95.43% whole-pipeline attribution. The sampler did not overlap the voting timer.
 
-Native setup accounted for 99.68% of this interaction voting run; R-generated
+The native setup/dispatch residual accounted for 99.68% of this interaction voting run; R-generated
 setup/dispatch accounted for 89.52%. The smaller marginal chunk split its native
 time between setup and fitting. Draw counts change that balance: these results
 do not establish the same percentages at 500 or 5,000 draws.
@@ -76,6 +76,26 @@ alongside Python; they cannot serve as a release-speed comparison with this run.
 The saved full-grid totals also contain different selected models. Without a
 matched full-pipeline stage profile, this report ranks measured knockoff
 subproblems, not LOVE versus interactions across all production workloads.
+
+A final audit recovered historical full-pipeline stage logs. They provide
+context, not a matched comparison with the current release measurements:
+
+| Historical route | λ | LOVE (s) | Marginals (s) | Interactions (s) | Total (s) |
+|---|---:|---:|---:|---:|---:|
+| August 19 native | 0.1 | 2.31 | 0.78 | 2.49 | 5.77 |
+| August 19 native | 1.0 | 1.71 | 0.70 | 1.36 | 4.00 |
+| September 2 R-generated | 0.1 | 1.17 | 7.89 | 23.93 | 33.01 |
+| September 2 R-generated | 1.0 | 0.86 | 8.20 | 62.25 | 71.33 |
+
+Sources are lines 5–10 of each cell's `rust.log`, under
+`benchmark_results/20260819_high-delta-seeds/seed_42/rust/` and
+`/vast/djishnu/Aaron/.tmpfiles/20260902_r-generated-knockoff-backend-evaluation/results/rust_r_knockoffs/`.
+Z-mapping and scoring each rounded to 0.00 s. Interactions dominated those
+R-generated runs; the old native runs split time between LOVE and interactions.
+Both sets predate the R-style interaction-chunking fix. The old native config
+used 500 draws and 500 lambda values; its build type was not verified. Different
+chunking, fits and selected models rule out a causal speed ratio across these
+historical runs and today's 87-predictor interaction subproblem.
 
 ## Artifacts and reproduction
 
