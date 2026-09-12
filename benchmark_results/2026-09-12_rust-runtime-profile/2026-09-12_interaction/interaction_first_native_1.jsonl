@@ -1,0 +1,2 @@
+{"event":"standalone_setup","backend":"native","seconds":80.363724399}
+{"event":"voting_total","backend":"native","n":24,"p":87,"niter":100,"nlambda":250,"parallel":false,"selected_count":0,"seconds":72.273075236}
