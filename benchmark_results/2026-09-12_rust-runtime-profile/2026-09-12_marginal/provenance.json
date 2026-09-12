@@ -1,0 +1,41 @@
+{
+  "args": {
+    "manifest": ".tmpfiles/2026-09-12_rust-runtime-profile/manifest.json",
+    "out": ".tmpfiles/2026-09-12_rust-runtime-profile/2026-09-12_marginal",
+    "binary": "target/release/examples/profile_voting",
+    "rscript": "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+    "niter": "100",
+    "repeats": "3",
+    "timeout": "180"
+  },
+  "inputs": [
+    {
+      "case": {
+        "label": "marginal_chunk",
+        "x": "marginal_chunk.raw",
+        "y": "y.raw",
+        "n": 24,
+        "p": 22
+      },
+      "sha256": [
+        "f69a8531b9f4385a786f712d5e4498a5643bb9f070b06ae194103ecec55fa933",
+        "d8810ff843a3481852a54712654ddbd201b0dad82ede65b61d962323f401d8a6"
+      ]
+    }
+  ],
+  "source_manifest": [
+    {
+      "label": "marginal_chunk",
+      "x": "marginal_chunk.raw",
+      "y": "y.raw",
+      "n": 24,
+      "p": 22,
+      "source_z": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/benchmark_results/20260821_high-delta-paired-attribution/delta_0.1_lambda_0.1/inputs/z.raw",
+      "source_z_sha256": "28b04d903a6f7069f46870a14f524e4263232e779f0a506a17c226fd586f6fda",
+      "column_range": [
+        0,
+        22
+      ]
+    }
+  ]
+}
