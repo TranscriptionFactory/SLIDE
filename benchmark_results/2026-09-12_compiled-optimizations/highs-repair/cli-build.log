@@ -1,0 +1,6 @@
+   Compiling highs-sys v1.14.2
+   Compiling highs v2.1.0
+   Compiling slide-love v0.1.0 (/vast/djishnu/Aaron/1_general_use/omni-SLIDE/crates/slide-love)
+   Compiling slide-core v0.1.0 (/vast/djishnu/Aaron/1_general_use/omni-SLIDE/crates/slide-core)
+   Compiling slide-rs v0.1.0 (/vast/djishnu/Aaron/1_general_use/omni-SLIDE/crates/slide-cli)
+    Finished `release` profile [optimized] target(s) in 20.42s

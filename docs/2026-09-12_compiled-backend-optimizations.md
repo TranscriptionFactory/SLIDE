@@ -62,15 +62,42 @@ The release binary contains Faer solver symbols and the Cargo feature tree
 confirms `faer-sparse`; no new CPU sample verified the runtime backend selection.
 See `faer-interaction-smoke.jsonl` and `rust-tests.log` in the artifact directory.
 
-### Full CLI rebuild blocked
+### Full CLI rebuild recovered
 
 The full release CLI build failed in `highs-sys` while creating `libhighs.a`
 (`ranlib: No such file or directory`). The additional LOVE test build also
 failed while creating that archive (`Error running link command: Bus error`).
-Stopped after this repeated build blocker; the full CLI has not been rebuilt
-with Faer and LOVE tests have not completed. Logs remain under
+Stopped after this repeated build blocker and obtained approval to investigate.
+The failure logs remain under
 `.tmpfiles/2026-09-12_compiled-optimizations/rust-build-example.log` and
-`rust-love-tests.log`. Repairing this build is the next action, pending approval.
+`rust-love-tests.log`.
+
+With no other build running, the following commands then succeeded in sequence:
+
+```bash
+export TMPDIR="$PWD/.tmpfiles/2026-09-12_highs-build-repair"
+mkdir -p "$TMPDIR"
+scripts/with-rust-blas-env.sh cargo build --release --locked -p slide-rs
+RAYON_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+  scripts/with-rust-blas-env.sh cargo test --release --locked \
+  -p slide-love -p slide-sdp -p slide-knockoff
+scripts/with-rust-blas-env.sh target/release/slide --help
+```
+
+The CLI rebuild took 20.42 s and required no code, dependency, toolchain or
+build-artifact changes by hand. The tests report 72 passes, including 49 LOVE
+tests, and four ignored diagnostics. The count still includes the external-input
+helper described above. CLI help succeeds; `nm -C target/release/slide` confirms
+Faer solver symbols in the full executable. Its SHA-256 is
+`aeefe6127ee21c7a0a744d1d9998ea7276b1802e582fb6303847238dfbcd4266`.
+
+The earlier build attempts overlapped and addressed the same HiGHS build path.
+The isolated build's success supports interference or a transient artifact issue,
+but does not prove either cause. No cleanup or dependency workaround was needed.
+Build, test and CLI-help logs are in
+`benchmark_results/2026-09-12_compiled-optimizations/highs-repair/`.
+This completes the CLI rebuild, not a new full-pipeline benchmark or a paired
+QDLDL/Faer selection-equivalence check.
 
 `cargo fmt --all -- --check` reports pre-existing formatting differences in
 untouched Rust files. No Rust source files changed in this step; diff whitespace
