@@ -594,12 +594,6 @@ pub fn select_short_freq(
         return Err(KnockoffError::InvalidFeatureChunkSize { actual: f_size });
     }
 
-    if n > p {
-        let mut direct = knockoff_filter_voting_slide(x, y, config)?;
-        direct.stage_one_union = Some(direct.selected.clone());
-        return Ok(direct);
-    }
-
     let n_splits = p.div_ceil(f_size);
     if n_splits <= 1 {
         let mut direct = knockoff_filter_voting_slide(x, y, config)?;
@@ -627,8 +621,22 @@ pub fn select_short_freq(
         .collect::<Result<Vec<_>, KnockoffError>>()?;
 
     let stage_one_union = sorted_unique(chunk_results.into_iter().flatten().collect());
-    if stage_one_union.is_empty() {
-        return Ok(empty_voting_result(p, config, Some(stage_one_union)));
+    if stage_one_union.len() <= 1 {
+        let mut result = empty_voting_result(p, config, Some(stage_one_union.clone()));
+        // R returns the sole screened factor without running aggregation draws.
+        // As in Python, counts here mark selection at the frequency threshold.
+        for &index in &stage_one_union {
+            result.selection_counts[index] = result.min_selections;
+        }
+        result.selection_frequency = Vector::from_ndarray(Array1::from_iter(
+            result
+                .selection_counts
+                .iter()
+                .map(|&count| (count as Scalar) / (config.niter as Scalar)),
+        ));
+        result.selected = stage_one_union.clone();
+        result.freq_selected = stage_one_union;
+        return Ok(result);
     }
 
     let screened = Matrix::from_ndarray(select_columns(x, &stage_one_union));
@@ -1884,10 +1892,12 @@ mod tests {
     }
 
     #[test]
-    fn select_short_freq_skips_chunking_when_n_exceeds_p() {
+    fn select_short_freq_honors_chunk_size_when_n_exceeds_p() {
         let x = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.8, 0.1], [0.0, 1.0], [0.1, 0.7]]));
         let y = Vector::from_ndarray(arr1(&[2.0, 1.5, 0.1, 0.0]));
         let config = KnockoffConfig {
+            base_seed: 7,
+            fdr: 0.5,
             f_size: Some(1),
             niter: 4,
             spec: 0.25,
@@ -1898,7 +1908,51 @@ mod tests {
 
         let result = select_short_freq(&x, &y, &config)
             .unwrap_or_else(|error| panic!("select_short_freq failed: {error}"));
-        assert_eq!(result.stage_one_union, Some(result.selected.clone()));
+        let mut expected_union = Vec::new();
+        for index in 0..x.ncols() {
+            let chunk = Matrix::from_ndarray(select_column_range(&x, index, index + 1));
+            let mut chunk_config = config.clone();
+            chunk_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, index);
+            let chunk_result = knockoff_filter_voting_slide(&chunk, &y, &chunk_config)
+                .unwrap_or_else(|error| panic!("chunk voting failed: {error}"));
+            expected_union.extend(chunk_result.selected.into_iter().map(|local| local + index));
+        }
+        assert_eq!(expected_union, vec![0, 1]);
+        assert_eq!(result.stage_one_union, Some(expected_union));
+    }
+
+    #[test]
+    fn select_short_freq_returns_singleton_without_second_stage_draws() {
+        let x = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.8, 0.1], [0.0, 1.0], [0.1, 0.7]]));
+        let y = Vector::from_ndarray(arr1(&[2.0, 1.5, 0.1, 0.0]));
+        let config = KnockoffConfig {
+            f_size: Some(1),
+            niter: 4,
+            spec: 1.0,
+            nlambda: 30,
+            knockoff_method: KnockoffMethod::Equi,
+            base_seed: 0,
+            ..KnockoffConfig::default()
+        };
+        let mut union = Vec::new();
+        for index in 0..2 {
+            let chunk = Matrix::from_ndarray(select_column_range(&x, index, index + 1));
+            let mut chunk_config = config.clone();
+            chunk_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, index);
+            let chunk_result = knockoff_filter_voting_slide(&chunk, &y, &chunk_config)
+                .unwrap_or_else(|error| panic!("chunk voting failed: {error}"));
+            union.extend(chunk_result.selected.into_iter().map(|local| local + index));
+        }
+        assert_eq!(union, vec![0]);
+        let result = select_short_freq(&x, &y, &config)
+            .unwrap_or_else(|error| panic!("select_short_freq failed: {error}"));
+        assert_eq!(result.stage_one_union, Some(union.clone()));
+        assert_eq!(result.selected, union);
+        assert_eq!(result.freq_selected, vec![0]);
+        assert!(result.selected_list.is_empty());
+        assert_eq!(result.optimal_iter, None);
+        assert_eq!(result.selection_counts, vec![4, 0]);
+        assert_eq!(result.selection_frequency.as_ndarray(), &arr1(&[1.0, 0.0]));
     }
 
     #[test]
