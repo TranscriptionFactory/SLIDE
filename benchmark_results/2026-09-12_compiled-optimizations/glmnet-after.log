@@ -1,0 +1,3 @@
+extension: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/src/loveslide/knockoff/_vendor/glmnet/_glmnet.cpython-311-x86_64-linux-gnu.so
+seconds: [0.004299554042518139, 0.00543129863217473, 0.0038944948464632034, 0.004858082160353661]
+PASS: 12 paired arrays; max absolute difference: 0.0
