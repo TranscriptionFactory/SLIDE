@@ -1,0 +1,33 @@
+Synthetic interaction design: n=80, p=100; niter=100; repeats=3
+Seed=20260912 (inputs), 42 (each timed batch).
+Preparation reports repeated setup cost, not an optimization comparison.
+Generation excludes once-per-subproblem setup in optimized mode.
+secondKO includes setup, fitting and voting draw collection.
+R version 4.5.3 (2026-03-11)
+Platform: x86_64-conda-linux-gnu
+Running under: Red Hat Enterprise Linux 9.6 (Plow)
+
+Matrix products: default
+BLAS/LAPACK: /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/libopenblasp-r0.3.32.so;  LAPACK version 3.12.0
+
+locale:
+ [1] LC_CTYPE=C.UTF-8       LC_NUMERIC=C           LC_TIME=C.UTF-8
+ [4] LC_COLLATE=C.UTF-8     LC_MONETARY=C.UTF-8    LC_MESSAGES=C.UTF-8
+ [7] LC_PAPER=C.UTF-8       LC_NAME=C              LC_ADDRESS=C
+[10] LC_TELEPHONE=C         LC_MEASUREMENT=C.UTF-8 LC_IDENTIFICATION=C
+
+time zone: America/New_York
+tzcode source: system (glibc)
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base
+
+other attached packages:
+[1] foreach_1.5.2 SLIDE_0.1.1
+
+loaded via a namespace (and not attached):
+ [1] codetools_0.2-20 shape_1.4.6.1    Matrix_1.7-5     lattice_0.22-9
+ [5] magrittr_2.0.5   splines_4.5.3    iterators_1.0.14 Rdsdp_1.0.6
+ [9] knockoff_0.3.6   grid_4.5.3       corpcor_1.6.10   compiler_4.5.3
+[13] tools_4.5.3      RSpectra_0.16-2  Rcpp_1.1.1       survival_3.8-6
+[17] glmnet_5.0

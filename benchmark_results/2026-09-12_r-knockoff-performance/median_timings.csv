@@ -1,0 +1,11 @@
+"stage","mode","seconds"
+"coefficient_extraction","optimized",0.0380000000000003
+"generation","optimized",0.0779999999999998
+"preparation","optimized",0.102
+"secondKO","optimized",2.97
+"statistic","optimized",2.622
+"coefficient_extraction","stock",0.385000000000001
+"generation","stock",0.186
+"preparation","stock",0.114
+"secondKO","stock",3.381
+"statistic","stock",2.926
