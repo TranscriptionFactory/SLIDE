@@ -1,0 +1,13 @@
+Terminal tools for the Rust SLIDE workspace
+
+Usage: slide <COMMAND>
+
+Commands:
+  run      Execute the SLIDE optimization pipeline
+  tui      Launch the SLIDE monitoring TUI
+  monitor  Run the SLIDE pipeline and monitor it in the TUI simultaneously
+  submit   Submit a SLURM batch job and monitor it in the TUI
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
