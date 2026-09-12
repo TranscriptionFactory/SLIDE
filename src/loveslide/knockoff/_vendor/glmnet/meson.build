@@ -3,6 +3,7 @@
 project('glmnet', 'c', 'fortran',
   version: '2.2.1',
   default_options: [
+    'buildtype=release',
     'fortran_std=legacy'
   ])
 
