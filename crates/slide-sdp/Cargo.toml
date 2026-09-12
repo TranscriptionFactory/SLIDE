@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 blas-src = { version = "0.11.1", features = ["openblas"] }
-clarabel = { version = "0.11.1", features = ["sdp", "blas-src", "lapack-src"] }
+clarabel = { version = "0.11.1", features = ["sdp", "blas-src", "lapack-src", "faer-sparse"] }
 lapack-src = { version = "0.11.0", features = ["openblas"] }
 nalgebra.workspace = true
 ndarray.workspace = true
