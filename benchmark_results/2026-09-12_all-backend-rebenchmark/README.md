@@ -1,5 +1,7 @@
 # Full-backend rebenchmark
 
+Submitted as SLURM job **11232853** on cluster `htc`. Results are pending.
+
 Frozen source revision: `4c07012`. The Python 3.11 glmnet binary uses `-O3`;
 the release Rust CLI includes Clarabel `faer-sparse` with automatic solver
 selection. Native R uses the verified `SLIDE_R_OPTIMIZE=1` interaction changes.
@@ -26,6 +28,8 @@ It contains frozen source, inputs, Rust executable, and the installed SLIDE R
 package. `manifest.sha256` verifies those artifacts relative to the run directory.
 The external Python/R environment and R dependencies remain shared; preflight
 logs identify versions and confirm the frozen Python extension and R package.
+The harness records the live enclosing repository SHA in its environment JSON;
+use the frozen revision above and artifact hashes as execution-source provenance.
 
 Submission (from the repository root):
 
