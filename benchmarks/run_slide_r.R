@@ -73,13 +73,13 @@ if (!is.na(opts[["base-seed"]])) set.seed(opts[["base-seed"]])
 # base. library(SLIDE) above stays -- it is what makes that imports environment (and
 # the package's dependencies) available. Default "installed" is stock behaviour.
 slide_source <- Sys.getenv("SLIDE_R_SOURCE", unset = "installed")
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_arg) > 0) {
+  dirname(normalizePath(sub("^--file=", "", script_arg[[1]])))
+} else {
+  getwd()
+}
 if (identical(slide_source, "vendor")) {
-  script_arg  <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
-  script_dir  <- if (length(script_arg) > 0) {
-    dirname(normalizePath(sub("^--file=", "", script_arg[[1]])))
-  } else {
-    getwd()
-  }
   vendor_dir <- Sys.getenv("SLIDE_VENDOR_DIR", unset = "")
   if (!nzchar(vendor_dir)) {
     vendor_dir <- file.path(dirname(script_dir), "vendor", "SLIDE-jishnu", "R")
@@ -104,8 +104,25 @@ if (identical(slide_source, "vendor")) {
               length(vendor_files), vendor_dir,
               Sys.getenv("SLIDE_OPT_ITER", unset = "1")))
 } else {
+  slide_env <- asNamespace("SLIDE")
   optimize_slide <- SLIDE::optimizeSLIDE
   cat("[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE\n")
+}
+
+# Preserve a stock comparison route without editing installed package files.
+# Opt in with SLIDE_R_OPTIMIZE=1; copied runners then also need
+# src/loveslide/slide_r/knockoffPerformance.R alongside benchmarks/.
+optimize_interactions <- Sys.getenv("SLIDE_R_OPTIMIZE", unset = "0")
+if (!optimize_interactions %in% c("0", "1")) stop("SLIDE_R_OPTIMIZE must be 0 or 1")
+if (identical(optimize_interactions, "1")) {
+  performance_env <- new.env(parent = globalenv())
+  sys.source(file.path(dirname(script_dir), "src", "loveslide", "slide_r",
+                       "knockoffPerformance.R"), envir = performance_env)
+  optimized_env <- performance_env$withPreparedInteractionKnockoffs(slide_env)
+  optimize_slide <- optimized_env$optimizeSLIDE
+  cat("[pure_r] SLIDE_R_OPTIMIZE=1: cached Gaussian preparation and sparse interaction statistics\n")
+} else {
+  cat("[pure_r] SLIDE_R_OPTIMIZE=0: unchanged R interaction implementation\n")
 }
 
 out_path <- normalizePath(opts$`out-dir`, mustWork = FALSE)
