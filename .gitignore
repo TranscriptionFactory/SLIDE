@@ -12,7 +12,7 @@ archive/
 .pytest_cache/
 *.egg-info/
 **/**output*/**
-
+benchmark_results/
 # SLIDE run outputs (all implementations)
 **/*.png
 **/*.pkl

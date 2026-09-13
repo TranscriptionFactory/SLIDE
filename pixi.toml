@@ -37,11 +37,18 @@ rpy2 = ">=3.6.7"
 [feature.r.dependencies]
 r-base = ">=4.4"
 rpy2 = ">=3.6.7"
-r-knockoff = ">=0.3"
+r-knockoff = ">=0.3.6,<0.4"
 r-linprog = "*"
 r-lpsolve = "*"
 r-mass = "*"
-r-glmnet = ">=4.1"
+r-glmnet = ">=5.0,<6"
+r-remotes = ">=2.5.0,<3"
+r-igraph = ">=2.3.3,<3"
+r-ggraph = ">=2.2.2,<3"
+r-qgraph = ">=1.10.1,<2"
+r-ggpubr = ">=1.0.0,<2"
+r-dplyr = ">=1.2.1,<2"
+r-ggplot2 = ">=4.0.3,<5"
 
 # ─── Feature: dev tools ──────────────────────────────────────────────────────
 [feature.dev.dependencies]
