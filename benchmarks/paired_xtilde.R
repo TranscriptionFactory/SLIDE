@@ -50,14 +50,22 @@ dir.create(file.path(out, "diagnostics", "r_raw"), recursive = TRUE, showWarning
 
 mu <- colMeans(z)
 sigma <- cov(z)
+covariance_method <- "sample"
 if (!knockoff:::is_posdef(sigma)) {
   shrunk <- corpcor::cov.shrink(z, verbose = FALSE)
   sigma <- matrix(as.numeric(shrunk), nrow = ncol(z), ncol = ncol(z))
+  covariance_method <- "corpcor shrinkage"
 }
+sampler_method <- "asdp"
 diag_s <- tryCatch(
   knockoff::create.solve_asdp(sigma),
-  error = function(e) knockoff::create.solve_equi(sigma)
+  error = function(e) {
+    sampler_method <<- "equi fallback"
+    knockoff::create.solve_equi(sigma)
+  }
 )
+write.csv(data.frame(covariance = covariance_method, method = sampler_method,
+                     seed = seed, draws = niter), file.path(out, "sampler.csv"), row.names = FALSE)
 glmnet::glmnet.control(fdev = 0)
 
 manifest <- vector("list", niter)
@@ -115,6 +123,8 @@ for (iteration in seq_len(niter)) {
   write.csv(
     data.frame(
       lambda_count = length(fit$lambda),
+      solver_error = fit$jerr,
+      solver_sweeps = fit$npasses,
       threshold = if (is.finite(cutoff)) cutoff else NA_real_,
       selected = paste(selected, collapse = ";"),
       a_sha256 = sha256(a_path),
