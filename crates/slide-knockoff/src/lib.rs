@@ -29,8 +29,8 @@ const DEFAULT_MAX_BLOCK_SIZE: usize = 500;
 /// Python's `loveslide.knockoff.utils.is_posdef`.
 const POSDEF_EIGENVALUE_TOL: Scalar = 1.0e-9;
 /// Maximum 2-norm condition number (largest/smallest eigenvalue) for the raw
-/// sample covariance to be used directly. Matches Python's
-/// `_prepare_knockoff_cache` ill-conditioning guard (`cond > 1e5 -> shrink`).
+/// sample covariance to be used directly in native-performance mode. Python/R
+/// do not apply this extra gate; `SLIDE_KNOCKOFF_MATCH_R_COV=1` disables it.
 const MAX_RAW_COV_CONDITION: Scalar = 1.0e5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -296,16 +296,9 @@ pub fn prepare_knockoff_cache(
 ) -> Result<KnockoffCache, KnockoffError> {
     validate_feature_matrix(x)?;
     let mu = estimate_mean(x);
-    // Use the raw sample covariance only when it is positive definite AND
-    // well-conditioned; otherwise fall back to Schäfer-Strimmer shrinkage. This
-    // matches Python's `_prepare_knockoff_cache` (is_posdef with tol=1e-9, plus a
-    // `cond > 1e5 -> shrink` guard) and R's is_posdef fallback. In the n<=p regime
-    // the raw sample covariance is singular / ill-conditioned, so shrinkage — the
-    // lower-MSE, well-conditioned estimator that both R and Python use there — is
-    // selected. Beyond matching the references, this avoids handing the knockoff
-    // lasso an ill-conditioned augmented design, which makes coordinate descent
-    // grind (see `raw_covariance_is_usable`). The eigenvalue-based test also keeps
-    // the decision deterministic across BLAS builds and CPUs.
+    // Native defaults add a condition-number gate to avoid expensive lasso fits
+    // on ill-conditioned designs. SLIDE_KNOCKOFF_MATCH_R_COV=1 keeps positive
+    // definite sample covariances, matching Python/R's shrinkage decision.
     let sigma = match sample_covariance(x) {
         Some(cov) if raw_covariance_is_usable(&cov) => cov,
         _ => estimate_covariance(x)?,
@@ -812,8 +805,8 @@ fn sample_covariance(x: &Matrix) -> Option<Matrix> {
 /// Whether the raw sample covariance is a sound basis for knockoff construction:
 /// positive definite (smallest eigenvalue > `POSDEF_EIGENVALUE_TOL`, as in R's
 /// `knockoff:::is_posdef` and Python's `is_posdef`) AND well-conditioned (2-norm
-/// condition number ≤ `MAX_RAW_COV_CONDITION`, matching Python's `cond > 1e5 ->
-/// shrink` guard). Otherwise the caller falls back to shrinkage.
+/// condition number ≤ `MAX_RAW_COV_CONDITION`) unless the R-compatible gate is
+/// enabled. Otherwise the caller falls back to shrinkage.
 ///
 /// Using an eigenvalue margin rather than a bare Cholesky keeps the decision
 /// deterministic across BLAS builds and CPUs: a Cholesky on a near-singular n≈p
@@ -839,8 +832,8 @@ fn raw_covariance_is_usable(sigma: &Matrix) -> bool {
 /// Native-R SLIDE decides raw-vs-shrunk with `knockoff:::is_posdef` only — it has
 /// no condition-number test — so on a chunk that is positive definite but
 /// ill-conditioned, R keeps the raw sample covariance where we shrink. That flips
-/// Sigma, diag_s and every knockoff draw for the chunk. Python exposes the same
-/// choice as `match_r` (`loveslide.knockoff.filter`); this is rust's equivalent.
+/// Sigma, diag_s and every knockoff draw for the chunk. Python also retains
+/// positive definite sample covariances without a condition-number gate.
 /// Set `SLIDE_KNOCKOFF_MATCH_R_COV=1` to match R.
 fn match_r_covariance_gate() -> bool {
     static MATCH_R_COVARIANCE_GATE: OnceLock<bool> = OnceLock::new();
