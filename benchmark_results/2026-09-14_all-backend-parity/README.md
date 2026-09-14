@@ -1,6 +1,8 @@
 # Gaussian parity backend benchmark
 
-Prepared from frozen source revision `a74c521`. Submission pending.
+Submitted as **SLURM job 11241717** on cluster `htc` at 08:49 EDT, September 14.
+Verified RUNNING on `htc-n70`, starting native Rust. Frozen source: `a74c521`.
+Live job metadata confirms parity settings and four workers. Results pending.
 
 - Same SSc UnTx inputs and four-cell grid as September 12:
   delta {0.01, 0.1} × lambda {0.1, 1.0}.
