@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import types
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).parents[2] / "benchmarks" / "benchmark_backends.py"
 SPEC = importlib.util.spec_from_file_location("benchmark_backends", MODULE_PATH)
@@ -12,6 +14,50 @@ benchmark = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = benchmark
 SPEC.loader.exec_module(benchmark)
+
+
+def test_parity_settings_override_inherited_rust_shortcuts(monkeypatch, tmp_path):
+    monkeypatch.setenv("SLIDE_KNOCKOFF_TOL", "1e-4")
+    monkeypatch.setenv("SLIDE_KNOCKOFF_MAX_ITER", "1000")
+    monkeypatch.setenv("SLIDE_KNOCKOFF_MATCH_R_COV", "0")
+    monkeypatch.setenv("SLIDE_KNOCKOFF_MATCH_R_LAMBDA", "0")
+    args = benchmark.parse_args(["--configuration", "parity", "--source-revision", "frozen-sha"])
+
+    assert args.knockoff_nlambda == 500
+    assert args.knockoff_base_seed == 42
+    assert args.threads == 4
+    env = benchmark._rust_environment(args)
+    assert {key: env[key] for key in benchmark._PARITY_RUST_ENV} == benchmark._PARITY_RUST_ENV
+    assert env["RAYON_NUM_THREADS"] == "4"
+    benchmark._write_environment_metadata(args, tmp_path)
+    metadata = json.loads((tmp_path / "benchmark_environment.json").read_text())
+    assert metadata["configuration"] == "parity"
+    assert metadata["rust_solver_environment"] == benchmark._PARITY_RUST_ENV
+    assert metadata["inherited_environment"]["SLIDE_KNOCKOFF_TOL"] == "1e-4"
+    assert metadata["source_revision"] == "frozen-sha"
+    assert metadata["enclosing_git_sha"] != "frozen-sha"
+    assert metadata["workers_by_backend"]["python_serial"] == 1
+    assert metadata["workers_by_backend"]["pure_r"] == 4
+    assert metadata["paired_random_draws"] is False
+
+
+def test_native_configuration_preserves_rust_environment(monkeypatch):
+    monkeypatch.setenv("SLIDE_KNOCKOFF_TOL", "2e-5")
+    args = benchmark.parse_args([])
+    assert args.configuration == "native"
+    assert args.knockoff_nlambda is None
+    assert args.threads == 10
+    assert benchmark._rust_environment(args)["SLIDE_KNOCKOFF_TOL"] == "2e-5"
+
+
+@pytest.mark.parametrize("flags", [
+    ["--y-factor"], ["--knockoff-nlambda", "250"],
+    ["--knockoff-fdr", "0.2"], ["--threads", "0"],
+    ["--slurm", "--threads", "5", "--slurm-cpus", "4"],
+])
+def test_parity_rejects_unmatched_or_oversubscribed_configuration(flags):
+    with pytest.raises(SystemExit):
+        benchmark.parse_args(["--configuration", "parity", *flags])
 
 
 def test_timing_shards_replace_cells_and_merge_in_grid_order(tmp_path):

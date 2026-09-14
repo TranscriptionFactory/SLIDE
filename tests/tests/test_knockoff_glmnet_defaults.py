@@ -13,3 +13,7 @@ def test_gaussian_knockoff_path_defaults_to_r_lambda_count():
     )
 
     assert diagnostics["lambda"].shape == (500,)
+    np.testing.assert_allclose(
+        diagnostics["lambda"] / diagnostics["lambda"][0],
+        (1 / 2000) ** (np.arange(500) / 500),
+    )

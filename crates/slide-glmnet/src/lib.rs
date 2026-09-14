@@ -207,6 +207,7 @@ pub fn gaussian_lasso_path_with_left_cache(
                 config.nlambda,
                 config.alpha,
                 false,
+                knockoff_match_r_lambda(),
             )?
         }
     };
@@ -392,6 +393,7 @@ fn build_gaussian_lambda_grid(
         nlambda,
         alpha,
         include_lambda_min,
+        !include_lambda_min && knockoff_match_r_lambda(),
     )
 }
 
@@ -415,7 +417,7 @@ pub fn build_binomial_lambda_grid(
         .map(|column| column.dot(&centered).abs() / (n as Scalar))
         .fold(0.0, Scalar::max);
 
-    build_geometric_lambda_grid(lambda_max_raw, n, p, nlambda, alpha, true)
+    build_geometric_lambda_grid(lambda_max_raw, n, p, nlambda, alpha, true, false)
 }
 
 pub fn stat_glmnet_lambdasmax(
@@ -500,7 +502,16 @@ fn log_knockoff_profile(tag: &str, path: &GaussianLassoPathResult, t0: std::time
 }
 
 static KNOCKOFF_PROFILE_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static KNOCKOFF_MATCH_R_LAMBDA: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 static KNOCKOFF_CD_TUNABLES: std::sync::OnceLock<(Scalar, usize)> = std::sync::OnceLock::new();
+
+/// Use the fixed Gaussian knockoff lambda ratio from Python/R when explicitly enabled.
+/// Ordinary Gaussian and binomial paths retain their dimension-dependent grids.
+fn knockoff_match_r_lambda() -> bool {
+    *KNOCKOFF_MATCH_R_LAMBDA.get_or_init(|| {
+        std::env::var("SLIDE_KNOCKOFF_MATCH_R_LAMBDA").is_ok_and(|value| value == "1")
+    })
+}
 
 const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
 const DEFAULT_KNOCKOFF_MAX_ITER: usize = 1_000;
@@ -842,10 +853,15 @@ fn build_geometric_lambda_grid(
     nlambda: usize,
     alpha: Scalar,
     include_lambda_min: bool,
+    match_r_lambda: bool,
 ) -> Result<Vector, GlmnetError> {
     let alpha_scale = if alpha > 0.0 { alpha } else { 1.0 };
     let lambda_max = (lambda_max_raw / alpha_scale).max(MIN_LAMBDA_FLOOR);
-    let lambda_min_ratio: Scalar = if n > p { 1.0e-4 } else { 1.0 / 2000.0 };
+    let lambda_min_ratio: Scalar = if match_r_lambda || n <= p {
+        1.0 / 2000.0
+    } else {
+        1.0e-4
+    };
 
     if nlambda == 1 {
         return Ok(Vector::from_ndarray(Array1::from_vec(vec![lambda_max])));
@@ -1724,6 +1740,75 @@ mod tests {
     use slide_types::{Matrix, Vector};
 
     const TOL: f64 = 1.0e-8;
+
+    #[test]
+    fn gaussian_knockoff_lambda_parity_uses_fixed_ratio() {
+        // Four augmented columns represent two original and two knockoff columns.
+        for n in [3, 4, 8] {
+            for match_r_lambda in [false, true] {
+                let grid = super::build_geometric_lambda_grid(
+                    2.0, n, 4, 500, 1.0, false, match_r_lambda,
+                )
+                .unwrap_or_else(|error| panic!("lambda grid failed: {error}"));
+                let ratio: f64 = if match_r_lambda || n <= 4 { 1.0 / 2000.0 } else { 1.0e-4 };
+                assert_eq!(grid.len(), 500);
+                for (index, value) in grid.as_ndarray().iter().enumerate() {
+                    let expected = 2.0 * ratio.powf(index as f64 / 500.0);
+                    assert!((value - expected).abs() < TOL);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_and_uncached_knockoff_grids_honor_lambda_mode() {
+        for n in [3, 4, 8] {
+            let x = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((n, 2), |(i, j)| {
+                ((i + 1) * (j + 2)) as f64
+            }));
+            let y = Vector::from_ndarray(ndarray::Array1::from_iter((0..n).map(|i| i as f64)));
+            let y_mean = (n - 1) as f64 / 2.0;
+            let y_centered = y.as_ndarray().mapv(|v| v - y_mean);
+            let cache = super::HalfPreparedData::new(&x, &y_centered, true);
+            let augmented = super::augment_features(&x, &x);
+            let config = super::knockoff_path_config(&GaussianLassoPathConfig {
+                nlambda: 20,
+                scale_ddof: 1,
+                ..GaussianLassoPathConfig::default()
+            });
+            let uncached = super::stat_glmnet_lambdasmax_prebuilt_diagnostics(
+                &augmented, 2, &y, GlmnetFamily::Gaussian, &config,
+            )
+            .unwrap_or_else(|error| panic!("uncached path failed: {error}"));
+            let mut workspace = super::GaussianCdWorkspace::new(n, 4);
+            let cached = super::gaussian_lasso_path_with_left_cache(
+                &cache, &cache, &[false, false], &y, y_mean, &y_centered, &config, &mut workspace,
+            )
+            .unwrap_or_else(|error| panic!("cached path failed: {error}"));
+            let ratio: f64 = if super::knockoff_match_r_lambda() || n <= 4 {
+                1.0 / 2000.0
+            } else {
+                1.0e-4
+            };
+            for grid in [&cached.lambda, &uncached.path.lambda] {
+                let values = grid.as_ndarray();
+                assert!((values[19] / values[0] - ratio.powf(19.0 / 20.0)).abs() < TOL);
+            }
+            assert_eq!(cached.lambda, uncached.path.lambda);
+        }
+    }
+
+    #[test]
+    fn ordinary_lambda_grid_retains_dimension_dependent_endpoint() {
+        for n in [3, 4, 8] {
+            let x = Matrix::from_ndarray(ndarray::Array2::ones((n, 4)));
+            let y = Vector::from_ndarray(ndarray::Array1::ones(n));
+            let grid = build_lambda_grid(&x, &y, 500, 1.0)
+                .unwrap_or_else(|error| panic!("lambda grid failed: {error}"));
+            let expected = if n > 4 { 1.0e-4 } else { 1.0 / 2000.0 };
+            assert!((grid.as_ndarray()[499] - expected).abs() < TOL);
+        }
+    }
 
     #[test]
     fn knockoff_cd_defaults_use_fast_path() {

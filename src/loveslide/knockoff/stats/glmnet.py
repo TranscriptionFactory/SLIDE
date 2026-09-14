@@ -62,7 +62,7 @@ def _lasso_max_lambda_glmnet(
         Feature matrix.
     y : array-like of shape (n,)
         Response vector.
-    nlambda : int, default=250
+    nlambda : int, default=500
         Number of lambda values.
     intercept : bool, default=True
         Whether to fit an intercept.

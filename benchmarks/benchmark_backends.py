@@ -109,6 +109,11 @@ class PairComparison:
 # ---------------------------------------------------------------------------
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark SLIDE backends")
+    p.add_argument("--configuration", choices=["native", "parity"], default="native",
+                   help="Native defaults or matched Gaussian knockoff settings; "
+                        "parity does not imply paired RNG or equal solver accuracy")
+    p.add_argument("--source-revision", default=None,
+                   help="Executed source revision when running a frozen source copy")
     p.add_argument("--x-path", default=_SSC_X, help="Path to X matrix CSV")
     p.add_argument("--y-path", default=_SSC_Y, help="Path to Y vector CSV")
     p.add_argument("--y-factor", action="store_true", help="Treat y as binary factor")
@@ -134,7 +139,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--spec", type=float, default=0.1,
                    help="Selection-frequency threshold (fraction of niter)")
     p.add_argument("--knockoff-nlambda", type=int, default=None,
-                   help="Rust knockoff lasso grid size "
+                   help="Rust knockoff lasso grid size (parity requires 500) "
                         "(default 250; explicit 100, 250, or 500 are honored exactly)")
     p.add_argument("--knockoff-base-seed", type=int, default=None,
                    help="Knockoff RNG base seed for reproducible backend runs")
@@ -154,8 +159,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "counts without re-partitioning the stage-one union)")
     p.add_argument("--out-dir", type=Path, default=Path("benchmark_results"))
     p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
-    p.add_argument("--threads", type=int, default=10,
-                   help="Common Python worker/Rayon thread budget (default: 10)")
+    p.add_argument("--threads", type=int, default=None,
+                   help="Worker budget (default: parity 4, native 10; python_serial 1)")
     p.add_argument("--profile", action="store_true",
                    help="Enable internal knockoff stage profiling")
     p.add_argument("--skip-run", action="store_true", help="Only compare existing outputs")
@@ -166,7 +171,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--slurm-cpus", type=int, default=4)
     p.add_argument("--slurm-cluster", default="htc")
     p.add_argument("--slurm-partition", default=None)
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.configuration == "parity":
+        if args.y_factor:
+            p.error("parity currently supports Gaussian responses only")
+        if args.knockoff_nlambda not in (None, 500):
+            p.error("parity requires --knockoff-nlambda 500")
+        if args.knockoff_fdr not in (None, 0.1):
+            p.error("parity requires --knockoff-fdr 0.1")
+        args.knockoff_nlambda = 500
+        if args.knockoff_base_seed is None:
+            args.knockoff_base_seed = 42
+    if args.threads is None:
+        args.threads = 4 if args.configuration == "parity" else 10
+    if args.threads < 1:
+        p.error("--threads must be positive")
+    if args.slurm and args.threads > args.slurm_cpus:
+        p.error("--threads must not exceed --slurm-cpus")
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +235,8 @@ def submit_slurm(args: argparse.Namespace) -> int:
         if isinstance(val, bool):
             if val:
                 script_args.append(flag)
+            elif key == "slide_selection":
+                script_args.append("--no-slide-selection")
         elif isinstance(val, list):
             script_args.append(flag)
             script_args.extend(str(v) for v in val)
@@ -321,11 +345,29 @@ def _write_profile_summary(out_dir: Path) -> None:
         writer.writerows(rows)
 
 
+_PARITY_RUST_ENV = {
+    "SLIDE_KNOCKOFF_TOL": "1e-7",
+    "SLIDE_KNOCKOFF_MAX_ITER": "100000",
+    "SLIDE_KNOCKOFF_MATCH_R_COV": "1",
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA": "1",
+}
+
+
+def _rust_environment(args: argparse.Namespace) -> dict[str, str]:
+    env = os.environ.copy()
+    if args.configuration == "parity":
+        env.update(_PARITY_RUST_ENV)
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[var] = "1"
+    env["RAYON_NUM_THREADS"] = str(args.threads)
+    return env
+
+
 def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None:
     """Record the execution context needed to interpret benchmark timings."""
     metadata = {
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "git_sha": subprocess.run(
+        "enclosing_git_sha": subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT,
             capture_output=True, text=True, check=True,
         ).stdout.strip(),
@@ -340,7 +382,37 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
         "platform": sys.platform,
         "seed": args.knockoff_base_seed,
         "niter": args.niter,
+        "spec": args.spec,
+        "rust_fdr": args.knockoff_fdr if args.knockoff_fdr is not None else 0.1,
+        "python_r_fdr": 0.1,
         "slide_selection": args.slide_selection,
+        "configuration": args.configuration,
+        "source_revision": args.source_revision,
+        "source_path": str(_PROJECT_ROOT),
+        "rust_binary": str(args.rust_bin) if args.rust_bin else "cargo run --release",
+        "rust_nlambda": args.knockoff_nlambda or 250,
+        "python_r_gaussian_settings": {
+            "nlambda": 500, "tolerance": 1e-7, "max_iter": 100000,
+            "lambda_min_ratio": 1 / 2000,
+        },
+        "rust_native_defaults": {
+            "tolerance": 1e-4, "max_iter": 1000,
+            "covariance_gate": "positive definite and condition number <= 100000",
+            "lambda_min_ratio": "1e-4 if n > 2p else 1/2000",
+        },
+        "inherited_environment": {
+            key: value for key, value in os.environ.items()
+            if key.startswith("SLIDE_")
+        },
+        "rust_solver_environment": {
+            key: _rust_environment(args).get(key) for key in _PARITY_RUST_ENV
+        },
+        "workers_by_backend": {
+            backend: 1 if backend == "python_serial" else args.threads
+            for backend in args.backends
+        },
+        "timing_boundary": "Python excludes imports; Rust/R include subprocess startup",
+        "paired_random_draws": False,
     }
     with (out_dir / "benchmark_environment.json").open("w") as stream:
         json.dump(metadata, stream, indent=2)
@@ -461,6 +533,8 @@ def run_pure_r_backend(
     # vendor-vs-installed equivalence check is run.
     env.setdefault("SLIDE_R_SOURCE", "installed" if args.slide_selection else "vendor")
     env.setdefault("SLIDE_OPT_ITER", "1" if args.slide_selection else "0")
+    if args.configuration == "parity":
+        env["SLIDE_OPT_ITER"] = "1" if args.slide_selection else "0"
 
     combo_log = out_dir / f"pure_r_{delta}_{lam}.log"
     log.info("Running pure_r: %s", " ".join(cmd))
@@ -523,14 +597,7 @@ def run_rust_backend(
     if args.threads:
         cmd.extend(["--threads", str(args.threads)])
 
-    env = os.environ.copy()
-    # rust parallelism is rayon (--threads); pin BLAS to 1 so rayon workers
-    # don't nest BLAS threads (no-op on tiny matrices, but clean). RAYON mirrors
-    # --threads.
-    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
-        env[var] = "1"
-    if args.threads:
-        env["RAYON_NUM_THREADS"] = str(args.threads)
+    env = _rust_environment(args)
 
     log_path = out_dir / "rust.log"
     log.info("Running Rust: %s", " ".join(cmd))
@@ -772,6 +839,9 @@ def write_report(
         f.write(f"Generated: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
         # Timing table
+        f.write("Configuration matching does not pair random draws or establish equal "
+                "solver accuracy. Python excludes imports from timing; Rust/R include "
+                "subprocess startup. See `benchmark_environment.json` for settings.\n\n")
         f.write("## Timing\n\n")
         f.write("| Backend | Delta | Lambda | Seconds | Status |\n")
         f.write("|---------|------:|-------:|--------:|--------|\n")
@@ -856,6 +926,14 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["RAYON_NUM_THREADS"] = str(args.threads)
 
     if not args.skip_run:
+        if args.configuration == "parity" and any(
+            backend in ("python", "python_serial", "r_knockoffs")
+            for backend in args.backends
+        ):
+            from loveslide.knockoff.stats.glmnet import HAS_GLMNET
+            if not HAS_GLMNET:
+                log.error("Parity requires compiled Python glmnet; sklearn fallback is not matched")
+                return 1
         _write_environment_metadata(args, out_dir)
         for backend in args.backends:
             for delta, lam in param_grid:

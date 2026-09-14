@@ -56,6 +56,7 @@ opts[["slide-top-feats"]] <- as.integer(opts[["slide-top-feats"]])
 opts$threads           <- as.integer(opts$threads)
 opts[["base-seed"]]    <- as.integer(opts[["base-seed"]])
 opts[["y-factor"]]     <- isTRUE(opts[["y-factor"]])
+if (is.na(opts$threads) || opts$threads < 1L) stop("--threads must be a positive integer")
 
 for (k in c("x-path", "y-path", "out-dir", "delta", "lambda")) {
   if (is.null(opts[[k]])) stop("missing required arg --", k)
@@ -124,6 +125,22 @@ if (identical(optimize_interactions, "1")) {
 } else {
   cat("[pure_r] SLIDE_R_OPTIMIZE=0: unchanged R interaction implementation\n")
 }
+
+# Upstream optimizeSLIDE drops ncore, and runSLIDE passes a hard-coded 10.
+# Rebind only these entry points, preserving the selected stock/optimized SLIDE.
+worker_env <- new.env(parent = environment(optimize_slide))
+worker_env$SLIDE <- local({
+  implementation <- get("SLIDE", envir = worker_env)
+  workers <- opts$threads
+  function(..., ncore = NULL) implementation(..., ncore = workers)
+})
+for (name in c("optimizeSLIDE", "runSLIDE")) {
+  fun <- get(name, envir = worker_env)
+  environment(fun) <- worker_env
+  assign(name, fun, envir = worker_env)
+}
+optimize_slide <- worker_env$optimizeSLIDE
+cat(sprintf("[pure_r] effective SLIDE workers: %d\n", opts$threads))
 
 out_path <- normalizePath(opts$`out-dir`, mustWork = FALSE)
 dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
@@ -232,6 +249,7 @@ zdf <- if (file.exists(z_path)) {
 cell_summary <- data.frame(
   delta = opts$delta,
   lambda = opts$lambda,
+  workers = opts$threads,
   Num_of_LFs = if (!is.null(zdf)) ncol(zdf) else NA_integer_,
   Num_of_Sig_LFs = length(marginal_vars),
   Num_of_Interactors = length(interaction_vars)

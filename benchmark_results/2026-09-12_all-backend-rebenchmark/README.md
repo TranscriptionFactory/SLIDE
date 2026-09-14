@@ -1,6 +1,10 @@
 # Full-backend rebenchmark
 
-Submitted as SLURM job **11232853** on cluster `htc`. Results are pending.
+Submitted as SLURM job **11232853** on cluster `htc`. Saved outputs contain
+24 successful timings, 24 loaded results, and 60 pairwise comparisons.
+Treat this as a native/default-configuration survey, not an equal-work speedup
+comparison. The configurations differed in λ counts, solver settings, covariance
+gating, and actual R worker count; see `benchmarks/README.md` for the parity mode.
 
 Frozen source revision: `4c07012`. The Python 3.11 glmnet binary uses `-O3`;
 the release Rust CLI includes Clarabel `faer-sparse` with automatic solver
@@ -10,7 +14,8 @@ selection. Native R uses the verified `SLIDE_R_OPTIMIZE=1` interaction changes.
 - Grid: delta 0.01 and 0.1; lambda 0.1 and 1.0.
 - 500 knockoff draws, seed 42, FDR 0.1, spec 0.1, `findOptIter` selection.
 - Six routes: rust, rust_r_knockoffs, python_serial, python, r_knockoffs, pure_r.
-- Four workers (one for python_serial), one BLAS thread per worker.
+- Requested four workers (one for python_serial), one BLAS thread per worker.
+  Pure R actually used ten because upstream runSLIDE hard-coded its worker count.
 - Preserve backend lasso-grid defaults: Rust 250, Gaussian Python/R 500.
 - One pass per cell, 24 full-pipeline runs, sequential on one Turin SLURM node.
   No build runs inside the timing job. This is a current-configuration comparison,
@@ -42,5 +47,5 @@ sbatch --output="$RUN/logs/slurm-%j.out" "$RUN/run.sbatch" "$RUN" "$ENV" "$R_DEP
 
 Preflight: shell syntax passes; frozen Python/compiled-glmnet and rpy2 imports
 succeed; R loads SLIDE, knockoff and corpcor; the copied Rust CLI starts.
-Results and logs will remain in the run directory until the completed outputs
-are verified and summarized here.
+Results and logs remain in the run directory. Counts above were checked against
+its saved `results/benchmark_summary.json` on September 14.
