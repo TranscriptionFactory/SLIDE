@@ -1,6 +1,9 @@
 # Paired solver convergence study: high-delta/high-lambda cell
 
-Prepared from source `550d2ea`; submission pending. Production solvers are unchanged.
+Submitted as **SLURM array 11242920**, tasks 0–4, at 09:51 EDT on September 14.
+All five tasks verified RUNNING on htc-n82/htc-n84; live metadata confirms 1,000
+paired draws per design and all solver profiles. Frozen source: `550d2ea`.
+Production solvers are unchanged; full-study results are pending.
 
 ## Question and sample size
 
