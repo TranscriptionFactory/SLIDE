@@ -3,7 +3,8 @@ use ndarray::{Array1, Array2};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use slide_glmnet::{
-    stat_glmnet_lambdasmax_prebuilt_diagnostics, GaussianLassoPathConfig, GlmnetFamily,
+    gaussian_lasso_path_with_left_cache, stat_glmnet_lambdasmax_prebuilt_diagnostics,
+    GaussianCdWorkspace, GaussianLassoPathConfig, GlmnetFamily, HalfPreparedData,
 };
 use slide_types::{Matrix, Vector};
 use std::{env, fs, path::Path};
@@ -11,6 +12,10 @@ use std::{env, fs, path::Path};
 #[derive(Serialize)]
 struct Output {
     backend: &'static str,
+    preparation: &'static str,
+    entry_tie_count: usize,
+    tolerance: f64,
+    max_iter: usize,
     a_sha256: String,
     lf_names_sha256: String,
     xtilde_sha256: String,
@@ -86,6 +91,9 @@ fn main() -> Result<()> {
     let nlambda: usize = args[12].parse()?;
     let tolerance: f64 = args[13].parse()?;
     let max_iter: usize = args[14].parse()?;
+    env::set_var("SLIDE_KNOCKOFF_TOL", tolerance.to_string());
+    env::set_var("SLIDE_KNOCKOFF_MAX_ITER", max_iter.to_string());
+    let cached = env::var("SLIDE_PAIRED_CACHED").is_ok_and(|value| value == "1");
     let (z_values, z_sha256) = read_f64(Path::new(&args[1]), n * p)?;
     let (xtilde_values, xtilde_sha256) = read_f64(Path::new(&args[2]), n * p)?;
     let (y_values, y_sha256) = read_f64(Path::new(&args[3]), n)?;
@@ -168,18 +176,51 @@ fn main() -> Result<()> {
         ..GaussianLassoPathConfig::default()
     };
     let started = std::time::Instant::now();
-    let diagnostics = stat_glmnet_lambdasmax_prebuilt_diagnostics(
-        &Matrix::from_ndarray(augmented),
-        p,
-        &Vector::from_ndarray(Array1::from_vec(y_values)),
-        GlmnetFamily::Gaussian,
-        &config,
-    )?;
+    let y = Vector::from_ndarray(Array1::from_vec(y_values));
+    let path = if cached {
+        let y_centered = y.as_ndarray().mapv(|value| value - response_mean);
+        let x_cache = HalfPreparedData::new(&Matrix::from_ndarray(z), &y_centered, true);
+        let tilde_cache = HalfPreparedData::new(&Matrix::from_ndarray(xtilde), &y_centered, true);
+        let swap: Vec<_> = swap_bytes.iter().map(|value| *value != 0).collect();
+        let mut workspace = GaussianCdWorkspace::new(n, 2 * p);
+        gaussian_lasso_path_with_left_cache(
+            &x_cache,
+            &tilde_cache,
+            &swap,
+            &y,
+            response_mean,
+            &y_centered,
+            &config,
+            &mut workspace,
+        )?
+    } else {
+        stat_glmnet_lambdasmax_prebuilt_diagnostics(
+            &Matrix::from_ndarray(augmented),
+            p,
+            &y,
+            GlmnetFamily::Gaussian,
+            &config,
+        )?
+        .path
+    };
     let wall_ms = started.elapsed().as_secs_f64() * 1_000.0;
-    let entries = diagnostics.entry_lambda.as_ndarray();
+    let entries: Vec<_> = path
+        .beta
+        .as_ndarray()
+        .rows()
+        .into_iter()
+        .map(|row| {
+            row.iter()
+                .zip(path.lambda.as_ndarray())
+                .find_map(|(&coefficient, &lambda)| (coefficient != 0.0).then_some(lambda))
+                .unwrap_or(0.0)
+        })
+        .collect();
     let mut entry_original = vec![0.0; p];
     let mut entry_knockoff = vec![0.0; p];
-    let mut w = diagnostics.statistic.as_ndarray().to_vec();
+    let mut w: Vec<_> = (0..p)
+        .map(|j| entries[j].max(entries[p + j]) * (entries[j] - entries[p + j]).signum())
+        .collect();
     for j in 0..p {
         if swap_bytes[j] == 0 {
             entry_original[j] = entries[j];
@@ -197,8 +238,7 @@ fn main() -> Result<()> {
             .filter_map(|(index, statistic)| (*statistic >= value).then_some(index))
             .collect()
     });
-    let coefficients = diagnostics
-        .path
+    let coefficients = path
         .beta
         .as_ndarray()
         .rows()
@@ -207,6 +247,12 @@ fn main() -> Result<()> {
         .collect();
     let output = Output {
         backend: "rust",
+        entry_tie_count: (0..p)
+            .filter(|&j| entries[j] > 0.0 && entries[j] == entries[p + j])
+            .count(),
+        preparation: if cached { "cached" } else { "uncached" },
+        tolerance,
+        max_iter,
         a_sha256,
         lf_names_sha256,
         xtilde_sha256,
@@ -220,16 +266,48 @@ fn main() -> Result<()> {
             response_mean,
             response_sd_ddof1,
         },
-        lambda: diagnostics.path.lambda.as_ndarray().to_vec(),
+        lambda: path.lambda.as_ndarray().to_vec(),
         coefficients,
         entry_original,
         entry_knockoff,
         w,
         threshold: cutoff,
         selected,
-        total_cd_iters: diagnostics.path.total_cd_iters,
+        total_cd_iters: path.total_cd_iters,
         wall_ms,
     };
     fs::write(&args[15], serde_json::to_vec(&output)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_signed_max_reports_positive_tied_entries() {
+        let x = Matrix::from_ndarray(ndarray::array![
+            [1.0, 1.0],
+            [-1.0, 1.0],
+            [1.0, -1.0],
+            [-1.0, -1.0],
+        ]);
+        let y = Vector::from_ndarray(ndarray::array![2.0, 0.0, 0.0, -2.0]);
+        let diagnostics = stat_glmnet_lambdasmax_prebuilt_diagnostics(
+            &x,
+            1,
+            &y,
+            GlmnetFamily::Gaussian,
+            &GaussianLassoPathConfig {
+                scale_ddof: 1,
+                ..GaussianLassoPathConfig::default()
+            },
+        )
+        .unwrap();
+        let entries = diagnostics.entry_lambda.as_ndarray();
+        assert!(entries[0] > 0.0);
+        assert_eq!(entries[0], entries[1]);
+        // Preserve production behavior in replay; mathematical sign(0) would give W=0.
+        assert_eq!(diagnostics.statistic.as_ndarray()[0], entries[0]);
+    }
 }

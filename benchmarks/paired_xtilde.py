@@ -7,14 +7,16 @@ import argparse
 import csv
 import hashlib
 import json
+import logging
 import os
 import subprocess
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from loveslide.knockoff.stats.glmnet import stat_glmnet_lambdasmax
+from loveslide.knockoff.stats.glmnet import HAS_GLMNET, stat_glmnet_lambdasmax
 from loveslide.knockoff.filter import knockoff_threshold
 
 
@@ -49,17 +51,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rust-nlambda", type=int, nargs="+", default=[100, 250, 500])
     parser.add_argument("--rust-tol", type=float, default=1e-4)
     parser.add_argument("--rust-max-iter", type=int, default=1000)
+    parser.add_argument("--rust-cached", action="store_true")
+    parser.add_argument("--rust-convergence-check", action="store_true",
+                        help="Also fit 10x the cap, then 100x tighter tolerance at that cap")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if not HAS_GLMNET:
+        raise RuntimeError("Paired replay requires compiled Python glmnet")
+    rust_configs = {}
+    for nlambda in args.rust_nlambda:
+        name = f"rust_{nlambda}"
+        rust_configs[name] = (nlambda, args.rust_tol, args.rust_max_iter)
+        if args.rust_convergence_check:
+            rust_configs[name + "_cap"] = (nlambda, args.rust_tol, args.rust_max_iter * 10)
+            rust_configs[name + "_tight"] = (nlambda, args.rust_tol / 100, args.rust_max_iter * 10)
     args.out.mkdir(parents=True, exist_ok=False)
     inputs = args.out / "inputs"
     inputs.mkdir()
     z_frame = pd.read_csv(args.z_csv, index_col=0)
     a_frame = pd.read_csv(args.a_csv, index_col=0)
     y_frame = pd.read_csv(args.y_csv, index_col=0)
+    if not z_frame.index.equals(y_frame.index):
+        raise ValueError("Z/Y sample order differs; prepare aligned inputs before replay")
+    if not z_frame.columns.equals(a_frame.columns):
+        raise ValueError("Z/A feature names or order differ")
     z = z_frame.to_numpy(dtype=np.float64)
     a = a_frame.to_numpy(dtype=np.float64)
     y = y_frame.iloc[:, 0].to_numpy(dtype=np.float64)
@@ -78,6 +96,9 @@ def main() -> None:
         "fdr": args.fdr,
         "spec": args.spec,
         "rust_nlambda": args.rust_nlambda,
+        "rust_configs": rust_configs,
+        "rust_cached": args.rust_cached,
+        "rust_lambda_environment": os.environ.get("SLIDE_KNOCKOFF_MATCH_R_LAMBDA"),
         "hashes": {name: sha256(inputs / name) for name in ("a.raw", "z.raw", "y.raw")},
         "lf_names_sha256": sha256(inputs / "lf_names.txt"),
     }
@@ -109,8 +130,8 @@ def main() -> None:
     )
 
     (args.out / "diagnostics" / "python").mkdir(parents=True)
-    for nlambda in args.rust_nlambda:
-        (args.out / "diagnostics" / f"rust_{nlambda}").mkdir(parents=True)
+    for backend in rust_configs:
+        (args.out / "diagnostics" / backend).mkdir(parents=True)
     (args.out / "diagnostics" / "r").mkdir(parents=True)
     manifest = list(csv.DictReader((args.out / "xtilde_manifest.csv").open()))
     summary = []
@@ -170,13 +191,17 @@ def main() -> None:
             if pd.isna(r_meta["threshold"])
             else float(r_meta["threshold"]),
             "selected": r_selected,
+            "solver_error": int(r_meta["solver_error"]),
+            "solver_sweeps": int(r_meta["solver_sweeps"]),
         }
         (args.out / "diagnostics" / "r" / f"{stem}.json").write_text(
             json.dumps(r_output, separators=(",", ":"))
         )
-        w, diagnostic = stat_glmnet_lambdasmax(
-            z, xtilde, y, nlambda=500, swap=swap, return_diagnostics=True
-        )
+        with warnings.catch_warnings(record=True) as fit_warnings:
+            warnings.simplefilter("always")
+            w, diagnostic = stat_glmnet_lambdasmax(
+                z, xtilde, y, nlambda=500, swap=swap, return_diagnostics=True
+            )
         cutoff = knockoff_threshold(w, fdr=args.fdr, offset=0)
         selected = np.flatnonzero(w >= cutoff).tolist() if np.isfinite(cutoff) else []
         entry = diagnostic["entry_lambda_swapped"]
@@ -206,26 +231,34 @@ def main() -> None:
             "w": w.tolist(),
             "threshold": float(cutoff) if np.isfinite(cutoff) else None,
             "selected": selected,
+            "warnings": [str(warning.message) for warning in fit_warnings],
         }
         (args.out / "diagnostics" / "python" / f"{stem}.json").write_text(
             json.dumps(py_output, separators=(",", ":"))
         )
-        for nlambda in args.rust_nlambda:
-            rust_out = args.out / "diagnostics" / f"rust_{nlambda}" / f"{stem}.json"
-            rust_env = env | {"RAYON_NUM_THREADS": "1"}
+        for backend, (nlambda, tolerance, max_iter) in rust_configs.items():
+            rust_out = args.out / "diagnostics" / backend / f"{stem}.json"
+            rust_env = env | {
+                "RAYON_NUM_THREADS": "1",
+                "SLIDE_KNOCKOFF_TOL": str(tolerance),
+                "SLIDE_KNOCKOFF_MAX_ITER": str(max_iter),
+                "SLIDE_PAIRED_CACHED": "1" if args.rust_cached else "0",
+            }
             subprocess.run(
                 [
                     str(args.rust_bin), str(inputs / "z.raw"), str(xtilde_path),
                     str(inputs / "y.raw"), str(inputs / "a.raw"), str(swap_path),
                     str(n), str(p), str(a.shape[0]), str(a.shape[1]),
                     str(inputs / "lf_names.txt"), str(args.fdr), str(nlambda),
-                    str(args.rust_tol), str(args.rust_max_iter), str(rust_out),
+                    str(tolerance), str(max_iter), str(rust_out),
                 ], check=True, cwd=ROOT, env=rust_env,
             )
-        for backend in ("r", "python", *(f"rust_{n}" for n in args.rust_nlambda)):
+        for backend in ("r", "python", *rust_configs):
             current = json.loads(
                 (args.out / "diagnostics" / backend / f"{stem}.json").read_text()
             )
+        if (iteration + 1) % 100 == 0 or iteration + 1 == args.niter:
+            logging.info("%s: %d/%d paired draws fitted", args.cell_label, iteration + 1, args.niter)
             if current["xtilde_sha256"] != row["xtilde_sha256"]:
                 raise RuntimeError(f"{backend} iteration {iteration}: X-tilde hash mismatch")
             if current["swap_sha256"] != row["swap_sha256"]:
@@ -254,4 +287,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()
