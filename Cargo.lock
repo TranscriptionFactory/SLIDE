@@ -2266,6 +2266,7 @@ dependencies = [
  "slide-cv",
  "slide-data-io",
  "slide-glmnet",
+ "slide-knockoff",
  "slide-score",
  "slide-types",
 ]
