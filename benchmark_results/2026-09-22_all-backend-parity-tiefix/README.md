@@ -1,10 +1,10 @@
 # Gaussian parity backend benchmark after the tied-entry statistic fix
 
 Submitted as **SLURM job 11422548** on cluster `htc` at 11:45 EDT, September 22,
-2026. It started on `htc-n86` within seconds. Frozen source: `605557c`, whose
-Rust tree equals the fix commits `b1d0129` and `4a18274`. This record was
-written at submission time; the job had not completed. Do not treat it as a
-completed benchmark until a results readout is added.
+2026. Completed on `htc-n86` in 29 min 21 sec, exit code 0. Frozen source:
+`605557c`, whose Rust tree equals the fix commits `b1d0129` and `4a18274`.
+All 24 cells succeeded; the job verified 24 results and 60 within-cell
+comparisons. See the results readout at the end of this file.
 
 ## Purpose
 
@@ -77,3 +77,66 @@ draw, and the union design in the replay still disagrees with R on one
 near-threshold feature. Residual per-draw differences from coefficient
 convergence or entry ordering remain unexplained. Do not claim full-pipeline
 parity or complete selection stability from this run alone.
+
+## Results readout
+
+Each cell ran once, so timings carry no uncertainty estimate. Every backend
+finished faster than on September 14 except Python + R knockoffs, which was
+within 1%. Python's selections are identical in all four cells, as its seeds
+are deterministic, so the timing drop there is run-to-run variation on the
+node, not a code effect. Read the Rust speedups with that in mind.
+
+| Backend | Sep 14 parity, s | Sep 22 tie fix, s |
+| --- | ---: | ---: |
+| Python parallel | 94.82 | 79.20 |
+| Rust | 143.42 | 116.08 |
+| Rust + R knockoffs | 172.64 | 133.87 |
+| Pure R | 189.87 | 158.93 |
+| Python serial | 190.55 | 159.42 |
+| Python + R knockoffs | 1089.63 | 1099.27 |
+
+Selections in the cell that motivated the paired study, delta 0.1 and
+lambda 1.0 (marginal LFs / interactions):
+
+| Backend | Sep 14 parity | Sep 22 tie fix |
+| --- | --- | --- |
+| Rust | 11 / 42 | 10 / 21 |
+| Rust + R knockoffs | 11 / 44 | 2 / 5 |
+| Python serial and parallel | 3 / 6 | 3 / 6 |
+| Python + R knockoffs | 2 / 5 | 2 / 5 |
+| Pure R | 2 / 5 | 3 / 6 |
+
+Rust with R-generated knockoffs now selects the same LF set as Python with
+R-generated knockoffs in that cell: LF Jaccard rose from 0.182 to 1.000, and it
+is 1.000 in the delta 0.1, lambda 0.1 cell as well. In the two low-delta cells
+the two routes still differ (Jaccard 0.667 and 0.625). With the knockoff
+generator held fixed, the tie fix removed the high-delta, high-lambda
+solver-side discrepancy that the paired study isolated.
+
+Native Rust, which generates its own knockoffs, still selects 10 LFs in that
+cell against 3 for Python and pure R, and its LF Jaccard with Python fell from
+0.273 to 0.083. The remaining gap therefore sits in Rust's knockoff generation
+or draw stream, not in the statistic. Matching counts do not mean matching
+sets: Python and pure R both select 3 LFs there but share none (Jaccard 0.000).
+Pure R's selections moved in three of four cells between the two runs with no
+code change on its side, so it is not a fixed reference either. Its logs
+contain no warnings this time.
+
+The figure was rendered and visually inspected. `cell_readout.csv` holds 48
+records; `summarize_results.py` is the September 14 script with label and
+title arguments added. Regenerate from the repository root in the benchmark
+Python environment with `TMPDIR` and `MPLCONFIGDIR` under project `.tmpfiles/`:
+
+```bash
+python benchmark_results/2026-09-22_all-backend-parity-tiefix/summarize_results.py \
+  --before .tmpfiles/2026-09-14_all-backend-parity/results/benchmark_summary.json \
+  --after .tmpfiles/2026-09-22_all-backend-parity-tiefix/results/benchmark_summary.json \
+  --out-dir benchmark_results/2026-09-22_all-backend-parity-tiefix \
+  --before-label "Sep 14 parity" --after-label "Sep 22 tie fix"
+```
+
+![Runtime and selection comparison](runtime_and_selections.png)
+
+Next useful check: run native Rust against R-generated knockoffs on the paired
+designs, or compare Rust's knockoff sampler output to R's for one saved
+covariance, before attributing the remaining native-Rust gap.
