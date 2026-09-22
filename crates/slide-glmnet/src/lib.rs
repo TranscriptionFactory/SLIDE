@@ -471,7 +471,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_diagnostics(
     for j in 0..p {
         let original = entries[j];
         let knockoff = entries[p + j];
-        statistic[j] = original.max(knockoff) * (original - knockoff).signum();
+        statistic[j] = signed_max_statistic(original, knockoff);
     }
 
     Ok(KnockoffLambdasMaxDiagnostics {
@@ -586,7 +586,7 @@ pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     for j in 0..p {
         let original = entries[j];
         let knockoff = entries[p + j];
-        statistic[j] = original.max(knockoff) * (original - knockoff).signum();
+        statistic[j] = signed_max_statistic(original, knockoff);
     }
 
     Ok(Vector::from_ndarray(statistic))
@@ -891,6 +891,19 @@ fn augment_features(x: &Matrix, x_tilde: &Matrix) -> Matrix {
         )
         .unwrap_or_else(|_| unreachable!("validated matching row counts")),
     )
+}
+
+/// Signed-max knockoff statistic `max(original, knockoff) * sign(original - knockoff)`.
+///
+/// Returns exactly 0.0 when the two entry lambdas are equal. Rust's `signum`
+/// maps +0.0 to +1.0, unlike R/Python `sign(0) == 0`; entry lambdas come from a
+/// discrete grid, so exact equality is the intended tie test.
+pub fn signed_max_statistic(original: Scalar, knockoff: Scalar) -> Scalar {
+    if original == knockoff {
+        0.0
+    } else {
+        original.max(knockoff) * (original - knockoff).signum()
+    }
 }
 
 fn entry_lambda(beta: &Array2<Scalar>, lambda: &Array1<Scalar>) -> Array1<Scalar> {
@@ -1733,13 +1746,29 @@ mod tests {
     use super::{
         binomial_lasso_path, build_binomial_lambda_grid, build_lambda_grid,
         coordinate_descent_step, cross_validated_lambda, gaussian_lasso_path, stat_glmnet_coefdiff,
-        stat_glmnet_lambdadiff, stat_glmnet_lambdasmax, sweep_coordinates, BinomialLassoPathConfig,
+        signed_max_statistic, stat_glmnet_lambdadiff, stat_glmnet_lambdasmax, sweep_coordinates,
+        BinomialLassoPathConfig,
         GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
     };
     use ndarray::{arr1, arr2, Axis};
     use slide_types::{Matrix, Vector};
 
     const TOL: f64 = 1.0e-8;
+
+    #[test]
+    fn signed_max_statistic_zeroes_exact_entry_ties() {
+        assert_eq!(signed_max_statistic(0.8529598164112223, 0.8529598164112223), 0.0);
+        assert_eq!(signed_max_statistic(0.0, 0.0), 0.0);
+        assert!(signed_max_statistic(0.0, 0.0).is_sign_positive());
+        // Unequal entries keep the signed maximum and are antisymmetric under swap.
+        assert_eq!(signed_max_statistic(0.9, 0.3), 0.9);
+        assert_eq!(signed_max_statistic(0.3, 0.9), -0.9);
+        assert_eq!(signed_max_statistic(0.7, 0.0), 0.7);
+        assert_eq!(signed_max_statistic(0.0, 0.7), -0.7);
+        for (a, b) in [(0.9, 0.3), (0.7, 0.0), (0.25, 0.75)] {
+            assert_eq!(signed_max_statistic(a, b), -signed_max_statistic(b, a));
+        }
+    }
 
     #[test]
     fn gaussian_knockoff_lambda_parity_uses_fixed_ratio() {

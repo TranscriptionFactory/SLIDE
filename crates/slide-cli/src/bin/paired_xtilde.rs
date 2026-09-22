@@ -3,8 +3,9 @@ use ndarray::{Array1, Array2};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use slide_glmnet::{
-    gaussian_lasso_path_with_left_cache, stat_glmnet_lambdasmax_prebuilt_diagnostics,
-    GaussianCdWorkspace, GaussianLassoPathConfig, GlmnetFamily, HalfPreparedData,
+    gaussian_lasso_path_with_left_cache, signed_max_statistic,
+    stat_glmnet_lambdasmax_prebuilt_diagnostics, GaussianCdWorkspace, GaussianLassoPathConfig,
+    GlmnetFamily, HalfPreparedData,
 };
 use slide_types::{Matrix, Vector};
 use std::{env, fs, path::Path};
@@ -219,7 +220,7 @@ fn main() -> Result<()> {
     let mut entry_original = vec![0.0; p];
     let mut entry_knockoff = vec![0.0; p];
     let mut w: Vec<_> = (0..p)
-        .map(|j| entries[j].max(entries[p + j]) * (entries[j] - entries[p + j]).signum())
+        .map(|j| signed_max_statistic(entries[j], entries[p + j]))
         .collect();
     for j in 0..p {
         if swap_bytes[j] == 0 {
@@ -283,31 +284,140 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slide_glmnet::stat_glmnet_lambdasmax_prebuilt_cached;
 
-    #[test]
-    fn production_signed_max_reports_positive_tied_entries() {
-        let x = Matrix::from_ndarray(ndarray::array![
-            [1.0, 1.0],
-            [-1.0, 1.0],
-            [1.0, -1.0],
-            [-1.0, -1.0],
-        ]);
+    fn tie_config() -> GaussianLassoPathConfig {
+        GaussianLassoPathConfig {
+            scale_ddof: 1,
+            ..GaussianLassoPathConfig::default()
+        }
+    }
+
+    /// One original column and one knockoff column with equal |correlation| to y,
+    /// so both enter the lasso path at the same grid lambda.
+    fn tied_fixture() -> (Matrix, Matrix, Vector) {
+        let original = Matrix::from_ndarray(ndarray::array![[1.0], [-1.0], [1.0], [-1.0]]);
+        let knockoff = Matrix::from_ndarray(ndarray::array![[1.0], [1.0], [-1.0], [-1.0]]);
         let y = Vector::from_ndarray(ndarray::array![2.0, 0.0, 0.0, -2.0]);
+        (original, knockoff, y)
+    }
+
+    /// Mutually orthogonal, mean-zero Hadamard columns: original [h1, h2],
+    /// knockoff [h3, h4], response 2*h1. Only h1 ever enters the path, so the
+    /// second pair has both entry lambdas equal to zero.
+    fn orthogonal_fixture() -> (Matrix, Matrix, Vector) {
+        let h1 = [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
+        let h2 = [1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0];
+        let h3 = [1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0];
+        let h4 = [1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0];
+        let columns = |a: [f64; 8], b: [f64; 8]| {
+            let mut out = Array2::zeros((8, 2));
+            out.column_mut(0).assign(&Array1::from_vec(a.to_vec()));
+            out.column_mut(1).assign(&Array1::from_vec(b.to_vec()));
+            Matrix::from_ndarray(out)
+        };
+        let y = Vector::from_ndarray(Array1::from_vec(h1.iter().map(|v| 2.0 * v).collect()));
+        (columns(h1, h2), columns(h3, h4), y)
+    }
+
+    fn augmented(original: &Matrix, knockoff: &Matrix, swap: &[bool]) -> Matrix {
+        let (o, k) = (original.as_ndarray(), knockoff.as_ndarray());
+        let p = o.ncols();
+        let mut out = Array2::zeros((o.nrows(), 2 * p));
+        for j in 0..p {
+            let (left, right) = if swap[j] { (k.column(j), o.column(j)) } else { (o.column(j), k.column(j)) };
+            out.column_mut(j).assign(&left);
+            out.column_mut(p + j).assign(&right);
+        }
+        Matrix::from_ndarray(out)
+    }
+
+    fn uncached_statistics(original: &Matrix, knockoff: &Matrix, y: &Vector, swap: &[bool]) -> (Vec<f64>, Vec<f64>) {
         let diagnostics = stat_glmnet_lambdasmax_prebuilt_diagnostics(
-            &x,
-            1,
-            &y,
+            &augmented(original, knockoff, swap),
+            swap.len(),
+            y,
             GlmnetFamily::Gaussian,
-            &GaussianLassoPathConfig {
-                scale_ddof: 1,
-                ..GaussianLassoPathConfig::default()
-            },
+            &tie_config(),
         )
         .unwrap();
-        let entries = diagnostics.entry_lambda.as_ndarray();
+        (
+            diagnostics.entry_lambda.as_ndarray().to_vec(),
+            diagnostics.statistic.as_ndarray().to_vec(),
+        )
+    }
+
+    fn cached_statistics(original: &Matrix, knockoff: &Matrix, y: &Vector, swap: &[bool]) -> Vec<f64> {
+        let n = y.as_ndarray().len();
+        let y_mean = y.as_ndarray().mean().unwrap_or(0.0);
+        let y_centered = y.as_ndarray().mapv(|value| value - y_mean);
+        let x_cache = HalfPreparedData::new(original, &y_centered, true);
+        let tilde_cache = HalfPreparedData::new(knockoff, &y_centered, true);
+        let mut workspace = GaussianCdWorkspace::new(n, 2 * swap.len());
+        stat_glmnet_lambdasmax_prebuilt_cached(
+            &x_cache,
+            &tilde_cache,
+            swap,
+            swap.len(),
+            y,
+            y_mean,
+            &y_centered,
+            GlmnetFamily::Gaussian,
+            &tie_config(),
+            &mut workspace,
+        )
+        .unwrap()
+        .as_ndarray()
+        .to_vec()
+    }
+
+    #[test]
+    fn uncached_statistic_is_zero_for_positive_tied_entries() {
+        let (original, knockoff, y) = tied_fixture();
+        let (entries, statistic) = uncached_statistics(&original, &knockoff, &y, &[false]);
         assert!(entries[0] > 0.0);
         assert_eq!(entries[0], entries[1]);
-        // Preserve production behavior in replay; mathematical sign(0) would give W=0.
-        assert_eq!(diagnostics.statistic.as_ndarray()[0], entries[0]);
+        assert_eq!(statistic[0], 0.0);
+    }
+
+    #[test]
+    fn cached_statistic_is_zero_for_positive_tied_entries_under_both_swaps() {
+        let (original, knockoff, y) = tied_fixture();
+        assert_eq!(cached_statistics(&original, &knockoff, &y, &[false]), vec![0.0]);
+        assert_eq!(cached_statistics(&original, &knockoff, &y, &[true]), vec![0.0]);
+    }
+
+    #[test]
+    fn unequal_entries_keep_signed_max_and_swap_antisymmetry() {
+        let (original, knockoff, _) = tied_fixture();
+        // Breaking the symmetry makes the original column enter first.
+        let y = Vector::from_ndarray(ndarray::array![2.0, 0.0, 1.0, -2.0]);
+        let (entries, uncached) = uncached_statistics(&original, &knockoff, &y, &[false]);
+        assert!(entries[0] > entries[1]);
+        assert_eq!(uncached[0], entries[0]);
+        let (_, uncached_swapped) = uncached_statistics(&original, &knockoff, &y, &[true]);
+        assert_eq!(uncached_swapped[0], -uncached[0]);
+        let forward = cached_statistics(&original, &knockoff, &y, &[false]);
+        let swapped = cached_statistics(&original, &knockoff, &y, &[true]);
+        assert!((forward[0] - uncached[0]).abs() < 1e-10);
+        assert_eq!(swapped[0], -forward[0]);
+    }
+
+    #[test]
+    fn both_zero_entries_give_zero_statistic_in_both_paths() {
+        let (original, knockoff, y) = orthogonal_fixture();
+        let (entries, uncached) = uncached_statistics(&original, &knockoff, &y, &[false, false]);
+        assert!(entries[0] > 0.0);
+        assert_eq!(entries[2], 0.0);
+        assert_eq!(uncached[0], entries[0]);
+        assert_eq!((entries[1], entries[3]), (0.0, 0.0));
+        assert_eq!(uncached[1], 0.0);
+        assert!(uncached[1].is_sign_positive());
+        for swap in [[false, false], [true, true], [false, true]] {
+            let cached = cached_statistics(&original, &knockoff, &y, &swap);
+            assert_eq!(cached[1], 0.0);
+            assert!(cached[1].is_sign_positive());
+            assert_eq!(cached[0], if swap[0] { -entries[0] } else { entries[0] });
+        }
     }
 }
