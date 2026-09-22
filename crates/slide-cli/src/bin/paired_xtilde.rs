@@ -62,19 +62,10 @@ fn read_f64(path: &Path, expected: usize) -> Result<(Vec<f64>, String)> {
     Ok((values, hash))
 }
 
-fn threshold(w: &[f64], fdr: f64) -> Option<f64> {
-    let mut candidates: Vec<_> = w
-        .iter()
-        .map(|value| value.abs())
-        .filter(|value| *value > 0.0)
-        .collect();
-    candidates.sort_by(f64::total_cmp);
-    candidates.dedup();
-    candidates.into_iter().find(|candidate| {
-        let negative = w.iter().filter(|value| **value <= -*candidate).count();
-        let positive = w.iter().filter(|value| **value >= *candidate).count();
-        positive > 0 && negative as f64 / positive as f64 <= fdr
-    })
+/// Production knockoff threshold (offset 0): candidates include zero, as in R/Python.
+fn threshold(w: &[f64], fdr: f64) -> Result<Option<f64>> {
+    let statistic = Vector::from_ndarray(Array1::from_vec(w.to_vec()));
+    Ok(slide_knockoff::knockoff_threshold(&statistic, fdr, 0)?)
 }
 
 fn main() -> Result<()> {
@@ -232,7 +223,7 @@ fn main() -> Result<()> {
             w[j] = -w[j];
         }
     }
-    let cutoff = threshold(&w, fdr);
+    let cutoff = threshold(&w, fdr)?;
     let selected = cutoff.map_or_else(Vec::new, |value| {
         w.iter()
             .enumerate()
