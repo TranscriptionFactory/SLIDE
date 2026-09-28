@@ -1,0 +1,3 @@
+"seed_workers","workers_initialized_a","workers_initialized_b","identical_worker_draws","max_abs_difference"
+FALSE,0,0,FALSE,3.1395319678048
+TRUE,4,4,TRUE,0

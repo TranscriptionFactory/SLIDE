@@ -1794,6 +1794,52 @@ mod tests {
                 .unwrap_or_else(|error| panic!("write {ltrans_path}: {error}"));
             eprintln!("  emitted l_trans {}x{}", lt.nrows(), lt.ncols());
         }
+
+        // Optional saved-design sampler audit; production paths are unchanged.
+        if let Ok(directory) = std::env::var("SLIDE_S_AUDIT_DIR") {
+            let directory = Path::new(&directory);
+            let bytes = std::fs::read(directory.join("z.raw")).expect("read z.raw");
+            assert_eq!(bytes.len() % (8 * p), 0);
+            let values: Vec<f64> = bytes.chunks_exact(8)
+                .map(|value| f64::from_le_bytes(value.try_into().unwrap())).collect();
+            let x = Matrix::from_ndarray(Array2::from_shape_vec((values.len() / p, p), values).unwrap());
+            let mu = estimate_mean(&x);
+            let native_sigma = match sample_covariance(&x) {
+                Some(cov) if raw_covariance_is_usable(&cov) => cov,
+                _ => estimate_covariance(&x).unwrap(),
+            };
+            let r_s = Vector::from_ndarray(Array1::from_vec(
+                std::fs::read_to_string(directory.join("r_s.csv")).unwrap()
+                    .lines().map(|line| line.parse::<f64>().unwrap()).collect(),
+            ));
+            let native = prepare_knockoff_cache(&x, &KnockoffMethod::default()).unwrap();
+            let shared_sigma = build_knockoff_cache(&x, &mu, &sigma, &diag_s).unwrap();
+            let shared_s = build_knockoff_cache(&x, &mu, &sigma, &r_s).unwrap();
+            let noise = KnockoffCache {
+                mu_k: Matrix::from_ndarray(Array2::zeros(x.shape())),
+                l_trans: Matrix::from_ndarray(Array2::eye(p)),
+            };
+            let write_matrix = |name: &str, matrix: &Matrix| {
+                let mut bytes = Vec::new();
+                for value in matrix.as_ndarray() { bytes.extend_from_slice(&value.to_le_bytes()); }
+                std::fs::write(directory.join(name), bytes).unwrap();
+            };
+            write_matrix("rust_sigma.raw", &native_sigma);
+            for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s)] {
+                write_matrix(&format!("rust_{label}_mean.raw"), &cache.mu_k);
+                write_matrix(&format!("rust_{label}_factor.raw"), &cache.l_trans);
+            }
+            let draws: u64 = std::env::var("SLIDE_S_AUDIT_DRAWS").unwrap().parse().unwrap();
+            assert!(draws >= 2);
+            for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s), ("noise", &noise)] {
+                let mut file = std::fs::File::create(directory.join(format!("rust_{label}_draws.raw"))).unwrap();
+                for seed in 42..42 + draws {
+                    let draw = cache.sample(seed);
+                    if seed == 42 { assert_eq!(draw.as_ndarray(), cache.sample(seed).as_ndarray()); }
+                    for value in draw.as_ndarray() { file.write_all(&value.to_le_bytes()).unwrap(); }
+                }
+            }
+        }
     }
 
     #[test]
