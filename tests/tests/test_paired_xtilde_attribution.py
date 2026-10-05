@@ -2,6 +2,24 @@ import pytest
 import numpy as np
 
 from benchmarks.analyze_paired_xtilde import aggregate_selection, gaussian_kkt, jaccard, prefix_stability, validate_hashes, zero_entry_ties
+from benchmarks.replay_paired_xtilde import paired_vote_summary
+
+
+def test_paired_vote_summary_preserves_pairing_and_direction():
+    left = np.array([[1, 1], [1, 0], [0, 1], [0, 0]], dtype=bool)
+    same = paired_vote_summary(left, left)
+    assert same["frequency_delta"].tolist() == [0, 0]
+    assert same["paired_mcse"].tolist() == [0, 0]
+    right = np.array([[0, 1], [0, 0], [0, 1], [0, 0]], dtype=bool)
+    changed = paired_vote_summary(left, right)
+    assert changed["frequency_delta"].tolist() == [0.5, 0]
+    assert changed["rust_s_only"].tolist() == [2, 0]
+    assert changed["r_s_only"].tolist() == [0, 0]
+    assert changed["paired_mcse"].tolist() == pytest.approx([np.sqrt(1/12), 0])
+    with pytest.raises(ValueError, match="equal draw-by-feature"):
+        paired_vote_summary(left, right[:2])
+    with pytest.raises(ValueError, match="at least two draws"):
+        paired_vote_summary(left[:1], right[:1])
 
 
 def test_tie_counterfactual_changes_statistics_not_original_fit():

@@ -70,3 +70,20 @@ Python excludes imports from timing while Rust/R include subprocess startup;
 one pass per cell in fixed order. A future equal-work study needs paired saved
 draws, convergence diagnostics, aligned timing boundaries, repeated cells, and
 randomized backend order. No full parity benchmark has been run for this change.
+
+## Saved-draw S-only selection replay
+
+`replay_paired_xtilde.py --sampler-audit <saved-audit-root>` compares the
+sampler audit's `rust_shared_sigma_draws.raw` (Rust S) against
+`rust_shared_s_draws.raw` (R S). Both arms use Rust's Gaussian transform,
+the saved common covariance and innovations, and identical saved swap masks.
+Pass the paired study root with `--fixtures`, the design names with `--designs`,
+the verified `paired_xtilde` executable with `--rust-bin`, and a new `--out`.
+Optional `--draws N` selects a prefix for smoke checks; omit it for all draws.
+The original tie-fix replay remains the default when `--sampler-audit` is absent.
+
+The S-only mode checks input hashes, reconstructs draws from common innovations,
+repeats each arm's first fit, and checks tied-entry statistics and thresholds.
+It saves per-draw fits/W, paired vote differences and Monte Carlo SE,
+prefix/findOptIter summaries, input hashes, and a vote-difference figure.
+This diagnoses fixed-design sensitivity, not full-pipeline parity or FDR control.
