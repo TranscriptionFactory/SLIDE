@@ -149,3 +149,9 @@ Separately test reproducible per-task R streams; do not silently reinterpret
 historical nominal seeds as controlled streams or change production defaults.
 Use the [historical R aggregation](../2026-09-28_r-history/README.md) as a
 stratified variability reference, not one pooled gold-standard selection.
+
+**October 5 follow-up:** the [S-only selection replay](../2026-10-05_s-selection/README.md)
+completed this comparison. Marginal chunk 4 changes from eight selected factors
+with R S to seven with Rust S; both arms still select ten on the fixed union.
+Small S differences are therefore not selection-neutral, but the full-pipeline
+discrepancy remains unresolved.

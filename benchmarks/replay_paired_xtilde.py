@@ -172,9 +172,9 @@ def plot_sampler_votes(out):
                     fmt="none", color="#3676a3", capsize=2, linewidth=1)
         ax.axhline(0, color="black", linewidth=0.7)
         ax.tick_params(axis="x", rotation=90)
-    grid.set_axis_labels("Saved feature", "Rust-S − R-S vote frequency (pp)")
+    grid.set_axis_labels("Saved feature", "Vote difference (pp)")
     grid.set_titles("{col_name}")
-    grid.figure.suptitle("Selection sensitivity to S on fixed designs", y=1.01)
+    grid.figure.suptitle("Rust-S minus R-S selection votes on fixed designs", y=1.01)
     grid.figure.text(0.02, 0.01, "Error bars: ±2 paired Monte Carlo SE; panel y-scales differ.\n"
                      "Common covariance, innovations, swaps and Rust fitter. Not full-pipeline or FDR inference.")
     grid.figure.tight_layout(rect=(0, 0.07, 1, 1))
