@@ -1,0 +1,47 @@
+minimum votes 100
+rust_s                 n=7 Z85=76 [6.11,9.41]% ties/draw=9.72 near=[]
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z86']
+r_s                    n=8 Z85=115 [9.67,13.63]% ties/draw=10.80 near=['Z85:115']
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z85', 'Z86']
+rust_s_jitter          n=7 Z85=76 [6.11,9.41]% ties/draw=9.72 near=[]
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z86']
+rust_s_exact           n=7 Z85=79 [6.38,9.74]% ties/draw=9.73 near=[]
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z86']
+r_zero_values_jitter   n=7 Z85=77 [6.20,9.52]% ties/draw=9.72 near=[]
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z86']
+r_zero_values_exact    n=7 Z85=79 [6.38,9.74]% ties/draw=9.72 near=[]
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z86']
+r_small_values_exact   n=8 Z85=121 [10.22,14.27]% ties/draw=10.81 near=[]
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z85', 'Z86']
+r_s_exact              n=8 Z85=115 [9.67,13.63]% ties/draw=10.80 near=['Z85:115']
+    ['Z66', 'Z69', 'Z75', 'Z76', 'Z78', 'Z84', 'Z85', 'Z86']
+path_rust_s              Z85 +0.0±0.00pp | top Z66 +0.0±0.00, Z67 +0.0±0.00, Z68 +0.0±0.00 | sel_changed=0 thr_changed=21 ties_changed=0 Wrms=0.000 fOI_equal=True
+path_r_s                 Z85 +0.0±0.00pp | top Z66 +0.0±0.00, Z67 +0.0±0.00, Z68 +0.0±0.00 | sel_changed=0 thr_changed=0 ties_changed=0 Wrms=0.000 fOI_equal=True
+jitter_with_zeros        Z85 -0.3±0.17pp | top Z74 -0.3±0.17, Z84 -0.3±0.17, Z85 -0.3±0.17 | sel_changed=8 thr_changed=175 ties_changed=185 Wrms=0.009 fOI_equal=True
+jitter_without_zeros     Z85 -0.2±0.14pp | top Z84 -0.2±0.14, Z86 -0.2±0.14, Z79 -0.2±0.14 | sel_changed=3 thr_changed=170 ties_changed=14 Wrms=0.009 fOI_equal=True
+jitter_zero_interaction  Z85 -0.1±0.17pp | top Z79 +0.3±0.22, Z70 -0.2±0.14, Z83 -0.2±0.14 | 
+zeros_exact              Z85 +0.0±0.20pp | top Z72 -0.4±0.24, Z86 +0.1±0.22, Z76 -0.1±0.17 | sel_changed=14 thr_changed=177 ties_changed=275 Wrms=0.022 fOI_equal=True
+zeros_with_jitter        Z85 -0.1±0.17pp | top Z72 -0.3±0.22, Z70 -0.2±0.14, Z76 -0.2±0.14 | sel_changed=9 thr_changed=170 ties_changed=158 Wrms=0.022 fOI_equal=True
+nonzero_s_exact          Z85 -3.6±0.70pp | top Z75 -6.9±0.85, Z78 -6.0±0.80, Z87 +5.3±0.71 | sel_changed=247 thr_changed=315 ties_changed=951 Wrms=0.288 fOI_equal=False
+tiny_s_exact             Z85 -4.2±0.71pp | top Z75 -7.0±0.87, Z78 -6.2±0.83, Z87 +5.3±0.71 | sel_changed=250 thr_changed=310 ties_changed=938 Wrms=0.288 fOI_equal=False
+substantive_s_exact      Z85 +0.6±0.28pp | top Z85 +0.6±0.28, Z72 +0.4±0.40, Z77 -0.4±0.32 | sel_changed=51 thr_changed=60 ties_changed=744 Wrms=0.042 fOI_equal=True
+total                    Z85 -3.9±0.70pp | top Z75 -7.2±0.85, Z78 -6.3±0.81, Z87 +5.3±0.71 | sel_changed=248 thr_changed=315 ties_changed=953 Wrms=0.288 fOI_equal=False
+zero-set tie draws:          rust_s_tie_draws  r_s_tie_draws  rust_s_jitter_tie_draws  rust_s_exact_tie_draws  r_zero_values_jitter_tie_draws  r_zero_values_exact_tie_draws  r_small_values_exact_tie_draws  r_s_exact_tie_draws
+feature                                                                                                                                                                                                      
+Z68                   452            479                      452                     456                             446                            443                             488                  479
+Z70                    68             69                       68                      72                              66                             64                              63                   69
+Z72                   599            597                      599                     597                             595                            597                             605                  597
+Z79                   257            286                      257                     260                             256                            257                             280                  286
+Z82                   511            509                      511                     508                             511                            512                             504                  509
+zero-set votes: {'rust_s_votes': 58, 'r_s_votes': 67, 'rust_s_jitter_votes': 58, 'rust_s_exact_votes': 60, 'r_zero_values_jitter_votes': 60, 'r_zero_values_exact_votes': 64, 'r_small_values_exact_votes': 72, 'r_s_exact_votes': 67}
+rust_s: zero-set W==0 frac 0.589, W>0 frac 0.209, W<0 frac 0.202
+r_s: zero-set W==0 frac 0.598, W>0 frac 0.201, W<0 frac 0.201
+rust_s_jitter: zero-set W==0 frac 0.589, W>0 frac 0.209, W<0 frac 0.202
+rust_s_exact: zero-set W==0 frac 0.589, W>0 frac 0.209, W<0 frac 0.202
+r_zero_values_jitter: zero-set W==0 frac 0.585, W>0 frac 0.211, W<0 frac 0.204
+r_zero_values_exact: zero-set W==0 frac 0.585, W>0 frac 0.211, W<0 frac 0.204
+r_small_values_exact: zero-set W==0 frac 0.598, W>0 frac 0.206, W<0 frac 0.196
+r_s_exact: zero-set W==0 frac 0.598, W>0 frac 0.201, W<0 frac 0.201
+rust_s vs Oct-5 fits: 0 differing fits of 1000
+r_s vs Oct-5 fits: 0 differing fits of 1000
+Oct-6 full run, shared arms ['rust_s', 'r_s', 'rust_s_jitter', 'rust_s_exact', 'r_zero_values_jitter', 'r_zero_values_exact', 'r_s_exact']: 0 differing fits of 7000
