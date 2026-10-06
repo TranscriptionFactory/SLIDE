@@ -143,3 +143,7 @@ fitter. Then test whether the confirmed stage-one changes alter a rebuilt
 stage-two design. Retain the worker-seeding gap as a separate unresolved
 full-pipeline issue; neither fix production defaults nor attribute the
 historical ten-factor discrepancy to S alone from this result.
+
+**October 6 follow-up:** the [clipping/jitter decomposition](../2026-10-06_s-clip-jitter/README.md)
+attributes the marginal-4 change to the nonzero S entries. Zero clipping and
+Cholesky jitter each move votes by at most 0.4 points and leave the final set unchanged.
