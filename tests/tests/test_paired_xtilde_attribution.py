@@ -105,6 +105,8 @@ def test_contrast_summary_telescopes_and_cancels_identical_arms():
     frame = contrast_summary(selected, CONTRASTS).set_index(["contrast", "feature_index"]).frequency_delta
     parts = frame["jitter_with_zeros"] + frame["zeros_exact"] + frame["nonzero_s_exact"]
     np.testing.assert_allclose(parts, frame["total"], atol=1e-15)
+    nonzero = frame["tiny_s_exact"] + frame["substantive_s_exact"]
+    np.testing.assert_allclose(nonzero, frame["nonzero_s_exact"], atol=1e-15)
     same = {arm: selected["rust_s_exact"] for arm in selected}
     flat = contrast_summary(same, CONTRASTS)
     assert (flat.frequency_delta == 0).all() and (flat.paired_mcse == 0).all() and (flat.nonzero_draws == 0).all()
