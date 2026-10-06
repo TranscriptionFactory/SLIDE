@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 
 from benchmarks.analyze_paired_xtilde import aggregate_selection, gaussian_kkt, jaccard, prefix_stability, validate_hashes, zero_entry_ties
-from benchmarks.replay_paired_xtilde import paired_vote_summary
+from benchmarks.replay_paired_xtilde import CHOLESKY_JITTER, CONTRASTS, contrast_summary, knockoff_factor, paired_vote_summary
 
 
 def test_paired_vote_summary_preserves_pairing_and_direction():
@@ -81,3 +81,30 @@ def test_vote_aggregation_reproduces_find_opt_iter():
 )
 def test_pairwise_jaccard(left, right, expected):
     assert jaccard(left, right) == pytest.approx(expected)
+
+
+def test_knockoff_factor_keeps_zero_s_exact_and_matches_jitter_limit():
+    sigma = np.array([[1.0, 0.5, 0.2], [0.5, 1.0, 0.3], [0.2, 0.3, 1.0]])
+    s = np.array([0.4, 0.0, 0.5])
+    target, exact = knockoff_factor(sigma, s, jitter=False)
+    assert not exact[1].any() and not exact[:, 1].any() and not target[1].any()
+    np.testing.assert_allclose(exact.T @ exact, target, atol=1e-15)
+    jittered_target, jittered = knockoff_factor(sigma, s, jitter=True)
+    np.testing.assert_allclose(jittered_target - target, CHOLESKY_JITTER * np.eye(3), atol=1e-16)
+    assert jittered[1, 1] == pytest.approx(np.sqrt(CHOLESKY_JITTER))
+    np.testing.assert_allclose(jittered, exact + np.sqrt(CHOLESKY_JITTER) * np.diag([0, 1, 0]), atol=1e-9)
+    with pytest.raises(ValueError, match="non-negative"):
+        knockoff_factor(sigma, np.array([0.4, -1e-12, 0.5]), jitter=False)
+    with pytest.raises(ValueError, match="positive definite"):
+        knockoff_factor(sigma, np.full(3, 2.0), jitter=False)
+
+
+def test_contrast_summary_telescopes_and_cancels_identical_arms():
+    rng = np.random.default_rng(3)
+    selected = {arm: rng.random((50, 4)) < 0.3 for arm in {a for w in CONTRASTS.values() for a in w}}
+    frame = contrast_summary(selected, CONTRASTS).set_index(["contrast", "feature_index"]).frequency_delta
+    parts = frame["jitter_with_zeros"] + frame["zeros_exact"] + frame["nonzero_s_exact"]
+    np.testing.assert_allclose(parts, frame["total"], atol=1e-15)
+    same = {arm: selected["rust_s_exact"] for arm in selected}
+    flat = contrast_summary(same, CONTRASTS)
+    assert (flat.frequency_delta == 0).all() and (flat.paired_mcse == 0).all() and (flat.nonzero_draws == 0).all()

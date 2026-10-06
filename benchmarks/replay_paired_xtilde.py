@@ -20,6 +20,8 @@ draws equal those of the counterfactual, and the saved
 With --sampler-audit, instead compare the audit's Rust-S and R-S draws using
 the same saved swaps and Rust fitter. Covariance and innovations stay fixed;
 the old fitted baseline is not a control for these different knockoff draws.
+Adding --s-decomposition also builds Python arms from the same innovations that
+separate Rust's zero-clipped S entries from production Cholesky jitter.
 """
 
 from __future__ import annotations
@@ -87,6 +89,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-iter", type=int, default=100000)
     parser.add_argument("--sampler-audit", type=Path, help="saved sampler audit output root")
     parser.add_argument("--draws", type=int, help="sampler mode only: use this prefix of saved draws")
+    parser.add_argument("--s-decomposition", action="store_true",
+                        help="sampler mode only: add zero-clipping and Cholesky-jitter arms")
     return parser.parse_args()
 
 
@@ -155,31 +159,134 @@ def paired_vote_summary(left, right):
     })
 
 
-def plot_sampler_votes(out):
+# Production regularized_cholesky's first retry adds COVARIANCE_EPSILON * max(max diagonal, 1).
+CHOLESKY_JITTER = 1e-10
+# Python-built arm -> (S source, add production jitter). "r_zero_values" is Rust S
+# with R's values on the entries Rust clips to exactly zero.
+DECOMPOSITION_ARMS = {
+    "rust_s_jitter": ("rust", True),
+    "rust_s_exact": ("rust", False),
+    "r_zero_values_jitter": ("r_zero_values", True),
+    "r_zero_values_exact": ("r_zero_values", False),
+    "r_s_exact": ("r", False),
+}
+# Contrast -> arm weights on per-draw selection indicators. rust_s and r_s are the
+# saved Rust-built arms, so the path contrasts measure Python reconstruction only.
+CONTRASTS = {
+    "path_rust_s": {"rust_s": 1, "rust_s_jitter": -1},
+    "path_r_s": {"r_s": 1, "r_s_exact": -1},
+    "jitter_with_zeros": {"rust_s_jitter": 1, "rust_s_exact": -1},
+    "jitter_without_zeros": {"r_zero_values_jitter": 1, "r_zero_values_exact": -1},
+    "jitter_zero_interaction": {"rust_s_jitter": 1, "rust_s_exact": -1,
+                                "r_zero_values_jitter": -1, "r_zero_values_exact": 1},
+    "zeros_exact": {"rust_s_exact": 1, "r_zero_values_exact": -1},
+    "zeros_with_jitter": {"rust_s_jitter": 1, "r_zero_values_jitter": -1},
+    "nonzero_s_exact": {"r_zero_values_exact": 1, "r_s_exact": -1},
+    "total": {"rust_s_jitter": 1, "r_s_exact": -1},
+}
+
+
+def knockoff_factor(sigma, s, jitter):
+    """Return Sigma_k = 2S - S Sigma^-1 S (plus production jitter) and upper U, U.T @ U = target.
+
+    Without jitter, zero S entries give exactly zero rows and only the positive
+    block is factored, so a singular target is never forced through Cholesky.
+    """
+    if not (np.isfinite(s).all() and (s >= 0).all()):
+        raise ValueError("S must be finite and non-negative")
+    if np.linalg.eigvalsh(2 * sigma - np.diag(s))[0] <= 0:
+        raise ValueError("2 Sigma - diag(S) is not positive definite")
+    diag_s = np.diag(s)
+    target = 2 * diag_s - diag_s @ np.linalg.solve(sigma, diag_s)
+    target = (target + target.T) / 2
+    if jitter:
+        target = target + CHOLESKY_JITTER * max(target.diagonal().max(), 1.0) * np.eye(len(s))
+        return target, np.linalg.cholesky(target).T
+    if target[s == 0].any():
+        raise ValueError("Zero S entries must give exactly zero knockoff covariance rows")
+    positive = np.flatnonzero(s > 0)
+    factor = np.zeros_like(target)
+    factor[np.ix_(positive, positive)] = np.linalg.cholesky(target[np.ix_(positive, positive)]).T
+    return target, factor
+
+
+def contrast_summary(selected, contrasts):
+    """Weighted paired contrasts of per-draw selection indicators, with paired MC SE."""
+    rows = []
+    for name, weights in contrasts.items():
+        delta = sum(weight * np.asarray(selected[arm], dtype=float) for arm, weight in weights.items())
+        rows.append(pd.DataFrame({
+            "contrast": name, "feature_index": np.arange(delta.shape[1]),
+            "frequency_delta": delta.mean(axis=0),
+            "paired_mcse": delta.std(axis=0, ddof=1) / np.sqrt(len(delta)),
+            "nonzero_draws": (delta != 0).sum(axis=0),
+        }))
+    return pd.concat(rows, ignore_index=True)
+
+
+def plot_sampler_votes(out, votes=None, facet="design", name="vote_deltas.png",
+                       title="Rust-S minus R-S selection votes on fixed designs"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import seaborn as sns
 
-    votes = pd.concat([pd.read_csv(path) for path in sorted(out.glob("*/votes.csv"))])
-    votes["delta_pp"] = 100 * votes.frequency_delta
+    if votes is None:
+        votes = pd.concat([pd.read_csv(path) for path in sorted(out.glob("*/votes.csv"))])
+    votes = votes.assign(delta_pp=100 * votes.frequency_delta)
     sns.set_theme(style="whitegrid", font_scale=0.85)
-    grid = sns.relplot(data=votes, x="feature", y="delta_pp", col="design", col_wrap=2,
+    grid = sns.relplot(data=votes, x="feature", y="delta_pp", col=facet, col_wrap=2 if facet == "design" else 3,
                        height=2.7, aspect=1.7, facet_kws={"sharex": False, "sharey": False})
-    for design, ax in grid.axes_dict.items():
-        rows = votes[votes.design == design]
+    for panel, ax in grid.axes_dict.items():
+        rows = votes[votes[facet] == panel]
         ax.errorbar(rows.feature, rows.delta_pp, yerr=200*rows.paired_mcse,
                     fmt="none", color="#3676a3", capsize=2, linewidth=1)
         ax.axhline(0, color="black", linewidth=0.7)
         ax.tick_params(axis="x", rotation=90)
     grid.set_axis_labels("Saved feature", "Vote difference (pp)")
     grid.set_titles("{col_name}")
-    grid.figure.suptitle("Rust-S minus R-S selection votes on fixed designs", y=1.01)
+    grid.figure.suptitle(title, y=1.01)
     grid.figure.text(0.02, 0.01, "Error bars: ±2 paired Monte Carlo SE; panel y-scales differ.\n"
                      "Common covariance, innovations, swaps and Rust fitter. Not full-pipeline or FDR inference.")
     grid.figure.tight_layout(rect=(0, 0.07, 1, 1))
-    grid.savefig(out / "vote_deltas.png", dpi=160)
+    grid.savefig(out / name, dpi=160)
     plt.close(grid.figure)
+
+
+def decomposition_summary(out, design, metadata, selected, statistics, ties, thresholds, path_differences):
+    """Write per-arm votes and contrasts; return arm and two-arm contrast summaries."""
+    names, spec = metadata["lf_names"], metadata["spec"]
+    as_sets = {arm: [set(np.flatnonzero(row)) for row in values] for arm, values in selected.items()}
+    arms = {}
+    for arm in selected:
+        aggregate = aggregate_selection(as_sets[arm], len(names), spec)
+        arms[arm] = {"findOptIter": [names[j] for j in aggregate["findOptIter"]["selected"]],
+                     "minimum_votes": aggregate["minimum_votes"],
+                     "mean_positive_ties": float(np.mean(ties[arm], axis=0).sum()),
+                     "no_threshold_draws": sum(value is None for value in thresholds[arm])}
+    pd.DataFrame({"design": design, "feature": names,
+                  **{f"{arm}_votes": values.sum(axis=0) for arm, values in selected.items()},
+                  **{f"{arm}_tie_draws": np.sum(ties[arm], axis=0) for arm in selected}}).to_csv(out / "arms.csv", index=False)
+    contrasts = contrast_summary(selected, CONTRASTS)
+    contrasts.insert(0, "feature", np.asarray(names)[contrasts.feature_index])
+    contrasts.insert(0, "design", design)
+    contrasts.to_csv(out / "contrasts.csv", index=False)
+    summaries = {}
+    for name, weights in CONTRASTS.items():
+        summary = {"max_abs_frequency_delta": float(contrasts[contrasts.contrast == name].frequency_delta.abs().max())}
+        if len(weights) == 2:
+            left, right = sorted(weights, key=weights.get, reverse=True)
+            w_left, w_right = np.asarray(statistics[left]), np.asarray(statistics[right])
+            summary |= {"left": left, "right": right,
+                        "selection_changed_draws": int(np.any(selected[left] != selected[right], axis=1).sum()),
+                        "threshold_changed_draws": sum(a != b for a, b in zip(thresholds[left], thresholds[right])),
+                        "tie_pattern_changed_draws": int(np.any(np.asarray(ties[left]) != np.asarray(ties[right]), axis=1).sum()),
+                        "w_sign_changed_draws": int(np.any(np.sign(w_left) != np.sign(w_right), axis=1).sum()),
+                        "w_rms_delta": float(np.sqrt(np.mean((w_left - w_right) ** 2))),
+                        "findOptIter_equal": arms[left]["findOptIter"] == arms[right]["findOptIter"]}
+        summaries[name] = summary
+    return {"arms": arms, "contrasts": summaries, "path_differences": path_differences,
+            "cholesky_jitter": CHOLESKY_JITTER, "arm_definitions": DECOMPOSITION_ARMS}
 
 
 def replay_sampler_design(args, design):
@@ -222,12 +329,38 @@ def replay_sampler_design(args, design):
         np.testing.assert_allclose(draws[arm], mean + noise @ factor, rtol=1e-12, atol=1e-12)
         selections[arm], statistics[arm] = [], []
         (out / arm).mkdir()
+    path_differences, ties, thresholds = {}, {arm: [] for arm in draws}, {arm: [] for arm in draws}
+    if args.s_decomposition:
+        rust_s, r_s = (np.loadtxt(audit / f"{arm}.csv") for arm in arms)
+        zeros = rust_s == 0
+        if not zeros.any() or (r_s[zeros] <= 0).any():
+            raise ValueError(f"{design}: decomposition needs Rust S zeros where R S is positive")
+        s_sources = {"rust": rust_s, "r": r_s, "r_zero_values": np.where(zeros, r_s, rust_s)}
+        for arm, (source, jitter) in DECOMPOSITION_ARMS.items():
+            s = s_sources[source]
+            target, factor = knockoff_factor(sigma, s, jitter)
+            np.testing.assert_allclose(factor.T @ factor, target, rtol=0, atol=1e-14)
+            mean = z - (z - z.mean(axis=0)) @ np.linalg.solve(sigma, np.diag(s))
+            draws[arm] = mean + noise @ factor
+            assert np.isfinite(draws[arm]).all()
+            if not jitter:
+                # Exact zero-S knockoff columns are bitwise copies of the originals.
+                assert (draws[arm][:, :, s == 0] == z[:, s == 0]).all()
+            selections[arm], statistics[arm], ties[arm], thresholds[arm] = [], [], [], []
+            (out / arm).mkdir()
+        # Python reconstructions of the saved production arms. LAPACK and faer
+        # Cholesky differ by ~1e-11 on these targets (condition ~1e9); the fitted
+        # path contrasts show whether that rounding alone changes selections.
+        for saved, rebuilt in (("rust_s", "rust_s_jitter"), ("r_s", "r_s_exact")):
+            np.testing.assert_allclose(draws[rebuilt], draws[saved], rtol=0, atol=1e-9)
+            path_differences[saved] = {"max_abs": float(np.max(np.abs(draws[rebuilt] - draws[saved]))),
+                                       "bitwise_equal_draws": int(np.all(draws[rebuilt] == draws[saved], axis=(1, 2)).sum())}
     hashes = {str(path): sha256(path) for path in sources}
     records = []
     for i, row in enumerate(manifest):
         assert int(row["iteration"]) == i
         fits = {}
-        for arm in arms:
+        for arm in draws:
             target = out / arm / f"iter_{i:03d}.json"
             xtilde = target.with_suffix(".raw")
             draws[arm][i].astype("<f8").tofile(xtilde)
@@ -243,6 +376,8 @@ def replay_sampler_design(args, design):
                 assert all(fit[key] == repeat[key] for key in fit if key != "wall_ms")
             selections[arm].append(set(fit["selected"]))
             statistics[arm].append(fit["w"])
+            ties[arm].append([o == k and o > 0 for o, k in zip(fit["entry_original"], fit["entry_knockoff"])])
+            thresholds[arm].append(fit["threshold"])
             fits[arm] = fit
         records.append({"iteration": i, "selection_changed": fits["rust_s"]["selected"] != fits["r_s"]["selected"],
                         **{f"{arm}_threshold": fit["threshold"] for arm, fit in fits.items()},
@@ -271,6 +406,10 @@ def replay_sampler_design(args, design):
                             "fdr": metadata["fdr"], "spec": metadata["spec"]},
                "rust_bin_sha256": sha256(args.rust_bin), "source_hashes": hashes,
                "driver_sha256": sha256(Path(__file__)), "first_pair_repeat_exact": True}
+    if args.s_decomposition:
+        np.savez_compressed(out / "ties.npz", **ties)
+        summary["decomposition"] = decomposition_summary(out, design, metadata, selected, statistics,
+                                                         ties, thresholds, path_differences)
     assert all(sha256(Path(path)) == value for path, value in hashes.items())
     (out / "sampler_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
@@ -438,9 +577,12 @@ def main() -> None:
         summaries = [replay_sampler_design(args, design) for design in args.designs]
         (args.out / "sampler_summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
         plot_sampler_votes(args.out)
+        for design in args.designs if args.s_decomposition else []:
+            plot_sampler_votes(args.out, pd.read_csv(args.out / design / "contrasts.csv"), facet="contrast",
+                               name=f"{design}_contrasts.png", title=f"{design}: paired selection-vote contrasts")
         return
-    if args.draws is not None:
-        raise ValueError("--draws requires --sampler-audit")
+    if args.draws is not None or args.s_decomposition:
+        raise ValueError("--draws and --s-decomposition require --sampler-audit")
     args.out.mkdir(parents=True, exist_ok=True)
     summaries = [replay_design(args, design) for design in args.designs]
     (args.out / "replay_summary.json").write_text(
