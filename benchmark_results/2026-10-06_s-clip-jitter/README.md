@@ -17,8 +17,8 @@ full-pipeline ten-versus-two/three-factor discrepancy.
   marginal chunks have p = 22 ≤ the ASDP block size, so this is the full SDP.
   `enforce_feasibility` scales S only if `2Σ − diag(S)` falls below 1e−10.
 - On chunk 4 this gives exact zeros for Z68, Z70, Z72, Z79 and Z82; R's ASDP
-  gives 1.1e−9 to 6.5e−9 there. Twelve further Rust entries are tiny
-  (4.9e−9 to 3.6e−6) and about ten times R's values. The six substantive entries
+  gives 1.1e−9 to 6.5e−9 there. Eleven further Rust entries are tiny
+  (4.9e−9 to 3.6e−6) and 6–41 times R's values. The six substantive entries
   (Z75, Z76, Z78, Z84, Z85, Z86) agree to within 5e−5; Z85 is 0.14847 versus
   0.14846.
 - `build_knockoff_cache` forms `Σₖ = 2S − S Σ⁻¹ S`. Exact zero S entries make
@@ -92,8 +92,8 @@ path panels means no draw changed, not that population variation is zero.
 
 ## What remains coupled
 
-- `nonzero_s_exact` changes 17 entries at once: 12 tiny entries where Rust is
-  about ten times R, and 5 substantive entries that differ by at most 5e−5.
+- `nonzero_s_exact` changes 17 entries at once: 11 tiny entries where Rust is
+  6–41 times R, and 6 substantive entries that differ by at most 5e−5.
   This run does not separate them.
 - One common innovation stream and one swap-mask set. Same-draw repeatability is
   not independent simulation evidence. A different stream could move Z85 by
