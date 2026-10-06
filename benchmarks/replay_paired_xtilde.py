@@ -21,7 +21,8 @@ With --sampler-audit, instead compare the audit's Rust-S and R-S draws using
 the same saved swaps and Rust fitter. Covariance and innovations stay fixed;
 the old fitted baseline is not a control for these different knockoff draws.
 Adding --s-decomposition also builds Python arms from the same innovations that
-separate Rust's zero-clipped S entries from production Cholesky jitter.
+separate Rust's zero-clipped S entries from production Cholesky jitter, and
+Rust's tiny nonzero S entries from its substantive ones.
 """
 
 from __future__ import annotations
@@ -161,13 +162,18 @@ def paired_vote_summary(left, right):
 
 # Production regularized_cholesky's first retry adds COVARIANCE_EPSILON * max(max diagonal, 1).
 CHOLESKY_JITTER = 1e-10
+# Rust S entries below this are "small" (zero or tiny); the rest are substantive.
+# Chunk 4 has nothing between 3.6e-6 and 9.1e-3, so the split is unambiguous there.
+SMALL_S = 1e-4
 # Python-built arm -> (S source, add production jitter). "r_zero_values" is Rust S
-# with R's values on the entries Rust clips to exactly zero.
+# with R's values on the entries Rust clips to exactly zero; "r_small_values" also
+# takes R's values on the tiny nonzero entries, keeping Rust's substantive ones.
 DECOMPOSITION_ARMS = {
     "rust_s_jitter": ("rust", True),
     "rust_s_exact": ("rust", False),
     "r_zero_values_jitter": ("r_zero_values", True),
     "r_zero_values_exact": ("r_zero_values", False),
+    "r_small_values_exact": ("r_small_values", False),
     "r_s_exact": ("r", False),
 }
 # Contrast -> arm weights on per-draw selection indicators. rust_s and r_s are the
@@ -182,6 +188,9 @@ CONTRASTS = {
     "zeros_exact": {"rust_s_exact": 1, "r_zero_values_exact": -1},
     "zeros_with_jitter": {"rust_s_jitter": 1, "r_zero_values_jitter": -1},
     "nonzero_s_exact": {"r_zero_values_exact": 1, "r_s_exact": -1},
+    # nonzero_s_exact = tiny_s_exact + substantive_s_exact.
+    "tiny_s_exact": {"r_zero_values_exact": 1, "r_small_values_exact": -1},
+    "substantive_s_exact": {"r_small_values_exact": 1, "r_s_exact": -1},
     "total": {"rust_s_jitter": 1, "r_s_exact": -1},
 }
 
@@ -286,7 +295,7 @@ def decomposition_summary(out, design, metadata, selected, statistics, ties, thr
                         "findOptIter_equal": arms[left]["findOptIter"] == arms[right]["findOptIter"]}
         summaries[name] = summary
     return {"arms": arms, "contrasts": summaries, "path_differences": path_differences,
-            "cholesky_jitter": CHOLESKY_JITTER, "arm_definitions": DECOMPOSITION_ARMS}
+            "cholesky_jitter": CHOLESKY_JITTER, "small_s": SMALL_S, "arm_definitions": DECOMPOSITION_ARMS}
 
 
 def replay_sampler_design(args, design):
@@ -335,7 +344,11 @@ def replay_sampler_design(args, design):
         zeros = rust_s == 0
         if not zeros.any() or (r_s[zeros] <= 0).any():
             raise ValueError(f"{design}: decomposition needs Rust S zeros where R S is positive")
-        s_sources = {"rust": rust_s, "r": r_s, "r_zero_values": np.where(zeros, r_s, rust_s)}
+        small = rust_s < SMALL_S
+        if ((rust_s > SMALL_S / 10) & (rust_s < SMALL_S * 10)).any():
+            raise ValueError(f"{design}: Rust S has entries near the small/substantive split")
+        s_sources = {"rust": rust_s, "r": r_s, "r_zero_values": np.where(zeros, r_s, rust_s),
+                     "r_small_values": np.where(small, r_s, rust_s)}
         for arm, (source, jitter) in DECOMPOSITION_ARMS.items():
             s = s_sources[source]
             target, factor = knockoff_factor(sigma, s, jitter)
