@@ -1,0 +1,44 @@
+Failed to extract font properties from /usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf: Could not set the fontsize (invalid pixel size; error code 0x17)
+generated new fontManager
+         arm         cell  runs   k       marginal_counts  marginal_median  interaction_median  union  always  jaccard_mean
+aug19_pure_r  d=0.1 l=0.1    10  88  2 2 2 2 2 3 3 4 6 10              2.5                 3.0     11       1      0.589899
+aug19_pure_r  d=0.1 l=1.0    10  88   1 2 2 2 3 3 3 3 3 4              3.0                 7.0      4       1      0.581481
+  aug19_rust  d=0.1 l=0.1    10  88   3 3 3 3 3 3 3 4 4 4              3.0                14.0      4       3      0.883333
+  aug19_rust  d=0.1 l=1.0    10  88   2 2 2 2 2 2 2 2 3 3              2.0                10.0      3       2      0.881481
+      pure_r d=0.01 l=0.1    10 172   4 5 5 5 5 5 5 5 6 6              5.0                14.0      6       4      0.902222
+      pure_r d=0.01 l=1.0    10 172   4 4 4 5 5 5 5 5 6 6              5.0                11.0      7       4      0.810582
+      pure_r  d=0.1 l=0.1    10  88 2 3 4 4 5 5 5 8 10 10              5.0                 5.0     12       1      0.545657
+      pure_r  d=0.1 l=1.0    10  88   1 1 3 3 4 4 4 5 6 6              4.0                 8.0      6       1      0.570370
+pure_r_dorng d=0.01 l=0.1    10 172   4 5 5 5 5 5 5 5 5 5              5.0                14.0      6       4      0.900741
+pure_r_dorng d=0.01 l=1.0    10 172  2 4 4 5 5 6 6 6 6 10              5.5                11.0     10       2      0.682963
+pure_r_dorng  d=0.1 l=0.1    10  88   2 3 3 3 3 4 4 6 6 7              3.5                 4.0      8       1      0.510529
+pure_r_dorng  d=0.1 l=1.0    10  88   2 2 2 3 3 3 3 3 4 8              3.0                 7.0      8       1      0.549074
+        rust d=0.01 l=0.1    10 172   5 5 5 5 5 5 5 5 5 6              5.0                 7.0      6       5      0.966667
+        rust d=0.01 l=1.0    10 172   6 6 6 6 6 6 6 6 6 6              6.0                10.0      8       5      0.892063
+        rust  d=0.1 l=0.1    10  88   0 0 2 2 2 2 3 4 5 7              2.0                 3.0      8       0      0.327963
+        rust  d=0.1 l=1.0    10  88 2 3 3 4 4 5 5 6 10 10              4.5                10.5     14       1      0.476078
+        cell   left        right        kind  left_median  right_median  mannwhitney_p  cross_jaccard_mean
+d=0.01 l=0.1   rust       pure_r    marginal          5.0           5.0       1.000000            0.702952
+d=0.01 l=0.1   rust       pure_r interaction          7.0          14.0       0.000725            0.702952
+d=0.01 l=0.1   rust pure_r_dorng    marginal          5.0           5.0       0.528849            0.702714
+d=0.01 l=0.1   rust pure_r_dorng interaction          7.0          14.0       0.006841            0.702714
+d=0.01 l=0.1 pure_r pure_r_dorng    marginal          5.0           5.0       0.528849            0.908000
+d=0.01 l=0.1 pure_r pure_r_dorng interaction         14.0          14.0       0.739364            0.908000
+d=0.01 l=1.0   rust       pure_r    marginal          6.0           5.0       0.001505            0.600476
+d=0.01 l=1.0   rust       pure_r interaction         10.0          11.0       0.630529            0.600476
+d=0.01 l=1.0   rust pure_r_dorng    marginal          6.0           5.5       0.143140            0.529307
+d=0.01 l=1.0   rust pure_r_dorng interaction         10.0          11.0       0.435872            0.529307
+d=0.01 l=1.0 pure_r pure_r_dorng    marginal          5.0           5.5       0.481251            0.746827
+d=0.01 l=1.0 pure_r pure_r_dorng interaction         11.0          11.0       0.853428            0.746827
+ d=0.1 l=0.1   rust       pure_r    marginal          2.0           5.0       0.018543            0.257389
+ d=0.1 l=0.1   rust       pure_r interaction          3.0           5.0       0.143140            0.257389
+ d=0.1 l=0.1   rust pure_r_dorng    marginal          2.0           3.5       0.105122            0.309631
+ d=0.1 l=0.1   rust pure_r_dorng interaction          3.0           4.0       0.435872            0.309631
+ d=0.1 l=0.1 pure_r pure_r_dorng    marginal          5.0           3.5       0.247451            0.520634
+ d=0.1 l=0.1 pure_r pure_r_dorng interaction          5.0           4.0       0.481251            0.520634
+ d=0.1 l=1.0   rust       pure_r    marginal          4.5           4.0       0.352681            0.529528
+ d=0.1 l=1.0   rust       pure_r interaction         10.5           8.0       0.279861            0.529528
+ d=0.1 l=1.0   rust pure_r_dorng    marginal          4.5           3.0       0.052426            0.508112
+ d=0.1 l=1.0   rust pure_r_dorng interaction         10.5           7.0       0.063013            0.508112
+ d=0.1 l=1.0 pure_r pure_r_dorng    marginal          4.0           3.0       0.352681            0.563750
+ d=0.1 l=1.0 pure_r pure_r_dorng interaction          8.0           7.0       0.314999            0.563750
