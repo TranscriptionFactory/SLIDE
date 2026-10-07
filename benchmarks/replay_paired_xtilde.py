@@ -22,7 +22,9 @@ the same saved swaps and Rust fitter. Covariance and innovations stay fixed;
 the old fitted baseline is not a control for these different knockoff draws.
 Adding --s-decomposition also builds Python arms from the same innovations that
 separate Rust's zero-clipped S entries from production Cholesky jitter, and
-Rust's tiny nonzero S entries from its substantive ones.
+Rust's tiny nonzero S entries from its substantive ones. --native-draws instead
+compares each side's own saved draws (own covariance, S, mean, factor and
+innovations); the streams are independent, so only the swaps and fitter are shared.
 """
 
 from __future__ import annotations
@@ -92,6 +94,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--draws", type=int, help="sampler mode only: use this prefix of saved draws")
     parser.add_argument("--s-decomposition", action="store_true",
                         help="sampler mode only: add zero-clipping and Cholesky-jitter arms")
+    parser.add_argument("--native-draws", action="store_true",
+                        help="sampler mode only: compare each side's own saved draws (covariance, S, "
+                             "mean, factor and innovations) instead of the S-only arms")
     return parser.parse_args()
 
 
@@ -321,26 +326,43 @@ def replay_sampler_design(args, design):
     noise = np.fromfile(audit / "rust_noise_draws.raw", dtype="<f8").reshape(-1, n, p)[:count]
     z = np.fromfile(audit / "z.raw", dtype="<f8").reshape(n, p)
     sigma = np.loadtxt(audit / "sigma.csv", delimiter=",")
-    arms = {"rust_s": "shared_sigma", "r_s": "shared_s"}
+    # Arm -> (saved draws/mean/factor prefix, S file, innovations). Both sides use sigma.csv
+    # (R's cov(z); Rust's native covariance matches it under SLIDE_KNOCKOFF_MATCH_R_COV=1).
+    if args.native_draws:
+        arms = {"rust_native": ("rust_native", "rust_s", "rust_noise_draws.raw"),
+                "r_native": ("r", "r_s", "r_noise.raw")}
+    else:
+        arms = {"rust_s": ("rust_shared_sigma", "rust_s", "rust_noise_draws.raw"),
+                "r_s": ("rust_shared_s", "r_s", "rust_noise_draws.raw")}
+    left, right = arms
     draws, selections, statistics = {}, {}, {}
-    for arm, label in arms.items():
-        paths = [audit / f"rust_{label}_{kind}.raw" for kind in ("draws", "mean", "factor")]
-        sources += paths
+    formula_deviation = {}
+    for arm, (prefix, s_name, noise_name) in arms.items():
+        paths = [audit / f"{prefix}_{kind}.raw" for kind in ("draws", "mean", "factor")]
+        sources += paths + [audit / noise_name]
         draws[arm] = np.fromfile(paths[0], dtype="<f8").reshape(-1, n, p)[:count]
         mean = np.fromfile(paths[1], dtype="<f8").reshape(n, p)
         factor = np.fromfile(paths[2], dtype="<f8").reshape(p, p)
-        s = np.diag(np.loadtxt(audit / f"{arm}.csv"))
+        arm_noise = np.fromfile(audit / noise_name, dtype="<f8").reshape(-1, n, p)[:count]
+        s = np.diag(np.loadtxt(audit / f"{s_name}.csv"))
         sigma_inv_s = np.linalg.solve(sigma, s)
-        np.testing.assert_allclose(mean, z - (z - z.mean(axis=0)) @ sigma_inv_s, rtol=1e-9, atol=1e-10)
-        # Rust can add 1e-10 Cholesky jitter when S has zero entries.
-        np.testing.assert_allclose(factor.T @ factor, 2*s - s @ sigma_inv_s, rtol=1e-9, atol=1e-9)
+        expected_mean, expected_target = z - (z - z.mean(axis=0)) @ sigma_inv_s, 2*s - s @ sigma_inv_s
+        if args.native_draws:
+            # Production's native path solves these ill-conditioned systems its own way; record
+            # how far it lands from the formula instead of asserting a tolerance.
+            formula_deviation[arm] = {"mean_max_abs": float(np.max(np.abs(mean - expected_mean))),
+                                      "target_max_abs": float(np.max(np.abs(factor.T @ factor - expected_target)))}
+        else:
+            np.testing.assert_allclose(mean, expected_mean, rtol=1e-9, atol=1e-10)
+            # Rust can add 1e-10 Cholesky jitter when S has zero entries.
+            np.testing.assert_allclose(factor.T @ factor, expected_target, rtol=1e-9, atol=1e-9)
         assert draws[arm].shape == (count, n, p) and np.isfinite(draws[arm]).all()
-        np.testing.assert_allclose(draws[arm], mean + noise @ factor, rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(draws[arm], mean + arm_noise @ factor, rtol=1e-12, atol=1e-12)
         selections[arm], statistics[arm] = [], []
         (out / arm).mkdir()
     path_differences, ties, thresholds = {}, {arm: [] for arm in draws}, {arm: [] for arm in draws}
     if args.s_decomposition:
-        rust_s, r_s = (np.loadtxt(audit / f"{arm}.csv") for arm in arms)
+        rust_s, r_s = (np.loadtxt(audit / f"{arm}.csv") for arm in ("rust_s", "r_s"))
         zeros = rust_s == 0
         if not zeros.any() or (r_s[zeros] <= 0).any():
             raise ValueError(f"{design}: decomposition needs Rust S zeros where R S is positive")
@@ -392,13 +414,13 @@ def replay_sampler_design(args, design):
             ties[arm].append([o == k and o > 0 for o, k in zip(fit["entry_original"], fit["entry_knockoff"])])
             thresholds[arm].append(fit["threshold"])
             fits[arm] = fit
-        records.append({"iteration": i, "selection_changed": fits["rust_s"]["selected"] != fits["r_s"]["selected"],
+        records.append({"iteration": i, "selection_changed": fits[left]["selected"] != fits[right]["selected"],
                         **{f"{arm}_threshold": fit["threshold"] for arm, fit in fits.items()},
                         **{f"{arm}_selected": ";".join(map(str, fit["selected"])) for arm, fit in fits.items()}})
         if (i + 1) % 200 == 0 or i + 1 == count:
-            logging.info("%s: %d/%d S-only pairs", design, i + 1, count)
+            logging.info("%s: %d/%d %s/%s pairs", design, i + 1, count, left, right)
     selected = {arm: np.array([[j in s for j in range(p)] for s in values]) for arm, values in selections.items()}
-    votes = paired_vote_summary(selected["rust_s"], selected["r_s"])
+    votes = paired_vote_summary(selected[left], selected[right])
     votes.insert(0, "feature", metadata["lf_names"])
     votes.insert(0, "design", design)
     votes.to_csv(out / "votes.csv", index=False)
@@ -406,7 +428,7 @@ def replay_sampler_design(args, design):
     frame.to_csv(out / "draws.csv", index=False)
     w_left, w_right = (np.asarray(statistics[arm]) for arm in arms)
     np.savez_compressed(out / "w.npz", **statistics)
-    summary = {"design": design, "draws": count,
+    summary = {"design": design, "draws": count, "arms": [left, right], "formula_deviation": formula_deviation,
                "selection_changed_draws": int(frame.selection_changed.sum()),
                "w_sign_changed_draws": int(np.any(np.sign(w_left) != np.sign(w_right), axis=1).sum()),
                "w_max_abs_delta": float(np.max(np.abs(w_left - w_right))),
@@ -586,6 +608,8 @@ def main() -> None:
     )
     args = parse_args()
     if args.sampler_audit is not None:
+        if args.native_draws and args.s_decomposition:
+            raise ValueError("--native-draws and --s-decomposition are separate comparisons")
         args.out.mkdir(parents=True, exist_ok=False)
         summaries = [replay_sampler_design(args, design) for design in args.designs]
         (args.out / "sampler_summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
@@ -594,8 +618,8 @@ def main() -> None:
             plot_sampler_votes(args.out, pd.read_csv(args.out / design / "contrasts.csv"), facet="contrast",
                                name=f"{design}_contrasts.png", title=f"{design}: paired selection-vote contrasts")
         return
-    if args.draws is not None or args.s_decomposition:
-        raise ValueError("--draws and --s-decomposition require --sampler-audit")
+    if args.draws is not None or args.s_decomposition or args.native_draws:
+        raise ValueError("--draws, --s-decomposition and --native-draws require --sampler-audit")
     args.out.mkdir(parents=True, exist_ok=True)
     summaries = [replay_design(args, design) for design in args.designs]
     (args.out / "replay_summary.json").write_text(
