@@ -142,6 +142,18 @@ for (name in c("optimizeSLIDE", "runSLIDE")) {
 optimize_slide <- worker_env$optimizeSLIDE
 cat(sprintf("[pure_r] effective SLIDE workers: %d\n", opts$threads))
 
+# Stock SLIDE seeds only this process; its PSOCK workers seed themselves and take
+# tasks in varying order. SLIDE_R_DORNG_SEED=<int> re-registers the backend with
+# doRNG each time SLIDE registers doParallel, giving every %dopar% task its own
+# reproducible L'Ecuyer stream. Unset (default) keeps stock behaviour.
+dorng_seed <- Sys.getenv("SLIDE_R_DORNG_SEED", unset = "")
+if (nzchar(dorng_seed)) {
+  suppressPackageStartupMessages(library(doRNG))
+  trace("registerDoParallel", where = asNamespace("doParallel"), print = FALSE,
+        exit = bquote(doRNG::registerDoRNG(.(as.integer(dorng_seed)))))
+  cat(sprintf("[pure_r] SLIDE_R_DORNG_SEED=%s: per-task doRNG streams\n", dorng_seed))
+}
+
 out_path <- normalizePath(opts$`out-dir`, mustWork = FALSE)
 dir.create(out_path, recursive = TRUE, showWarnings = FALSE)
 
