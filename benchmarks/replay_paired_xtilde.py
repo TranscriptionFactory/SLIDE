@@ -149,19 +149,19 @@ def fit_draw(args, metadata, inputs, xtilde, swap, target):
     return json.loads(target.read_text())
 
 
-def paired_vote_summary(left, right):
-    """Rust-S minus R-S votes, with paired Monte Carlo SE (not FDR inference)."""
+def paired_vote_summary(left, right, names=("rust_s", "r_s")):
+    """Left minus right arm votes, with paired Monte Carlo SE (not FDR inference)."""
     left, right = np.asarray(left, dtype=bool), np.asarray(right, dtype=bool)
     if left.shape != right.shape or left.ndim != 2 or len(left) < 2:
         raise ValueError("Paired votes must have equal draw-by-feature shapes and at least two draws")
     delta = left.astype(float) - right.astype(float)
     return pd.DataFrame({
-        "rust_s_votes": left.sum(axis=0), "r_s_votes": right.sum(axis=0),
-        "rust_s_frequency": left.mean(axis=0), "r_s_frequency": right.mean(axis=0),
+        f"{names[0]}_votes": left.sum(axis=0), f"{names[1]}_votes": right.sum(axis=0),
+        f"{names[0]}_frequency": left.mean(axis=0), f"{names[1]}_frequency": right.mean(axis=0),
         "frequency_delta": delta.mean(axis=0),
         "paired_mcse": delta.std(axis=0, ddof=1) / np.sqrt(len(delta)),
-        "rust_s_only": (left & ~right).sum(axis=0),
-        "r_s_only": (right & ~left).sum(axis=0),
+        f"{names[0]}_only": (left & ~right).sum(axis=0),
+        f"{names[1]}_only": (right & ~left).sum(axis=0),
     })
 
 
@@ -420,7 +420,7 @@ def replay_sampler_design(args, design):
         if (i + 1) % 200 == 0 or i + 1 == count:
             logging.info("%s: %d/%d %s/%s pairs", design, i + 1, count, left, right)
     selected = {arm: np.array([[j in s for j in range(p)] for s in values]) for arm, values in selections.items()}
-    votes = paired_vote_summary(selected[left], selected[right])
+    votes = paired_vote_summary(selected[left], selected[right], (left, right))
     votes.insert(0, "feature", metadata["lf_names"])
     votes.insert(0, "design", design)
     votes.to_csv(out / "votes.csv", index=False)
