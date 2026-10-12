@@ -161,6 +161,32 @@ class TestLOVEPreprocessing:
         assert isinstance(result, dict)
 
 
+    @pytest.mark.parametrize("n,p", [(8, 30), (24, 60), (60, 45)])
+    def test_fdr_threshold_matches_statsmodels_bh_bitwise(self, n, p):
+        """Cutoff-based FDR filter keeps exactly what full BH adjustment keeps."""
+        from scipy import stats
+        from statsmodels.stats.multitest import multipletests
+        from loveslide.love_python.love.love import _apply_fdr_threshold
+
+        rng = np.random.default_rng(7)
+        factors = rng.uniform(-1, 1, (n, 3))
+        cols = np.arange(p - 1)
+        X = factors[:, cols % 3] * (cols % 4) + rng.uniform(-1, 1, (n, p - 1))
+        X = np.column_stack([X, np.ones(n)])  # constant column gives exact zeros
+        with np.errstate(invalid="ignore", divide="ignore"):
+            R = np.nan_to_num(np.corrcoef(X, rowvar=False))
+
+        for thresh in [0.0, 0.01, 0.1, 0.2, 0.5, 1.0]:
+            r_clipped = np.clip(R, -0.9999, 0.9999)
+            t_stats = r_clipped * np.sqrt(n - 2) / np.sqrt(1 - r_clipped**2)
+            p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df=n - 2))
+            _, p_adjusted, _, _ = multipletests(p_values.flatten(), alpha=thresh, method='fdr_bh')
+            expected = R * (p_adjusted.reshape(p, p) <= thresh)
+
+            actual = _apply_fdr_threshold(R, n, thresh)
+            assert np.array_equal(expected.view(np.uint64), actual.view(np.uint64)), thresh
+
+
 class TestLOVEScoring:
     """Test LOVE scoring and statistics."""
 

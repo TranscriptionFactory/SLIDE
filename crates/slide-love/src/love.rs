@@ -4,7 +4,8 @@ use crate::{
     kfold_cv_delta, re_est_pure, EstAiResult, EstOmegaError, HeteroCvError, MergeStrategy,
     NonPureError, PureHeteroError, PureHomoError, ScoreNorm, SignedPureGroup,
 };
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{parallel::prelude::*, Array1, Array2, Axis};
+use rayon::slice::ParallelSliceMut;
 use serde::{Deserialize, Serialize};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use statrs::distribution::{ContinuousCDF, StudentsT};
@@ -97,7 +98,64 @@ impl Default for LoveConfig {
     }
 }
 
+/// Reuses lambda-independent homogeneous LOVE work across calls on one input:
+/// the (FDR-filtered) covariance for every delta, and the pure-node estimate for
+/// the most recent delta. Pass one cache through a delta-major grid so each
+/// lambda only reruns the non-pure step. Results are identical to `love`.
+#[derive(Debug, Default)]
+pub struct LoveCache {
+    key: Option<(Matrix, LoveConfig)>,
+    sigma: Option<Matrix>,
+    estimate: Option<(Option<Vector>, HomogeneousEstimate)>,
+}
+
+impl LoveCache {
+    fn homogeneous(
+        &mut self,
+        x: &Matrix,
+        centered_x: &Matrix,
+        se_est: &Array1<Scalar>,
+        config: &LoveConfig,
+    ) -> Result<(&Matrix, HomogeneousEstimate), LoveError> {
+        let key = (
+            x.clone(),
+            LoveConfig {
+                delta: None,
+                lbd: Vector::from_ndarray(Array1::zeros(0)),
+                ..config.clone()
+            },
+        );
+        if self.key.as_ref() != Some(&key) {
+            *self = Self {
+                key: Some(key),
+                ..Self::default()
+            };
+        }
+        let sigma = match self.sigma {
+            Some(ref sigma) => sigma,
+            None => self.sigma.insert(homogeneous_sigma(centered_x, config)?),
+        };
+        let estimate = match &self.estimate {
+            Some((delta, estimate)) if *delta == config.delta => estimate.clone(),
+            _ => {
+                let estimate = homogeneous_estimate(centered_x, se_est, sigma, config)?;
+                self.estimate = Some((config.delta.clone(), estimate.clone()));
+                estimate
+            }
+        };
+        Ok((sigma, estimate))
+    }
+}
+
 pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
+    love_cached(x, config, &mut LoveCache::default())
+}
+
+pub fn love_cached(
+    x: &Matrix,
+    config: &LoveConfig,
+    cache: &mut LoveCache,
+) -> Result<LoveResult, LoveError> {
     let (n, p) = x.shape();
     if n < 2 || p == 0 {
         return Err(LoveError::InvalidInputShape { rows: n, cols: p });
@@ -111,12 +169,23 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
     let centered_x = Matrix::from_ndarray(center_columns(x.as_ndarray()));
     let se_est = sample_standard_deviations(centered_x.as_ndarray());
 
-    let (mut a_hat, i_hat, i_hat_part, mut c_hat, mut gamma_hat, opt_delta, sigma) =
-        if config.pure_homo {
-            homogeneous_path(&centered_x, &se_est, config)?
-        } else {
-            heterogeneous_path(&centered_x, config)?
-        };
+    // A delta grid inside one call selects delta by random CV, so only single-delta
+    // homogeneous calls are deterministic and safe to reuse.
+    let cacheable =
+        config.pure_homo && config.delta.as_ref().map_or(true, |delta| delta.len() <= 1);
+    let owned_sigma;
+    let (sigma, (mut a_hat, i_hat, i_hat_part, mut c_hat, mut gamma_hat, opt_delta)) = if cacheable
+    {
+        cache.homogeneous(x, &centered_x, &se_est, config)?
+    } else if config.pure_homo {
+        owned_sigma = homogeneous_sigma(&centered_x, config)?;
+        let estimate = homogeneous_estimate(&centered_x, &se_est, &owned_sigma, config)?;
+        (&owned_sigma, estimate)
+    } else {
+        let (a, i, i_part, c, gamma, delta, sigma) = heterogeneous_path(&centered_x, config)?;
+        owned_sigma = sigma;
+        (&owned_sigma, (a, i, i_part, c, gamma, delta))
+    };
 
     let pure_set = i_hat
         .iter()
@@ -138,7 +207,7 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
         (i_hat_part.clone(), None)
     } else {
         estimate_non_pure_rows(
-            &sigma,
+            sigma,
             &centered_x,
             &mut a_hat,
             &c_hat,
@@ -181,22 +250,37 @@ pub fn love(x: &Matrix, config: &LoveConfig) -> Result<LoveResult, LoveError> {
     })
 }
 
-fn homogeneous_path(
+/// Pure-node estimate of the homogeneous path: A, pure indices, pure groups,
+/// C, Gamma for pure rows and the selected delta. None of it depends on lambda.
+type HomogeneousEstimate = (
+    Matrix,
+    Vec<usize>,
+    Vec<SignedPureGroup>,
+    Matrix,
+    Array1<Scalar>,
+    Scalar,
+);
+
+/// Sample covariance with the optional FDR filter; independent of delta and lambda.
+fn homogeneous_sigma(x: &Matrix, config: &LoveConfig) -> Result<Matrix, LoveError> {
+    let sigma = sample_covariance(x.as_ndarray());
+    let sigma = if let Some(thresh_fdr) = config.thresh_fdr {
+        let std = sigma.diag().mapv(|value: Scalar| value.max(0.0).sqrt());
+        let correlation = correlation_from_covariance(&sigma);
+        drop(sigma);
+        apply_fdr_to_covariance(correlation, x.nrows(), thresh_fdr, &std)?
+    } else {
+        sigma
+    };
+    Ok(Matrix::from_ndarray(sigma))
+}
+
+fn homogeneous_estimate(
     x: &Matrix,
     se_est: &Array1<Scalar>,
+    sigma: &Matrix,
     config: &LoveConfig,
-) -> Result<
-    (
-        Matrix,
-        Vec<usize>,
-        Vec<SignedPureGroup>,
-        Matrix,
-        Array1<Scalar>,
-        Scalar,
-        Matrix,
-    ),
-    LoveError,
-> {
+) -> Result<HomogeneousEstimate, LoveError> {
     let scale = ((x.nrows().max(x.ncols()) as Scalar).ln() / (x.nrows() as Scalar)).sqrt();
     let delta_grid = config
         .delta
@@ -213,24 +297,8 @@ fn homogeneous_path(
         config.rep_cv,
     )?;
 
-    let sigma = Matrix::from_ndarray(sample_covariance(x.as_ndarray()));
-    let sigma = if let Some(thresh_fdr) = config.thresh_fdr {
-        let std = sigma
-            .as_ndarray()
-            .diag()
-            .mapv(|value: Scalar| value.max(0.0).sqrt());
-        let correlation = correlation_from_covariance(sigma.as_ndarray());
-        Matrix::from_ndarray(apply_fdr_to_covariance(
-            &correlation,
-            x.nrows(),
-            thresh_fdr,
-            &std,
-        )?)
-    } else {
-        sigma
-    };
     let (result_ai, opt_delta) = resolve_homogeneous_estimate(
-        &sigma,
+        sigma,
         x,
         &se_vector,
         &delta_grid,
@@ -245,7 +313,7 @@ fn homogeneous_path(
         return Err(LoveError::NoPureVariables);
     }
 
-    let c_hat = est_c(&sigma, &result_ai.ai, config.diagonal)?;
+    let c_hat = est_c(sigma, &result_ai.ai, config.diagonal)?;
     let pure_vec = result_ai.pure_vec.clone();
     let a_i = result_ai.ai.as_ndarray().select(Axis(0), &pure_vec);
     let sigma_i = sigma
@@ -266,7 +334,6 @@ fn homogeneous_path(
         c_hat,
         gamma_hat,
         opt_delta,
-        sigma,
     ))
 }
 
@@ -351,9 +418,10 @@ fn heterogeneous_path(
         .diag()
         .mapv(|value: Scalar| value.max(0.0).sqrt());
     let (sigma, r_hat) = if let Some(thresh_fdr) = config.thresh_fdr {
-        let filtered_r = apply_fdr_threshold(&r_hat_raw, x.nrows(), thresh_fdr)?;
+        drop(sigma_raw);
+        let filtered_r = apply_fdr_threshold(r_hat_raw, x.nrows(), thresh_fdr)?;
         (
-            Matrix::from_ndarray(covariance_from_correlation(&filtered_r, &std)),
+            Matrix::from_ndarray(covariance_from_correlation(filtered_r.clone(), &std)),
             Matrix::from_ndarray(filtered_r),
         )
     } else {
@@ -582,76 +650,71 @@ fn correlation_from_covariance(covariance: &Array2<Scalar>) -> Array2<Scalar> {
 }
 
 fn covariance_from_correlation(
-    correlation: &Array2<Scalar>,
+    mut correlation: Array2<Scalar>,
     std: &Array1<Scalar>,
 ) -> Array2<Scalar> {
-    let mut covariance = correlation.to_owned();
-    for row in 0..covariance.nrows() {
-        for col in 0..covariance.ncols() {
-            covariance[(row, col)] = correlation[(row, col)] * std[row] * std[col];
-        }
+    for ((row, col), value) in correlation.indexed_iter_mut() {
+        *value = *value * std[row] * std[col];
     }
-    covariance
+    correlation
 }
 
 fn apply_fdr_to_covariance(
-    correlation: &Array2<Scalar>,
+    correlation: Array2<Scalar>,
     sample_size: usize,
     thresh_fdr: Scalar,
     std: &Array1<Scalar>,
 ) -> Result<Array2<Scalar>, LoveError> {
     let filtered = apply_fdr_threshold(correlation, sample_size, thresh_fdr)?;
-    Ok(covariance_from_correlation(&filtered, std))
+    Ok(covariance_from_correlation(filtered, std))
 }
 
+/// Benjamini-Hochberg filter over all p^2 entries, as in R's `threshSigma`.
+///
+/// Adjusted p-values are monotone in rank, so the kept entries are exactly those
+/// with p-value at or below the largest kept sorted p-value. Finding that cutoff
+/// needs one sorted p^2 buffer instead of index, adjusted and mask buffers; the
+/// p-values and BH candidates use the same arithmetic as the full adjustment.
 fn apply_fdr_threshold(
-    correlation: &Array2<Scalar>,
+    mut correlation: Array2<Scalar>,
     sample_size: usize,
     thresh_fdr: Scalar,
 ) -> Result<Array2<Scalar>, LoveError> {
     let degrees_of_freedom = (sample_size as Scalar) - 2.0;
     if degrees_of_freedom <= 0.0 {
-        return Ok(correlation.to_owned());
+        return Ok(correlation);
     }
 
     let student_t = StudentsT::new(0.0, 1.0, degrees_of_freedom)
         .map_err(|_| LoveError::InvalidFdrSampleSize { sample_size })?;
-    let mut indexed_p = correlation
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, corr)| {
-            let clipped = corr.clamp(-0.9999, 0.9999);
-            let t_stat = clipped * degrees_of_freedom.sqrt() / (1.0 - (clipped * clipped)).sqrt();
-            let p_value = 2.0 * (1.0 - student_t.cdf(t_stat.abs()));
-            (index, p_value)
-        })
-        .collect::<Vec<_>>();
-    indexed_p.sort_by(|(_, left), (_, right)| left.total_cmp(right));
+    let p_value = |corr: Scalar| {
+        let clipped = corr.clamp(-0.9999, 0.9999);
+        let t_stat = clipped * degrees_of_freedom.sqrt() / (1.0 - (clipped * clipped)).sqrt();
+        2.0 * (1.0 - student_t.cdf(t_stat.abs()))
+    };
 
-    let total = indexed_p.len();
-    let mut adjusted_sorted = vec![1.0; total];
+    let mut sorted_p: Vec<Scalar> = correlation.par_iter().map(|&corr| p_value(corr)).collect();
+    sorted_p.par_sort_unstable_by(|left, right| left.total_cmp(right));
+
+    let total = sorted_p.len();
     let mut running_min = Scalar::INFINITY;
+    let mut cutoff = None;
     for sorted_index in (0..total).rev() {
-        let (_, p_value) = indexed_p[sorted_index];
         let rank = sorted_index + 1;
-        let candidate = ((total as Scalar) / (rank as Scalar)) * p_value;
+        let candidate = ((total as Scalar) / (rank as Scalar)) * sorted_p[sorted_index];
         running_min = running_min.min(candidate);
-        adjusted_sorted[sorted_index] = running_min.min(1.0);
-    }
-
-    let mut keep_mask = vec![false; total];
-    for (sorted_index, (original_index, _)) in indexed_p.iter().enumerate() {
-        keep_mask[*original_index] = adjusted_sorted[sorted_index] <= thresh_fdr;
-    }
-
-    let mut filtered = correlation.to_owned();
-    for (entry, keep) in filtered.iter_mut().zip(keep_mask.into_iter()) {
-        if !keep {
-            *entry = 0.0;
+        if running_min.min(1.0) <= thresh_fdr {
+            cutoff = Some(sorted_p[sorted_index]);
+            break;
         }
     }
-    Ok(filtered)
+    drop(sorted_p);
+
+    correlation.par_mapv_inplace(|corr| match cutoff {
+        Some(cutoff) if p_value(corr).total_cmp(&cutoff).is_le() => corr,
+        _ => 0.0,
+    });
+    Ok(correlation)
 }
 
 fn diagonal_of_product(matrix: &Array2<Scalar>) -> Array1<Scalar> {
@@ -724,6 +787,50 @@ mod tests {
         for value in result.gamma.as_ndarray() {
             assert!(*value >= 0.0);
         }
+    }
+
+    #[test]
+    fn love_cached_over_grid_matches_uncached_love() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(11);
+        let (n, p) = (60, 24);
+        let factors = ndarray::Array2::from_shape_fn((n, 3), |_| rng.gen_range(-1.0..1.0));
+        let x = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((n, p), |(row, col)| {
+            let loading = if col < 12 { 1.0 } else { 0.5 };
+            loading * factors[(row, col % 3)] + 0.3 * rng.gen_range(-1.0..1.0)
+        }));
+        let shifted_x = Matrix::from_ndarray(x.as_ndarray().mapv(|value| value * 1.5 + 0.1));
+        let base = LoveConfig {
+            pure_homo: true,
+            rep_cv: 1,
+            thresh_fdr: Some(0.2),
+            ..LoveConfig::default()
+        };
+
+        let mut cache = super::LoveCache::default();
+        let mut successes = 0;
+        // Delta-major grid as in slide-core, then a new input and a config change
+        // that must invalidate the cache.
+        for (input, thresh_fdr) in [(&x, Some(0.2)), (&shifted_x, Some(0.2)), (&x, None)] {
+            for delta in [0.05, 0.1, 0.3] {
+                for lambda in [0.1, 0.5, 1.0] {
+                    let config = LoveConfig {
+                        delta: Some(Vector::from_ndarray(arr1(&[delta]))),
+                        lbd: Vector::from_ndarray(arr1(&[lambda])),
+                        thresh_fdr,
+                        ..base.clone()
+                    };
+                    let cached = super::love_cached(input, &config, &mut cache);
+                    assert_eq!(
+                        cached,
+                        love(input, &config),
+                        "delta={delta} lambda={lambda}"
+                    );
+                    successes += usize::from(cached.is_ok_and(|result| result.k > 0));
+                }
+            }
+        }
+        assert!(successes > 0);
     }
 
     #[test]
@@ -852,7 +959,7 @@ mod tests {
     fn apply_fdr_threshold_zeroes_off_diagonal_entries_at_zero_cutoff() {
         let correlation = arr2(&[[1.0, 0.8, -0.4], [0.8, 1.0, 0.3], [-0.4, 0.3, 1.0]]);
 
-        let filtered = apply_fdr_threshold(&correlation, 20, 0.0)
+        let filtered = apply_fdr_threshold(correlation, 20, 0.0)
             .unwrap_or_else(|error| panic!("apply_fdr_threshold failed: {error}"));
 
         assert_eq!(filtered.diag().to_owned(), arr1(&[1.0, 1.0, 1.0]));
@@ -862,6 +969,78 @@ mod tests {
         assert_eq!(filtered[(2, 0)], 0.0);
         assert_eq!(filtered[(1, 2)], 0.0);
         assert_eq!(filtered[(2, 1)], 0.0);
+    }
+
+    /// The original full BH adjustment (index, adjusted and mask buffers), kept as
+    /// the reference for the cutoff-based filter.
+    fn reference_fdr_threshold(
+        correlation: &ndarray::Array2<f64>,
+        sample_size: usize,
+        thresh_fdr: f64,
+    ) -> ndarray::Array2<f64> {
+        use statrs::distribution::{ContinuousCDF, StudentsT};
+        let degrees_of_freedom = (sample_size as f64) - 2.0;
+        let student_t = StudentsT::new(0.0, 1.0, degrees_of_freedom).unwrap();
+        let mut indexed_p = correlation
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, corr)| {
+                let clipped = corr.clamp(-0.9999, 0.9999);
+                let t_stat =
+                    clipped * degrees_of_freedom.sqrt() / (1.0 - (clipped * clipped)).sqrt();
+                (index, 2.0 * (1.0 - student_t.cdf(t_stat.abs())))
+            })
+            .collect::<Vec<_>>();
+        indexed_p.sort_by(|(_, left), (_, right)| left.total_cmp(right));
+        let total = indexed_p.len();
+        let mut adjusted_sorted = vec![1.0; total];
+        let mut running_min = f64::INFINITY;
+        for sorted_index in (0..total).rev() {
+            let candidate =
+                ((total as f64) / ((sorted_index + 1) as f64)) * indexed_p[sorted_index].1;
+            running_min = running_min.min(candidate);
+            adjusted_sorted[sorted_index] = running_min.min(1.0);
+        }
+        let mut filtered = correlation.to_owned();
+        let flat = filtered.as_slice_mut().unwrap();
+        for (sorted_index, (original_index, _)) in indexed_p.iter().enumerate() {
+            if adjusted_sorted[sorted_index] > thresh_fdr {
+                flat[*original_index] = 0.0;
+            }
+        }
+        filtered
+    }
+
+    #[test]
+    fn apply_fdr_threshold_matches_full_bh_adjustment_bitwise() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        for (n, p) in [(8, 30), (24, 60), (60, 45)] {
+            // Correlated blocks give a range of p-values; a constant column gives
+            // exact zeros; symmetry gives tied pairs throughout.
+            let factors = ndarray::Array2::from_shape_fn((n, 3), |_| rng.gen_range(-1.0..1.0));
+            let x = ndarray::Array2::from_shape_fn((n, p), |(row, col)| {
+                if col == p - 1 {
+                    1.0
+                } else {
+                    factors[(row, col % 3)] * (col % 4) as f64 + rng.gen_range(-1.0..1.0)
+                }
+            });
+            let correlation = super::correlation_from_covariance(&super::sample_covariance(&x));
+            for thresh in [0.0, 0.01, 0.1, 0.2, 0.5, 1.0] {
+                let expected = reference_fdr_threshold(&correlation, n, thresh);
+                let actual = apply_fdr_threshold(correlation.clone(), n, thresh)
+                    .unwrap_or_else(|error| panic!("apply_fdr_threshold failed: {error}"));
+                assert!(
+                    expected
+                        .iter()
+                        .zip(actual.iter())
+                        .all(|(e, a)| e.to_bits() == a.to_bits()),
+                    "n={n} p={p} thresh={thresh}"
+                );
+            }
+        }
     }
 
     #[test]

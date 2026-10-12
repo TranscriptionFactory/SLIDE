@@ -10,7 +10,9 @@ pub use slide_knockoff::{KnockoffBackend, VotingResult};
 use slide_knockoff::{
     select_short_freq, KnockoffConfig, KnockoffError, KnockoffMethod, KnockoffStatistic,
 };
-use slide_love::{compute_z_map, love, LoveConfig, LoveError, LoveResult, ZMatrixError};
+use slide_love::{
+    compute_z_map, love_cached, LoveCache, LoveConfig, LoveError, LoveResult, ZMatrixError,
+};
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use std::collections::HashSet;
 use std::fs::File;
@@ -639,6 +641,8 @@ pub fn optimize_slide_resume(
     let total_grid = grid.len();
     validate_checkpoint_evaluations(&checkpoint.evaluations, &grid)?;
 
+    // The grid is delta-major, so one cache serves every lambda of a delta.
+    let mut love_cache = LoveCache::default();
     for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
     {
         match run_slide_evaluation(
@@ -647,6 +651,7 @@ pub fn optimize_slide_resume(
             delta,
             lambda,
             &checkpoint.config,
+            &mut love_cache,
             None,
             None,
             grid_index,
@@ -770,6 +775,8 @@ pub fn optimize_slide_with_checkpoint_progress(
 
     let live_path = progress_path.map(|_| path.with_extension("live.json"));
 
+    // The grid is delta-major, so one cache serves every lambda of a delta.
+    let mut love_cache = LoveCache::default();
     for (grid_index, &(delta, lambda)) in grid.iter().enumerate().skip(checkpoint.evaluations.len())
     {
         match run_slide_evaluation(
@@ -778,6 +785,7 @@ pub fn optimize_slide_with_checkpoint_progress(
             delta,
             lambda,
             &checkpoint.config,
+            &mut love_cache,
             progress_path,
             live_path.as_deref(),
             grid_index,
@@ -954,6 +962,7 @@ fn run_slide_evaluation(
     delta: Scalar,
     lambda: Scalar,
     config: &OptimizeSlideConfig,
+    love_cache: &mut LoveCache,
     progress_path: Option<&Path>,
     live_path: Option<&Path>,
     grid_index: usize,
@@ -974,7 +983,7 @@ fn run_slide_evaluation(
     love_config.delta = Some(Vector::from_ndarray(Array1::from_vec(vec![delta])));
     love_config.lbd = Vector::from_ndarray(Array1::from_vec(vec![lambda]));
 
-    let love_result = love(standardized_x, &love_config)?;
+    let love_result = love_cached(standardized_x, &love_config, love_cache)?;
     let love_elapsed = eval_start.elapsed();
     eprintln!("[SLIDE timing] LOVE: {:.2}s (K={})", love_elapsed.as_secs_f64(), love_result.k);
 

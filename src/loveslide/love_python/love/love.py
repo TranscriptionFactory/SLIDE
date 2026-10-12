@@ -40,30 +40,41 @@ def _apply_fdr_threshold(corr_matrix: np.ndarray, n: int, thresh_fdr: float) -> 
     np.ndarray
         FDR-thresholded correlation matrix
     """
-    p = corr_matrix.shape[0]
-    
-    # Convert correlations to t-statistics
-    # Clip to avoid division by zero or sqrt of negative
-    r_clipped = np.clip(corr_matrix, -0.9999, 0.9999)
-    t_stats = r_clipped * np.sqrt(n - 2) / np.sqrt(1 - r_clipped**2)
-    
-    # Compute two-tailed p-values
-    p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df=n - 2))
-    
-    # Apply Benjamini-Hochberg FDR correction
-    # Flatten p-values, adjust, then reshape
-    p_flat = p_values.flatten()
-    from statsmodels.stats.multitest import multipletests
-    _, p_adjusted, _, _ = multipletests(p_flat, alpha=thresh_fdr, method='fdr_bh')
-    p_adjusted = p_adjusted.reshape(p, p)
-    
-    # Create mask: keep entries with adjusted p-value <= thresh_fdr
-    keep_mask = p_adjusted <= thresh_fdr
-    
-    # Apply mask to correlation matrix
-    thresholded = corr_matrix * keep_mask
-    
-    return thresholded
+    # Same arithmetic as statsmodels multipletests(method='fdr_bh') on all p^2
+    # entries, without its argsort, corrected and reject buffers. Adjusted
+    # p-values are monotone in rank, so the kept entries are exactly those with
+    # p-value at or below the largest kept sorted p-value.
+    p_values = np.empty_like(corr_matrix, dtype=float)
+    rows_per_chunk = max(1, (1 << 22) // max(1, corr_matrix.shape[1]))
+    for start in range(0, corr_matrix.shape[0], rows_per_chunk):
+        # Clip to avoid division by zero or sqrt of negative
+        r_clipped = np.clip(corr_matrix[start:start + rows_per_chunk], -0.9999, 0.9999)
+        t_stats = r_clipped * np.sqrt(n - 2) / np.sqrt(1 - r_clipped**2)
+        p_values[start:start + rows_per_chunk] = 2 * (1 - stats.t.cdf(np.abs(t_stats), df=n - 2))
+
+    sorted_p = np.sort(p_values, axis=None)
+    nobs = sorted_p.size
+    cutoff = None
+    # NaN p-values propagate through the corrected minimum, so nothing is kept.
+    if nobs and not np.isnan(sorted_p[-1]):
+        running_min = np.inf
+        chunk = 1 << 22
+        for stop in range(nobs, 0, -chunk):
+            start = max(0, stop - chunk)
+            ecdffactor = np.arange(start + 1, stop + 1) / float(nobs)
+            corrected = np.minimum.accumulate((sorted_p[start:stop] / ecdffactor)[::-1])[::-1]
+            corrected = np.minimum(corrected, running_min)
+            running_min = corrected[0]
+            corrected[corrected > 1] = 1
+            kept = np.nonzero(corrected <= thresh_fdr)[0]
+            if kept.size:
+                cutoff = sorted_p[start + kept[-1]]
+                break
+    del sorted_p
+
+    keep_mask = p_values <= cutoff if cutoff is not None else np.zeros(p_values.shape, dtype=bool)
+    del p_values
+    return corr_matrix * keep_mask
 
 
 def LOVE(X: np.ndarray, lbd: float = 0.5, mu: float = 0.5,
