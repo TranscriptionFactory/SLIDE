@@ -103,8 +103,15 @@ ENV=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pi
 R_DEPS=/vast/djishnu/Aaron/.tmpfiles/20260902_r-generated-knockoff-backend-evaluation/R-library
 sbatch --output="$RUN/logs/preflight-%j.out" preflight.sbatch "$RUN" "$ENV" "$R_DEPS"
 sbatch --output="$RUN/logs/%A_%a.out" run.sbatch "$RUN" "$ENV" "$R_DEPS"
-python analyze.py "$RUN/results" <out> benchmark_results/20260819_high-delta-seeds
+python benchmarks/analyze_seed_replicates.py <out> --arm rust=rust:$RUN/results/rust \
+    --arm pure_r=pure_r:$RUN/results/pure_r --arm pure_r_dorng=pure_r:$RUN/results/pure_r_dorng \
+    --test rust:pure_r --test rust:pure_r_dorng --test pure_r:pure_r_dorng
 ```
+
+The analysis script moved to `benchmarks/analyze_seed_replicates.py` (generalized for
+the 2026-10-12 backend replicates). It reproduces this directory's tables exactly. The
+`aug19_*` context rows came from the original `analyze.py` (git history); the general
+script does not load them.
 
 - `R-dorng/` holds doRNG 1.8.6.3 and rngtools 1.5.2, installed from CRAN.
 - **Preflight** (`preflight.log`): two doRNG runs give identical selection

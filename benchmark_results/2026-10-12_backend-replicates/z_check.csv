@@ -1,0 +1,21 @@
+cell,arm,max_abs_z_diff
+d=0.01 l=0.1,pure_r,0.0
+d=0.01 l=0.1,pure_r_pooled,0.0
+d=0.01 l=0.1,pure_r_prior,0.0
+d=0.01 l=0.1,python,9.523715149839518e-12
+d=0.01 l=0.1,rust,9.693579272607167e-12
+d=0.01 l=1.0,pure_r,0.0
+d=0.01 l=1.0,pure_r_pooled,0.0
+d=0.01 l=1.0,pure_r_prior,0.0
+d=0.01 l=1.0,python,1.1190159909801878e-11
+d=0.01 l=1.0,rust,1.149214057249992e-11
+d=0.1 l=0.1,pure_r,0.0
+d=0.1 l=0.1,pure_r_pooled,0.0
+d=0.1 l=0.1,pure_r_prior,0.0
+d=0.1 l=0.1,python,4.687805699177261e-11
+d=0.1 l=0.1,rust,4.531841568677919e-11
+d=0.1 l=1.0,pure_r,0.0
+d=0.1 l=1.0,pure_r_pooled,0.0
+d=0.1 l=1.0,pure_r_prior,0.0
+d=0.1 l=1.0,python,1.5901946426311042e-11
+d=0.1 l=1.0,rust,9.659828492658562e-12
