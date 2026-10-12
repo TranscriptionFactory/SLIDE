@@ -17,7 +17,7 @@ pub use hetero_cv::{
     kfold_cv_delta, lp_score, score_mat, HeteroCvError, KfoldCvDeltaResult, ScoreMatResult,
     ScoreNorm,
 };
-pub use love::{love, LoveConfig, LoveError, LoveResult, NonPureMethod};
+pub use love::{love, love_cached, LoveCache, LoveConfig, LoveError, LoveResult, NonPureMethod};
 pub use nonpure::{dantzig, est_aj_dant, est_aj_inv, est_y, lp, NonPureError};
 pub use prescreen::{screen_x, ScreenXCvResult, ScreenXError, ScreenXOutput};
 pub use pure_hetero::{
