@@ -59,7 +59,7 @@ def is_posdef(A: np.ndarray, tol: float = 1e-9, **kwargs) -> bool:
     A : array-like of shape (n, n)
         Symmetric matrix to test.
     tol : float, default=1e-9
-        Tolerance for eigenvalue positivity.
+        Tolerance; as in R, the smallest eigenvalue must exceed 10 * tol.
 
     Returns
     -------
@@ -82,7 +82,8 @@ def is_posdef(A: np.ndarray, tol: float = 1e-9, **kwargs) -> bool:
             # Fallback to dense computation
             lambda_min = np.min(linalg.eigvalsh(A))
 
-    return lambda_min > tol
+    # knockoff:::is_posdef compares against tol * 10, not tol.
+    return lambda_min > tol * 10
 
 
 def canonical_svd(X: np.ndarray, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

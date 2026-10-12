@@ -40,7 +40,9 @@ def test_asdp_diag_s_matches_high_delta_r_fixture():
 
     diag_s = create_solve_asdp(sigma)
 
-    assert _relative_error(diag_s, fixture["r_diag_s"]) <= 1e-5
+    # Matching Rdsdp's SDPA file and R's is_posdef rule gives ~1e-12; either
+    # mismatch alone leaves ~1e-7, enough to move near-zero s entries.
+    assert _relative_error(diag_s, fixture["r_diag_s"]) <= 1e-10
 
 
 def test_low_n_cache_uses_corpcor_and_never_ledoit_wolf():
