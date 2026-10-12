@@ -193,7 +193,7 @@ def create_solve_equi(Sigma: np.ndarray, **kwargs) -> np.ndarray:
 def create_solve_sdp(
     Sigma: np.ndarray,
     gaptol: float = 1e-6,
-    maxit: int = 10000,
+    maxit: int = 1000,
     verbose: bool = False,
     **kwargs
 ) -> np.ndarray:
@@ -214,7 +214,7 @@ def create_solve_sdp(
         Positive-definite covariance matrix.
     gaptol : float, default=1e-6
         Tolerance for duality gap. Matches R knockoff package default.
-    maxit : int, default=10000
+    maxit : int, default=1000
         Maximum number of iterations for the solver.
     verbose : bool, default=False
         Whether to display progress.
@@ -511,7 +511,7 @@ def create_solve_asdp(
     Sigma: np.ndarray,
     max_size: int = 500,
     gaptol: float = 1e-6,
-    maxit: int = 10000,
+    maxit: int = 1000,
     verbose: bool = False,
     **kwargs
 ) -> np.ndarray:
@@ -529,7 +529,7 @@ def create_solve_asdp(
         Maximum size of each block.
     gaptol : float, default=1e-6
         Tolerance for duality gap. Matches R knockoff package default.
-    maxit : int, default=10000
+    maxit : int, default=1000
         Maximum number of iterations.
     verbose : bool, default=False
         Whether to display progress.

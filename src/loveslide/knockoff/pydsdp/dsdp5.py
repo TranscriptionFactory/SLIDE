@@ -66,6 +66,8 @@ def dsdp(A, b, c, K, OPTIONS=None):
 
     # Solve the problem with DSDP5
     [y, X, STATS] = dsdp_readsdpa(data_filename, options_filename)
+    # The extension returns -y for the unnegated (Rdsdp) file convention.
+    y = -array(y)
 
     if path.isfile(data_filename):
         remove(data_filename)

@@ -17,6 +17,17 @@ from scipy import sparse
 from numpy import matrix
 
 
+# Write the same file as Rdsdp's sedumi2sdpa: b and A unnegated (pydsdp
+# negated both, an equivalent problem that DSDP solves along a different path)
+# and R's number formatting, 15 significant digits from write.table and 7 from
+# cat() for b. Near-singular knockoff SDPs amplify either difference into s.
+def _r_num(x):
+    return f"{x:.15g}"
+
+
+def _r_cat(x):
+    return f"{x:.7g}"
+
 def sedumi2sdpa(filename, A, b, c, K):
     """Convert from SeDuMi format to SDPA sparse format.
 
@@ -63,7 +74,7 @@ def sedumi2sdpa(filename, A, b, c, K):
     fp.write(" ".join([str(x) for x in K['s']]) + "\n")
 
     # write b
-    fp.write(" ".join([str(-b[i, 0]) for i in range(b.shape[0])]) + "\n")
+    fp.write(" ".join([_r_cat(b[i, 0]) for i in range(b.shape[0])]) + "\n")
 
     # write C
     len_s = sum([x ** 2 for x in K['s']])
@@ -82,7 +93,7 @@ def sedumi2sdpa(filename, A, b, c, K):
         for i in range(length):
             # BUG FIX: Added str() around list_val[i]
             fp.write(" ".join((str(matnum), str(blocknum), list_row[i],
-                               list_row[i], str(list_val[i]))) + "\n")
+                               list_row[i], _r_num(list_val[i]))) + "\n")
         curind = curind + K['l']
 
     if len_s > 0:
@@ -103,7 +114,7 @@ def sedumi2sdpa(filename, A, b, c, K):
                 setCol_col = (list_row[i] // blockSize) + 1
                 if setCol_row <= setCol_col:
                     fp.write(" ".join(("0", str(blocknum), str(setCol_row),
-                                       str(setCol_col), str(list_val[i]))) + "\n")
+                                       str(setCol_col), _r_num(list_val[i]))) + "\n")
             offset += blockSize * blockSize
 
     # write A
@@ -112,7 +123,7 @@ def sedumi2sdpa(filename, A, b, c, K):
 
     if K['l'] > 0:
         blocknum += 1
-        A_l = -A[:, 0:K['l']]
+        A_l = A[:, 0:K['l']]
         # BUG FIX: Convert to COO format for consistent row/col/data ordering
         A_l_coo = A_l.tocoo()
         list_row = [str(x + 1) for x in A_l_coo.row]
@@ -122,12 +133,12 @@ def sedumi2sdpa(filename, A, b, c, K):
         for i in range(length):
             # BUG FIX: Added str() around list_val[i]
             fp.write(" ".join((list_row[i], str(blocknum), list_col[i],
-                               list_col[i], str(list_val[i]))) + "\n")
+                               list_col[i], _r_num(list_val[i]))) + "\n")
         curind = curind + K['l']
 
     if len_s > 0:
         offset = 0
-        A_s = -A[:, curind:(curind + len_s)]
+        A_s = A[:, curind:(curind + len_s)]
         for blockSize in K['s']:
             blocknum += 1
             # BUG FIX: Convert to COO format for consistent row/col/data ordering
@@ -145,7 +156,7 @@ def sedumi2sdpa(filename, A, b, c, K):
                 if setCol_row <= setCol_col:
                     fp.write(" ".join((list_row[i], str(blocknum),
                                        str(setCol_row), str(setCol_col),
-                                       str(list_val[i]))) + "\n")
+                                       _r_num(list_val[i]))) + "\n")
             offset += blockSize * blockSize
 
     fp.close()
