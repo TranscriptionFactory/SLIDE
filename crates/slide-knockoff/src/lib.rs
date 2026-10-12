@@ -636,6 +636,14 @@ pub fn select_short_freq(
     let mut stage_two_config = config.clone();
     stage_two_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, n_splits);
     let mut stage_two = knockoff_filter_voting_slide(&screened, y, &stage_two_config)?;
+    // R's stage two calls findOptIter even when no variable reaches spec
+    // (selectShortFreq.R tests is.null, and character(0) is not NULL). With
+    // zero overlap everywhere, findOptIter returns the first shortest draw.
+    if config.slide_selection && stage_two.freq_selected.is_empty() {
+        if let Some(shortest) = stage_two.selected_list.iter().min_by_key(|draw| draw.len()) {
+            stage_two.selected = sorted_unique(shortest.clone());
+        }
+    }
     stage_two.selected = stage_two
         .selected
         .into_iter()

@@ -201,8 +201,9 @@ def _single_knockoff_iteration_python(
 class Knockoffs:
     def __init__(self, y, z2, model="LR"):
 
-        # self.z1 = self.scale_features(z1)
-        self.z2 = self.scale_features(z2)
+        # Raw Z, like R's secondKO: covariance shrinkage is not scale-equivariant,
+        # so standardizing here would change Sigma and the knockoffs.
+        self.z2 = np.asarray(z2)
         self.y = y
         self.n = self.y.shape[0]
         # self.n, self.k = self.z1.shape
@@ -225,7 +226,7 @@ class Knockoffs:
 
         assert n == self.n
 
-        self.z1 = self.scale_features(z1)
+        self.z1 = np.asarray(z1)
         self.interaction_terms = self.get_interaction_terms(self.z1, self.z2)
 
     @staticmethod
@@ -922,8 +923,8 @@ class Knockoffs:
         """
         from .knockoff.stats import stat_glmnet_lambdasmax
 
-        # Prepare data
-        z = Knockoffs.scale_features(z)
+        # Prepare data: raw Z, matching R's secondKO (see __init__).
+        z = np.asarray(z)
 
         if isinstance(y, pd.Series) or isinstance(y, pd.DataFrame):
             y = y.values.copy()

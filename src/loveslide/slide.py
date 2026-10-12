@@ -415,22 +415,32 @@ class OptimizeSLIDE(SLIDE):
 
         machop = Knockoffs(y=self.data.Y.values, z2=latent_factors.values)
 
-        marginal_idxs = machop.select_short_freq(
-            z=latent_factors.values,
-            y=self.data.Y.values,
-            spec=spec,
-            fdr=fdr,
-            niter=niter,
-            f_size=f_size,
-            n_workers=n_workers,
-            backend=knockoff_backend,
-            method=knockoff_method,
-            shrink=knockoff_shrink,
-            offset=knockoff_offset,
-            base_seed=knockoff_base_seed,
-            fstat=fstat,
-            slide_selection=slide_selection,
-        )
+        # R marginalSLIDE reruns selection at spec + 0.1 until fewer than n
+        # marginals remain; base_seed is unchanged, so only the cut moves.
+        n_samples = latent_factors.shape[0]
+        while True:
+            marginal_idxs = machop.select_short_freq(
+                z=latent_factors.values,
+                y=self.data.Y.values,
+                spec=spec,
+                fdr=fdr,
+                niter=niter,
+                f_size=f_size,
+                n_workers=n_workers,
+                backend=knockoff_backend,
+                method=knockoff_method,
+                shrink=knockoff_shrink,
+                offset=knockoff_offset,
+                base_seed=knockoff_base_seed,
+                fstat=fstat,
+                slide_selection=slide_selection,
+            )
+            if len(marginal_idxs) < n_samples:
+                break
+            spec += 0.1
+            if spec > 1.0:
+                marginal_idxs = []
+                break
 
         self.marginal_idxs = marginal_idxs
         return machop

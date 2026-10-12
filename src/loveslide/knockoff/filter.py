@@ -1342,8 +1342,18 @@ def knockoff_filter_voting_slide(
         **kwargs
     )
 
+    # R's stage two calls findOptIter even when no variable reaches spec
+    # (selectShortFreq.R tests is.null, and character(0) is not NULL). With
+    # zero overlap everywhere, findOptIter returns the first shortest draw.
+    local_selected = final_result.selected
+    draws = final_result.selected_list
+    if slide_selection and len(local_selected) == 0 and draws:
+        local_selected = np.asarray(
+            draws[min(range(len(draws)), key=lambda i: len(draws[i]))], dtype=int
+        )
+
     # Map screened indices back to global indices
-    final_selected = screen_var[final_result.selected]
+    final_selected = screen_var[local_selected]
 
     if verbose:
         print(f"  Final selection: {len(final_selected)} variables")

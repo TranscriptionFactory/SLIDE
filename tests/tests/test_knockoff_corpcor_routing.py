@@ -145,3 +145,26 @@ def test_cached_voting_is_deterministic_across_serial_and_parallel():
 
     np.testing.assert_array_equal(serial.selection_counts, parallel.selection_counts)
     np.testing.assert_array_equal(serial.selected, parallel.selected)
+
+
+def test_slide_knockoffs_receive_raw_latent_factors_like_r_secondko():
+    # R's secondKO estimates Sigma from unscaled Z; scaling first changes the
+    # shrinkage/jitter path and therefore the knockoff draws.
+    rng = np.random.default_rng(0)
+    z = rng.normal(scale=[0.5, 2.0, 3.0, 1.0], size=(12, 4))
+    y = rng.normal(size=12)
+
+    machop = Knockoffs(y=y, z2=z)
+    np.testing.assert_array_equal(machop.z2, z)
+    machop.add_z1(marginal_idxs=[0])
+    np.testing.assert_array_equal(machop.z1, z[:, [0]])
+
+    with patch(
+        "loveslide.knockoffs.knockoff_filter_voting_slide",
+        side_effect=AssertionError("captured"),
+    ) as voting:
+        try:
+            Knockoffs.select_short_freq_slide(z, y, niter=1, n_jobs=1)
+        except AssertionError:
+            pass
+    np.testing.assert_array_equal(voting.call_args.args[0], z)
