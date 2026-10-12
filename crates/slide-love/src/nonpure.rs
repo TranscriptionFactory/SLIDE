@@ -1,7 +1,9 @@
 use highs::{ColProblem, HighsModelStatus, Sense};
 use ndarray::{Array1, Array2};
+use rayon::prelude::*;
 use slide_types::{Matrix, Scalar, Vector};
 use std::collections::BTreeSet;
+use std::num::NonZeroU32;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -158,13 +160,21 @@ pub fn est_aj_dant(
     let se_array = se_est_j.as_ndarray();
     let mut aj = Array2::zeros((y.ncols(), c_hat_dimension));
 
-    for response_index in 0..y.ncols() {
-        let Some(beta) = dantzig(
-            c_hat,
-            &Vector::from_ndarray(y_array.column(response_index).to_owned()),
-            lbd * se_array[response_index],
-        )?
-        else {
+    // Each response is an independent LP; solve them in parallel, then scan in
+    // response order so the first error or infeasible LP wins as in a serial loop.
+    let betas: Vec<_> = (0..y.ncols())
+        .into_par_iter()
+        .map(|response_index| {
+            dantzig(
+                c_hat,
+                &Vector::from_ndarray(y_array.column(response_index).to_owned()),
+                lbd * se_array[response_index],
+            )
+        })
+        .collect();
+
+    for (response_index, beta) in betas.into_iter().enumerate() {
+        let Some(beta) = beta? else {
             return Ok(None);
         };
 
@@ -266,7 +276,11 @@ fn solve_lp(
         pb.add_column(objective[col_index], 0.0.., &row_factors);
     }
 
-    let solved = pb.optimise(Sense::Minimise).solve();
+    // These LPs are tiny and already run in parallel across responses; HiGHS's own
+    // worker pool only spins and competes with rayon, so keep each solve single-threaded.
+    let mut model = pb.optimise(Sense::Minimise);
+    model.set_threads(NonZeroU32::MIN);
+    let solved = model.solve();
 
     match solved.status() {
         HighsModelStatus::Optimal => {
