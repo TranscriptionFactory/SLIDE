@@ -409,11 +409,35 @@ pub fn find_standalone_lfs(
     y: &Vector,
     config: &MarginalLfSelectionConfig,
 ) -> Result<MarginalLfSelection, SlideCoreError> {
-    let voting = select_short_freq(z, y, &config.to_knockoff_config())?;
-    Ok(MarginalLfSelection {
-        sig_lfs: voting.selected.clone(),
-        voting,
-    })
+    // R marginalSLIDE reruns selection at spec + 0.1 until fewer than n
+    // marginals remain. As in find_interaction_lfs, base_seed is unchanged, so
+    // a retry redraws identical knockoffs and only moves the frequency cut.
+    let n = z.shape().0;
+    let mut knockoff_config = config.to_knockoff_config();
+    loop {
+        let voting = select_short_freq(z, y, &knockoff_config)?;
+        if voting.selected.len() < n {
+            return Ok(MarginalLfSelection {
+                sig_lfs: voting.selected.clone(),
+                voting,
+            });
+        }
+        knockoff_config.spec += 0.1;
+        eprintln!(
+            "[SLIDE] {} marginals reach the sample size {}; increasing spec to {:.2}",
+            voting.selected.len(),
+            n,
+            knockoff_config.spec
+        );
+        // R empties the selection once spec passes 1; stop here instead of
+        // calling the voting with an invalid spec.
+        if knockoff_config.spec > 1.0 {
+            return Ok(MarginalLfSelection {
+                sig_lfs: Vec::new(),
+                voting,
+            });
+        }
+    }
 }
 
 pub fn correct_y(y: &Vector, z_m: &Vector) -> Result<Vector, SlideCoreError> {
