@@ -113,3 +113,6 @@ logs/
 tests/logs/
 slurm-*.out
 dist/
+
+# Parity-test fixtures are part of the test suite
+!tests/fixtures/**/*.csv
