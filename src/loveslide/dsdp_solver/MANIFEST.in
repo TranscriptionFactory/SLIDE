@@ -1,5 +1,0 @@
-include dsdp/C/allinclude/*.h
-include dsdp/tests/*.py
-include dsdp/tests/examples/*.dat-s
-include LICENSE
-include README

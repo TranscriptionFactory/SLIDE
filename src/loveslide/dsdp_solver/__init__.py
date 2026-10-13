@@ -1,15 +1,11 @@
 """
-DSDP5 SDP Solver - Python interface.
+DSDP5 SDP solver: bundled C sources and the compiled ``pydsdp5`` extension.
 
 Source: https://github.com/sburer/scikit-dsdp
 
-Note: The C extension (.so file) is platform-specific and may need
-      to be recompiled for different Python versions/platforms.
-      See setup.py for build instructions.
+The extension is built by the repository's setup.py (``pip install -e .`` or
+``python setup.py build_ext --inplace``). The Python wrapper used by the
+knockoff code lives in ``loveslide.knockoff.pydsdp``.
 
 License: GPL
 """
-
-from .dsdp5 import dsdp
-
-__all__ = ["dsdp"]

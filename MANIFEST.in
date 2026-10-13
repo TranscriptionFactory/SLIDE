@@ -1,11 +1,9 @@
-# R code bundles (LOVE and SLIDE R implementations)
+# Bundled LOVE (Python) and SLIDE R scripts
 recursive-include src/loveslide/love_python *
-recursive-include src/loveslide/love_r *
 recursive-include src/loveslide/slide_r *
 
 # C extension source files for dsdp_solver (DSDP SDP solver)
 recursive-include src/loveslide/dsdp_solver/dsdp/C *.c *.h
-include src/loveslide/dsdp_solver/setup.py
 include src/loveslide/dsdp_solver/README
 include src/loveslide/dsdp_solver/LICENSE
 
