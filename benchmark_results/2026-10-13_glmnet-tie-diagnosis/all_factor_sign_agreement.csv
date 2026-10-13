@@ -1,0 +1,5 @@
+arm,glmnet_mirror,rust_entry_1e-4,rust_entry_1e-7,rust_index_1e-4,rust_index_1e-7
+r_s,0.9643,0.6877,0.93,0.6673,0.7673
+r_s_nearzero_to_0,0.967,0.685,0.9355,0.6705,0.767
+rust_s,0.9677,0.6807,0.9382,0.6666,0.7784
+rust_s_floor_1e-9,0.9677,0.6805,0.9305,0.6689,0.782
