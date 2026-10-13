@@ -4,14 +4,13 @@ use slide_types::Matrix;
 use std::fs;
 
 #[test]
+#[ignore = "requires externally generated CSVs: set SLIDE_COMPARE_DIR to a directory with sigma_chunk0.csv"]
 fn compare_diag_s_with_python() {
-    let content = match fs::read_to_string("/tmp/sigma_chunk0.csv") {
-        Ok(c) => c,
-        Err(_) => {
-            eprintln!("Skipping: /tmp/sigma_chunk0.csv not found");
-            return;
-        }
-    };
+    let dir = std::env::var("SLIDE_COMPARE_DIR")
+        .expect("SLIDE_COMPARE_DIR must point to a directory holding sigma_chunk0.csv");
+    let path = std::path::Path::new(&dir).join("sigma_chunk0.csv");
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
 
     let rows: Vec<Vec<f64>> = content
         .lines()
