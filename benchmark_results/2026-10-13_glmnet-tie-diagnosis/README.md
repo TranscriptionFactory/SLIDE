@@ -1,9 +1,71 @@
 # Why glmnet ties near-duplicate knockoff pairs and slide-glmnet does not, and the Rust change that matches it
 
 Job 5 of `.agent-handoff/2026-10-13_clarabel-plan.md`. Follows `../2026-10-13_s-zero-handling/` (same 200 draws ×
-4 s arms, δ=0.01, λ=1.0, chunk 0, n=24, 2p=44). Decision already taken: Rust copies R. R and Python stay as they are.
+4 s arms, δ=0.01, λ=1.0, chunk 0, n=24, 2p=44). Decision already taken: Rust must behave like R for s_j ≈ 0 (the
+same behaviour, tolerances and thresholds; not a bit-for-bit port). R and Python stay as they are.
 
-## Result
+## R's effective rule, and what reproduces it (s-floor sweep)
+**R's rule.** R sets W_j = 0 when X_j and X̃_j have their first nonzero coefficient at the same point of the λ grid.
+The grid has nlambda 500 from λ_max down to λ_max/2000, a 1.53% step, and glmnet's convergence `thresh` is 1e-7.
+This is **not a threshold** on distance, s_j or entry gap. It is a probability that falls smoothly as the pair
+separates. Let δ_j = sqrt(2(1 − corr(X_j, X̃_j))) be the standardized distance between the two columns. On these
+draws δ_j ≈ 0.966·sqrt(2 s_j/Σ_jj).
+
+`floor_sweep.py` sets all 17 near-zero s of chunk 0 to f·Σ_jj, with f from 1e-9 to 1e-4. It shrinks the other
+entries by the smallest factor that keeps 2Σ − diag(s) PD (0 to 10%), because a larger floor is infeasible without
+that. It then scores 200 draws per floor with R, current Rust at tol 1e-4 and 1e-7, and the entry-order mirror at
+tol 1e-7. `sweep_summary.py` writes `sweep_tie_curve.csv` and `sweep_rule_agreement.csv`.
+
+R's tie rate, over near-duplicate pairs that R entered:
+
+| s/Σ_jj floor | 1e-9 | 1e-8 | 3e-8 | 1e-7 | 3e-7 | 1e-6 | 3e-6 | 1e-5 | 1e-4 |
+|---|---|---|---|---|---|---|---|---|---|
+| median δ | 4.3e-5 | 1.4e-4 | 2.4e-4 | 4.3e-4 | 7.5e-4 | 1.4e-3 | 2.4e-3 | 4.3e-3 | 1.4e-2 |
+| R tie rate | 0.76 | 0.75 | 0.73 | 0.69 | 0.63 | 0.51 | 0.37 | 0.23 | 0.08 |
+
+- The rate is flat at about 0.75 for δ ≤ 3e-4 (s/Σ ≲ 3e-8) and crosses 0.5 near δ ≈ 1.5e-3 (s/Σ ≈ 1e-6). Above
+  δ = 1e-2 it is below 0.1.
+- Genuine knockoffs (s not near zero) tie in 0.3% of entered pairs.
+- The 25% of near-copies that R does not tie are pairs that enter low on the path, where other updates separate
+  the two columns.
+
+**Candidate Rust rules.** Per-draw sign(W) agreement with R; selection rate at FDR 0.1.
+
+| fitter / rule | Z20+Z21 agreement, over floors | near-dup agreement | Z20 sel. at 1e-9 / 1e-7 / 1e-6 / 1e-4 (R: .005/.025/.095/.075) |
+|---|---|---|---|
+| Rust now (tol 1e-4) | 0.41–0.76 | 0.54–0.71 | .335 / .285 / .13 / .115 |
+| Rust, tol 1e-7 only | 0.44–0.99 | 0.72–0.93 | .30 / .095 / .115 / .075 |
+| Rust + W=0 if δ < 3e-4 / 1e-3 / 2e-3 | ≤ 0.95 at small floors, 0.54–0.76 near τ | ≤ 0.76 | 0 / 0 / 0–.135 / .115 (too many zeros below τ, none above) |
+| Rust + W=0 if entry gap ≤ 1 or ≤ 3 grid steps | 0.41–0.75 | 0.49–0.69 | ≈ Rust now (the near-copies' gap is ≫ 3 steps) |
+| **entry-order active set + tol 1e-7** | **0.978–1.000** | **0.89–0.97** | **.010 / .030 / .100 / .075** |
+
+R's tie is a property of the coordinate-descent path, not a function of δ. A δ rule makes every pair below τ
+unselectable. R does not do that: it selects Z20 in 2.5–9.5% of iterations at floors 1e-7 to 1e-6, and it ties
+pairs above τ. A δ rule therefore misses R in both directions, and the size of the miss depends on τ, a
+tolerance R does not have. An entry-gap rule never fires on the pairs that matter, because Rust leaves the second
+column out for over 100 steps. **The simplest change that reproduces R across the whole sweep is the fitter
+change specified below.** Z20/Z21 selection rates then stay within 0.02 of R at every floor (largest gap: Z21 at 1e-6, 0.17 vs 0.15), and per-draw
+agreement for those two factors is 0.978–1.0. The target is 0.98–1.0, the Python-vs-R rate on the s-zero arms;
+Python was not run on the sweep.
+
+## Does R's S-side handling matter for s_j ≈ 0?
+- `create.solve_sdp` clips s to [0,1] and then shrinks it by (1 − s_eps) until 2Σ − diag(s) is PD (is_posdef
+  tolerance 1e-9). For s ≈ 0 this only makes a tiny value tinier, so it has no behavioural effect.
+- `create.gaussian` runs `chol(Σ_k)` with no jitter. With an exact s_j = 0 R would stop with an error. DSDP's
+  positive residue (1e-10 to 1.7e-8) avoids that. Rust's 0 plus its 1e-10 jitter gives X̃ about as close to X as
+  s/Σ ≈ 5e-11 would. This is the one R behaviour Rust lacks; it would be a hard failure, not a selection
+  difference. Copying it is not recommended.
+- **0 vs 1e-9 is behaviourally irrelevant.** DSDP residues of 1e-10 to 1.7e-8 give δ of 1.4e-5 to 1.8e-4.
+  Clarabel's 0 gives δ ≈ 1.1e-5. Both lie on the flat part of R's tie curve (0.75–0.76), and after the fitter
+  change the rust_s and r_s arms both match R per draw (table further down).
+- Z74 (R s = 1.18e-8 at λ 0.1, 1.65e-8 at λ 1.0; Clarabel 0 or 3.8e-9): its δ is about 1.5e-4 under either S,
+  where R's tie rate is 0.75 against 0.76. **Inferred** from the chunk-0 curve; chunk 3 was not swept. The S
+  difference should therefore move Z74's tie probability by about 0.01. The 5.4% vs 11.6% Z74 vote gap seen in
+  job 2 has to come from other S entries or from the fitter, not from Z74's own s_j ≈ 0.
+- The fitter change is not a tie rule, but it does make the Rust-vs-R S difference irrelevant here, because the
+  tie outcome does not depend on δ within that range.
+
+## Mechanism
 The difference comes from the order in which the coordinate descent visits the active set, plus the knockoff
 tolerance. It does not come from the lambda grid, standardization, strong rules or the KKT check, which are the
 same in both.
@@ -121,7 +183,9 @@ Rebuild `paired_xtilde` (`crates/slide-cli/examples/paired_xtilde.rs`) and rerun
 `../2026-10-13_s-zero-handling/check.py` (200 draws × 4 arms). Pass condition: per-draw sign(W) agreement with
 `r_glmnet` for Z20 and Z21 is at least the Python-vs-R rate (1.0/0.985; 0.98 for Z20 in the floor arm), and the
 Z20/Z21 selection rates are within 1/200 of R's. In the same run, check that all-factor sign agreement with R is
-≥ 0.93, the `experiment.py` mirror figure.
+≥ 0.93, the `experiment.py` mirror figure. Then rerun `floor_sweep.py` with the rebuilt binary at tol 1e-7 in
+place of the mirror. At every floor the Z20/Z21 agreement must be ≥ 0.975 and the Z20/Z21 selection rates must be
+within 0.02 of R's. The mirror reached 0.978–1.0 and ≤ 0.02 (`sweep_rule_agreement.csv`).
 
 ## Reproduce (login node, about 6 min per arm with 4 processes)
 ```
@@ -132,6 +196,11 @@ $PY trace0.py 0 20 1e-7                  # instrumented step above
 for a in rust_s r_s r_s_nearzero_to_0 rust_s_floor_1e-9; do $PY experiment.py $a 200 4 ../../.tmpfiles/2026-10-13_glmnet-tie/w_$a.csv; done
 $PY summarize.py ../../.tmpfiles/2026-10-13_glmnet-tie .
 $PY sorted_check.py 40
+cd ../..   # s-floor sweep, about 2 min per floor
+ENV=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev; B=benchmark_results/2026-10-13_glmnet-tie-diagnosis
+PYTHONPATH=src:$B R_LIBS=$PWD/.tmpfiles/2026-10-06_replicates/R-library:$ENV/lib/R/library $PY $B/floor_sweep.py \
+  $PWD/.tmpfiles/2026-10-13_glmnet-tie/sweep 200 4 $PWD/.tmpfiles/2026-10-13_s-only-d001/full/bin/paired_xtilde $ENV/bin/Rscript
+PYTHONPATH=src $PY $B/sweep_summary.py .tmpfiles/2026-10-13_glmnet-tie/sweep $B
 ```
 
 ## Caveats
