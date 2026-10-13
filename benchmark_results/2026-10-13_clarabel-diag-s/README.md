@@ -94,3 +94,39 @@ seed-independent): Z20, Z21 are in chunk 0 (local idx 20, 21); Z73, Z74 in chunk
 - Rust ran on the login node's current build (`cargo test --release`); CPU/BLAS differences can move tiny entries.
 - The 3.2e-6 control maximum in `cmp_s.py` is raw covariance units; sdp-parity labels it correlation units.
 - The `nz_ratio` column in `pair_stats.csv` is unused (NaN).
+
+## Mechanism (Job 1b): why Clarabel gives exact zeros
+Details, CSVs and scripts in `mechanism/` (`mechanism.py`, `r_gaptol.R`, `entries_all.csv`, `four_factors.csv`,
+`chunk_solver_summary.csv`; see `mechanism/README.md`).
+
+- **Verdict: the true optimum is 0 for every near-zero entry; both solvers' small values are barrier/tolerance residue.**
+  Clarabel's exact 0 is the correct optimum reached by an artifact (clip of a slightly negative raw value);
+  DSDP's 1e-10 to 1e-8 is interior-point residue that vanishes with gaptol.
+- Reproduction with the `clarabel` 0.11.1 Python package (same version as the crate), same formulation and settings,
+  matches Rust's final s to <=5e-7 on every chunk (<=1e-7 on most) and gives the same zero count in 15 of 16 chunks.
+- Raw solver output: all 103 Rust zeros among the 241 near-zero entries are raw values in [-2.7e-8, -4e-12]
+  (primal residual r_prim 6e-10 to 1.4e-8 allows x<0). `clip_unit_interval` turns any negative into 0. The other 138
+  near-zero entries have raw x>0 (up to 1.7e-4) and survive. Whether an entry becomes 0 or ~1e-8 is the sign of noise.
+  The feasibility scaling (gamma) is 1.0 everywhere, so it never zeroes anything.
+- KKT: multiplier on s_j>=0 is mu_j = Z_jj - 1 (not 1 - Z_jj; sign checked against the solver's dual, agreement 9e-7).
+  All 241 near-zero entries have mu_j in [0.019, 217] (median 3.8), strictly positive; non-near-zero entries have mu <= 0.021
+  (Z73, Z73-type: mu ~1e-8). A high-accuracy reference (tol 1e-10, presolve off; ends NumericalError/InsufficientProgress but
+  objective matches SCS to ~1e-9) puts these s at |s|<=1e-9 for 238 of 241 and gives the same mu.
+- DSDP gaptol sweep (R create.solve_sdp, maxit 1000 and 10000 identical): near-zero s shrinks about 50x per 100x gaptol
+  (median ratio 0.022 for 1e-6 -> 1e-8, 0.018 for 1e-8 -> 1e-10; median 1.6e-9 -> 3.4e-11 -> 4e-13), i.e. residue.
+- Objectives: Clarabel raw, SCS and the reference agree to ~1e-6; Rust final and R/DSDP are below the reference by
+  1e-7 to 2e-4 (R's gap does not shrink with gaptol, so it comes from R's positive-definiteness shrink step, not from the solver; not decomposed further).
+- Entries with the weakest certificate (mu ~0.02): Z108 and Z22-type at lambda=1.0 (reference s up to 2.8e-7); still mu>0.
+
+| lam | factor | R gaptol 1e-6 / 1e-8 / 1e-10 | Clarabel raw | final (Rust) | mu_j | verdict |
+|---|---|---|---|---|---|---|
+| 0.1 | Z20 | 4.6e-9 / 1.1e-10 / 7e-13 | +4.6e-8 | 4.6e-8 | 2.17 | true 0; both residue (Rust's is 10x R's) |
+| 0.1 | Z21 | 4.3e-9 / 2.3e-11 / 5e-14 | -3.3e-9 | 0 | 12.1 | true 0; Rust 0 from clip |
+| 0.1 | Z74 | 1.2e-8 / 1.5e-11 / 6e-13 | -7.9e-10 | 0 | 3.96 | true 0; Rust 0 from clip |
+| 1.0 | Z20 | 1.9e-10 / 5e-13 / 8e-14 | -1.2e-8 | 0 | 20.7 | true 0; Rust 0 from clip |
+| 1.0 | Z21 | 2.5e-10 / 6.9e-13 / 1.1e-13 | -1.0e-8 | 0 | 15.1 | true 0; Rust 0 from clip |
+| 1.0 | Z74 | 1.7e-8 / 1.4e-10 / 1.4e-12 | +3.9e-9 | 3.9e-9 | 1.06 | true 0; both residue |
+| 0.1 / 1.0 | Z73 | 0.197 / 0.237 (stable) | same | same | 1e-8 / 8e-8 | genuine positive optimum |
+
+Consequence: at the SDP level R's 1e-9 and Rust's 0 are equally "zero"; they differ only by solver noise. Any selection
+difference must come from how downstream code uses s/lambda_min for these entries, not from Clarabel finding a worse optimum.
