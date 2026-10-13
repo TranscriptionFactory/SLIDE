@@ -1,177 +1,176 @@
-# loveslide
+# SLIDE
 
-**A Python interface to the SLIDE framework for latent factor discovery and statistical inference.**
+Rust and Python implementations of SLIDE (Significant Latent Factor
+Interaction Discovery and Exploration; Rahimikollu et al., *Nature Methods*).
+SLIDE finds latent factors with LOVE (overlapping clustering) and then
+uses knockoffs to select the standalone and interacting factors that predict
+an outcome, with false discovery rate control.
 
----
+This repository holds two implementations that share one config format:
 
-## 📘 Overview
+| Component | What it is | Entry point |
+| --- | --- | --- |
+| `slide` (Rust, `crates/`) | Native pipeline with a terminal dashboard (TUI) and SLURM helpers. Recommended for production runs. | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
+| `loveslide` (Python, `src/loveslide`) | Python library with the same pipeline, plotting, and optional R backends via `rpy2`. | `loveslide run`, `loveslide.OptimizeSLIDE` |
 
-**loveslide** wraps key components of the original [SLIDE R package](https://github.com/jishnu-lab/SLIDE) into a user-friendly Python interface, making it easier to incorporate into machine learning pipelines and bioinformatics workflows.
+The original R package is at <https://github.com/jishnu-lab/SLIDE>. Both
+implementations are tested against R reference outputs (`tests/fixtures/`).
 
-SLIDE (Statistical Latent Inference for Discovery and Explanation) combines:
+## Rust CLI and TUI
 
-* **LOVE**: A latent factor discovery algorithm using model-based overlapping clustering.
-* **Knockoffs**: For statistically rigorous identification of significant standalone and interacting latent factors.
+### Build
 
-This Python implementation retains R underpinnings via `rpy2` and is structured to be modular, extensible, and accessible from both the command line and within Python scripts or notebooks.
-
----
-
-## 🔗 Related Repositories
-
-* 📦 Original R package: [https://github.com/jishnu-lab/SLIDE](https://github.com/jishnu-lab/SLIDE)
-* 🐍 Python wrapper: [https://github.com/alw399/SLIDE\_py](https://github.com/alw399/SLIDE_py)
-
----
-
-## 🚀 Installation
-
-Set up a compatible Python environment:
+Requirements: Rust 1.79+, a C toolchain, CMake, libclang, and system
+OpenBLAS/LAPACK with gfortran. On Debian/Ubuntu:
 
 ```bash
-module load anaconda3/2022.10
-conda create -n loveslide_env python=3.9 r-base
-conda activate loveslide_env
-pip install loveslide
+sudo apt-get install libopenblas-dev liblapack-dev gfortran cmake clang libclang-dev
+cargo build --release          # binary: target/release/slide
+cargo install --path crates/slide-cli   # or install it on your PATH
 ```
 
-If needed, clone the environment used during development:
+On an HPC cluster, load the OpenBLAS, GCC, CMake and LLVM modules first.
+`scripts/cargo-rust-blas` wraps `cargo` with the environment used on the
+Pitt CRC cluster; adapt `scripts/with-rust-blas-env.sh` for other sites.
+
+### Run
 
 ```bash
-# On the cluster:
-source activate /ix3/djishnu/alw399/envs/rhino
+# Pipeline only (headless; good for batch jobs)
+slide run --config tests/test_config_quick.yaml --checkpoint out/checkpoint.json
+
+# Pipeline and live dashboard together
+slide monitor --config tests/test_config_quick.yaml --checkpoint out/checkpoint.json
+
+# Dashboard for an existing or running checkpoint
+slide tui --checkpoint out/checkpoint.json
+
+# Submit a SLURM job and watch it
+slide submit --script job.sh --checkpoint out/checkpoint.json
 ```
 
----
+Run these from the repository root: `tests/test_config_quick.yaml` points at
+the bundled HIV example data in `example/`, and relative paths in a config
+resolve against the working directory. Add `-v` to print per-stage timing.
+`slide monitor` exits non-zero if the pipeline fails or you quit the TUI
+before it finishes.
 
-## ⚡ Quick Start
+See [docs/tui-guide.md](docs/tui-guide.md) for the dashboard tabs, keyboard
+reference and SLURM workflows.
 
-### 📿 Command Line
+### Config
+
+```yaml
+x_path: example/HIV+cytokines_X.csv   # samples x features, first column = sample IDs
+y_path: example/HIV+cytokines_y.csv   # samples x 1 response
+delta: [0.05, 0.1]                    # LOVE thresholds; each (delta, lambda) pair is one grid cell
+lambda: [0.1, 0.5]
+y_factor: true                        # categorical response
+do_interacts: true
+pure_homo: true
+spec: 0.1
+fdr: 0.1
+thresh_fdr: 0.2
+SLIDE_iter: 500
+knockoff_backend: rust                # or "r" (needs Rscript with knockoff + corpcor; set rscript:)
+```
+
+Unknown keys are rejected, so a typo fails at load time instead of being
+ignored. The checkpoint JSON is rewritten after each grid cell, so an
+interrupted run resumes where it stopped.
+
+`SLIDE_KNOCKOFF_TOL`, `SLIDE_KNOCKOFF_MAX_ITER`, `SLIDE_KNOCKOFF_MATCH_R_LAMBDA`
+and `SLIDE_KNOCKOFF_MATCH_R_COV` override knockoff fitting for R-parity
+experiments. When any is set, `slide` warns and stores it under
+`config.env_overrides` in the checkpoint.
+
+## Python package
+
+### Install
 
 ```bash
-python slide.py \
-  --x_path /path/to/your/features.csv \
-  --y_path /path/to/your/labels.csv \
-  --out_path /path/to/output/
+sudo apt-get install libopenblas-dev liblapack-dev gfortran   # for the DSDP extension
+pip install .                 # core
+pip install ".[r]"            # optional R backends via rpy2
 ```
 
-Use full paths if not running from the `src/loveslide` directory.
+Or with [pixi](https://pixi.sh): `pixi install && pixi run test`.
 
----
+The knockoff SDP uses a bundled C extension (DSDP), built at install time. If
+it fails to build, knockoffs raise an `ImportError` explaining how to fix
+the build; pass `sdp_solver='cvxpy'` to opt into the slower, less
+R-faithful cvxpy solver instead.
 
-### 🧪 In a Notebook
+### Run
+
+```bash
+loveslide run --config config.yaml --out-path results/
+```
+
+The YAML is a flat mapping of the keys in the parameter table below.
+Unlike `slide`, `loveslide run` resolves relative paths against the config
+file's directory. `--x-path`, `--y-path` and `--out-path` override the
+config. From Python:
 
 ```python
-import loveslide
-
 from loveslide import OptimizeSLIDE
 
-input_params = {
-    'x_path': '/path/to/features.csv',
-    'y_path': '/path/to/labels.csv',
-    'fdr': 0.1,
-    'thresh_fdr': 0.1,
-    'spec': 0.2,
-    'y_factor': True,
-    'niter': 500,
-    'SLIDE_top_feats': 20,
-    'rep_CV': 50,
-    'pure_homo': True,
-    'delta': [0.01],
-    'lambda': [0.5, 0.1],
-    'out_path': '/path/to/output/'
+params = {
+    "x_path": "example/HIV+cytokines_X.csv",
+    "y_path": "example/HIV+cytokines_y.csv",
+    "out_path": "results/",
+    "delta": [0.01],
+    "lambda": [0.5, 0.1],
+    "spec": 0.2,
+    "fdr": 0.1,
+    "thresh_fdr": 0.1,
+    "y_factor": True,
+    "niter": 500,
 }
-
-slider = OptimizeSLIDE(input_params)
-slider.run_pipeline(verbose=True, n_workers=1)
+OptimizeSLIDE(params).run_pipeline(verbose=True, n_workers=1)
 ```
 
----
+### Parameters
 
-## 🔬 Pipeline Overview
+| Name | Type | Description | Default |
+| --- | --- | --- | --- |
+| `x_path` | str | Feature matrix CSV | required |
+| `y_path` | str | Response CSV | required |
+| `out_path` | str | Output directory | required |
+| `delta` | list | LOVE thresholds | `[0.01]` |
+| `lambda` | list | LOVE penalty values | `[0.5, 0.1]` |
+| `fdr` | float | Knockoff FDR target | 0.1 |
+| `thresh_fdr` | float | FDR threshold for LOVE correlations | 0.1 |
+| `spec` | float | Minimum selection frequency for a factor | 0.2 |
+| `y_factor` | bool | Treat `y` as categorical | True |
+| `niter` | int | Knockoff iterations | 500 |
+| `SLIDE_top_feats` | int | Top features per factor to plot | 20 |
+| `rep_CV` | int | Cross-validation repeats | 50 |
+| `pure_homo` | bool | Pure variables have loading 1 | True |
 
-The `run_pipeline()` method follows three key stages:
-
-### 🧩 Stage 1: Latent Factor Discovery
-
-* **LOVE Algorithm**: Identifies overlapping latent factors in the data.
-* **Output**: Latent factor matrix (`z_matrix`) and factor loadings.
-
-### 📊 Stage 2: Statistical Inference with Knockoffs
-
-* Identifies significant **standalone** and **interacting** latent factors.
-* Controls **False Discovery Rate (FDR)** to maintain statistical rigor.
-
-### 📈 Stage 3: Visualization
-
-* Diagnostic plots
-* Top genes/features for each latent factor (loadings > |0.05|)
-
----
-
-## ⚙️ Parameters
-
-| Name              | Type  | Description                          | Default/Example |
-| ----------------- | ----- | ------------------------------------ | --------------- |
-| `x_path`          | str   | Path to feature matrix CSV           | Required        |
-| `y_path`          | str   | Path to response/labels CSV          | Required        |
-| `fdr`             | float | Knockoff FDR threshold               | 0.1             |
-| `thresh_fdr`      | float | FDR threshold in LOVE                | 0.1             |
-| `spec`            | float | Minimum reproducibility for a factor | 0.2             |
-| `y_factor`        | bool  | Treat `y` as categorical             | True            |
-| `niter`           | int   | Iterations for LOVE                  | 500             |
-| `SLIDE_top_feats` | int   | Number of top features to plot       | 20              |
-| `rep_CV`          | int   | Repeats for cross-validation         | 50              |
-| `pure_homo`       | bool  | Use pure variables with loadings = 1 | True            |
-| `delta`           | list  | Regularization parameters            | `[0.01]`        |
-| `lambda`          | list  | Penalty parameters                   | `[0.5, 0.1]`    |
-| `out_path`        | str   | Output directory                     | Required        |
-
----
-
-## 🏗️ Project Structure
+## Repository layout
 
 ```
-SLIDE_py/
-├── src/
-│   ├── loveslide/             # Main Python & R wrappers
-│   │   ├── slide.py           # Main entry point
-│   │   ├── love.py
-│   │   ├── knockoffs.py
-│   │   ├── ...
-│   │   ├── love_r/            # R reference implementation of LOVE
-│   │   └── slide_r/           # R utilities for SLIDE (sourced via rpy2)
-├── dist/
-├── example/
-├── ...
+crates/            Rust workspace (slide-cli = `slide` binary; slide-core, -love, -knockoff, -glmnet, -sdp, ...)
+src/loveslide/     Python package
+tests/             Python tests, shared R-reference fixtures, quick-start config
+example/           HIV + cytokines example dataset and notebook
+benchmarks/        R/Rust/Python comparison and timing scripts
+docs/              User docs (tui-guide.md); docs/dev-notes/ holds design and research notes
 ```
 
----
+## Development
 
-## 🧠 Design Notes
+```bash
+cargo test --workspace && cargo clippy --workspace --all-targets
+pytest tests/tests -m "not slow"
+```
 
-* Core statistical inference is done using **R scripts** via `rpy2`.
-* Python acts as an orchestration layer to allow integration into ML workflows.
-* Most plotting is done in **R** (e.g., `pheatmap`, `ggplot2`).
+CI (`.github/workflows/ci.yml`) runs both on every push and pull request.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
----
+## License and citation
 
-## 📌 Known Limitations and TODOs
-
-* [x] YAML → dictionary conversion for easier parameter management
-* [ ] Extend `y_factor` handling to non-binary variables
-* [ ] Parallelization of knockoff inference (e.g., in `select_short_freq`)
-* [ ] Correlation networks visualization using `networkx`
-
----
-
-## 📢 Citation & Contact
-
-If you use `loveslide` in your work, please cite the original R implementation and this repository. For bugs or feature requests, please open an issue on GitHub.
-
-* **Homepage**: [SLIDE\_py on GitHub](https://github.com/alw399/SLIDE_py)
-* **Issues**: [Report an Issue](https://github.com/alw399/SLIDE_py/issues)
-* **Authors**:
-
-  * Ally Wang (`alw399@pitt.edu`)
-  * Swapnil Keshari (`swk25@pitt.edu`)
+MIT; see [LICENSE](LICENSE). If you use SLIDE, cite the SLIDE paper (Rahimikollu et al.,
+*Nature Methods*) and this repository.
+Issues: <https://github.com/TranscriptionFactory/SLIDE-rs/issues>.

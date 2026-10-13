@@ -10,7 +10,7 @@ knockoff selection, factor diagnostics, and more.
 # Fast Example
 Clone the repository
 ```bash
-git clone https://github.com/TranscriptionFactory/omni-SLIDE.git
+git clone https://github.com/TranscriptionFactory/SLIDE-rs.git
 ```
 From the project repository:
 ```bash

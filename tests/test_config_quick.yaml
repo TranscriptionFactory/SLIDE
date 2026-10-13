@@ -1,6 +1,6 @@
 # Quick test config: small grid + few iterations for visible TUI progress
-x_path: /ix/djishnu/Aaron/1_general_use/SLIDE_py/example/HIV+cytokines_X.csv
-y_path: /ix/djishnu/Aaron/1_general_use/SLIDE_py/example/HIV+cytokines_y.csv
+x_path: example/HIV+cytokines_X.csv
+y_path: example/HIV+cytokines_y.csv
 
 delta:
   - 0.05
