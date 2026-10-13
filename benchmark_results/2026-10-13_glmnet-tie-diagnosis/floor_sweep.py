@@ -7,7 +7,7 @@ Each draw is scored by R knockoff:::lasso_max_lambda (r_stat.R), the current Rus
 and the entry-order Rust mirror (cdsim.rust_cd, tol 1e-7). Rows cover all 22 factors (W thresholds need the full vector). Per pair it records the standardized distance
 delta_j = sqrt(2 (1 - corr(X_j, X~_j))) and the entry grid-step gap of the Rust fit.
 
-usage: floor_sweep.py <scratch_dir> <draws> <procs> <rust_bin> <rscript>   (env: PYTHONPATH=src, R_LIBS)
+usage: floor_sweep.py <scratch_dir> <draws> <procs> <rust_bin> <rscript> [rust7_max_iter=1000]   (env: PYTHONPATH=src, R_LIBS)
 """
 import json, logging, os, subprocess, sys
 from multiprocessing import Pool
@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SCR, DRAWS, PROCS, RUST_BIN, RSCRIPT = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
+RUST7_MAX_ITER = int(sys.argv[6]) if len(sys.argv) > 6 else 1000
 SEED, FDR, N, P = 20261013, 0.1, cdsim.N, cdsim.P
 FLOORS = [1e-9, 1e-8, 3e-8, 1e-7, 3e-7, 1e-6, 3e-6, 1e-5, 1e-4]
 GRID_G = [0, 1e-6, 1e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.2]
@@ -64,7 +65,7 @@ def rust_bin(xt, swap, tol, max_iter):
 def score(args):
     d, xt = args
     w_rust, eo, ek = rust_bin(xt, sw[d], 1e-4, 1000)
-    w_rust7 = rust_bin(xt, sw[d], 1e-7, 1000)[0]
+    w_rust7 = rust_bin(xt, sw[d], 1e-7, RUST7_MAX_ITER)[0]
     xs, yc = cdsim.prep(cdsim.augmented(z, xt, sw[d]), y)
     lam = cdsim.grid(xs, yc)
     e = cdsim.entry(cdsim.rust_cd(xs, yc, lam, 1e-7, 100000, active_order="entry")[0], lam)

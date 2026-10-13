@@ -38,7 +38,7 @@ for f, g in d.groupby("floor"):
                          sel_Z20=sel.loc[i[d.factor[i] == "Z20"], name].mean(),
                          sel_Z21=sel.loc[i[d.factor[i] == "Z21"], name].mean()))
 res = pd.DataFrame(rows)
-res.round(4).to_csv(OUT / "sweep_rule_agreement.csv", index=False)
+res.to_csv(OUT / "sweep_rule_agreement.csv", index=False)
 pd.set_option("display.width", 250)
 print(curve.round(3).to_string())
 for col in ("agree_nz", "agree_Z20_Z21", "agree_all", "sel_Z20", "sel_Z21"):
