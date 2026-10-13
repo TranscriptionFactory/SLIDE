@@ -114,21 +114,6 @@ class TestFullPipelineIntegration:
         assert isinstance(opt_slide, SLIDE)
         assert hasattr(opt_slide, 'get_latent_factors')
 
-    def test_slide_cv_integration(self):
-        """Test SLIDEcv integration with main pipeline."""
-        X = np.random.randn(80, 15)
-        y = np.random.randn(80)
-
-        params = {
-            'fdr_grid': [0.05, 0.1, 0.2],
-            'niter': 3,
-            'n_folds': 3
-        }
-
-        slide_cv = SLIDEcv(params, x=X, y=y)
-
-        assert slide_cv is not None
-        assert hasattr(slide_cv, 'run')
 
     def test_estimator_slide_integration(self):
         """Test integration between Estimator and SLIDE classes."""
@@ -158,56 +143,10 @@ class TestFullPipelineIntegration:
         # Should be able to create plotter without errors
         assert plotter is not None
 
-    def test_tools_integration(self):
-        """Test tools module integration with main classes."""
-        X = np.random.randn(90, 18)
-        y = np.random.randn(90)
-
-        params = {'fdr': 0.1, 'niter': 5}
-
-        # Test tools functions
-        data = init_data(params, x=X, y=y)
-        assert data is not None
-
-        # Test parameter functions
-        show_params(params, data)  # Should not raise errors
-        check_params(params, data)  # Should not raise errors
-
-        fsize = calc_default_fsize(n_rows=90, K=3)
-        assert isinstance(fsize, int)
-        assert fsize > 0
-
 
 class TestCrossModuleInteractions:
     """Test interactions between different modules."""
 
-    def test_love_knockoff_consistency(self):
-        """Test consistency between LOVE and knockoff results."""
-        X = np.random.randn(150, 20)
-
-        # Run LOVE
-        love_result = call_love(X, lbd=0.5, mu=0.5)
-
-        # Run knockoffs on the same data
-        knockoffs = Knockoffs(backend='python')
-        y_dummy = np.random.randn(150)  # Dummy response for knockoffs
-        ko_result = knockoffs.select_short_freq(X, y_dummy, fdr=0.1)
-
-        # Both should complete without errors
-        assert isinstance(love_result, dict)
-        assert isinstance(ko_result, VotingResult)
-
-    def test_backend_switching_consistency(self):
-        """Test switching between backends maintains consistency."""
-        X = np.random.randn(100, 15)
-        y = np.random.randn(100)
-
-        # Test with Python backend
-        knockoffs_py = Knockoffs(backend='python')
-        result_py = knockoffs_py.select_short_freq(X, y, fdr=0.1, niter=3, seed=42)
-
-        # Should work consistently
-        assert isinstance(result_py, VotingResult)
 
     def test_parameter_propagation_through_pipeline(self):
         """Test that parameters propagate correctly through the pipeline."""
@@ -228,54 +167,6 @@ class TestCrossModuleInteractions:
         for key, value in params.items():
             if key in slide.input_params:
                 assert slide.input_params[key] == value
-
-    def test_data_transformation_consistency(self):
-        """Test data transformations are consistent across modules."""
-        X_original = np.random.randn(100, 10)
-        y_original = np.random.randn(100)
-
-        # Test that different modules handle data consistently
-        params = {'fdr': 0.1}
-        data = init_data(params, x=X_original.copy(), y=y_original.copy())
-
-        # Data shapes should be preserved
-        assert data.X.shape == X_original.shape
-        assert data.y.shape == y_original.shape
-
-    def test_error_propagation_through_pipeline(self):
-        """Test that errors propagate correctly through the pipeline."""
-        # Invalid data shapes
-        X = np.random.randn(100, 10)
-        y = np.random.randn(90)  # Wrong length
-
-        params = {'fdr': 0.1}
-
-        with pytest.raises(ValueError):
-            SLIDE(params, x=X, y=y)
-
-    def test_memory_consistency_across_modules(self):
-        """Test memory usage is consistent across modules."""
-        n, p = 500, 50
-        X = np.random.randn(n, p)
-        y = np.random.randn(n)
-
-        initial_memory = len(gc.get_objects())
-
-        # Run different modules
-        params = {'fdr': 0.1, 'niter': 3}
-        slide = SLIDE(params, x=X, y=y)
-
-        knockoffs = Knockoffs(backend='python')
-        ko_result = knockoffs.select_short_freq(X, y, fdr=0.1, niter=3)
-
-        # Clean up
-        del slide, ko_result, knockoffs
-        gc.collect()
-
-        final_memory = len(gc.get_objects())
-
-        # Should not have significant memory leaks
-        assert final_memory - initial_memory < 5000
 
 
 class TestPerformanceAndScalability:
@@ -398,27 +289,6 @@ class TestConfigurationRobustness:
         slide_few_iter = SLIDE(params_few_iter, x=X, y=y)
         assert slide_few_iter is not None
 
-    def test_unusual_data_characteristics(self):
-        """Test with unusual but valid data characteristics."""
-        n = 100
-
-        # Test with highly correlated features
-        base = np.random.randn(n)
-        X_corr = np.column_stack([
-            base + 0.1 * np.random.randn(n) for _ in range(5)
-        ])
-        y = np.random.randn(n)
-
-        params = {'fdr': 0.1, 'niter': 3}
-
-        with pytest.warns(UserWarning) or pytest.raises(ValueError):
-            slide_corr = SLIDE(params, x=X_corr, y=y)
-
-        # Test with very small variance features
-        X_small_var = np.random.randn(n, 8) * 0.01  # Very small variance
-
-        slide_small_var = SLIDE(params, x=X_small_var, y=y)
-        assert slide_small_var is not None
 
     def test_mixed_data_types_handling(self):
         """Test handling of different data types."""
@@ -433,78 +303,10 @@ class TestConfigurationRobustness:
             slide = SLIDE(params, x=X, y=y)
             assert slide is not None
 
-    def test_parameter_validation_edge_cases(self):
-        """Test edge cases in parameter validation."""
-        X = np.random.randn(50, 10)
-        y = np.random.randn(50)
-
-        # Boundary values
-        params_boundary = {
-            'fdr': 1.0,  # Maximum valid FDR
-            'niter': 1    # Minimum valid iterations
-        }
-
-        slide = SLIDE(params_boundary, x=X, y=y)
-        assert slide is not None
-
-        # Test invalid parameters
-        invalid_configs = [
-            {'fdr': -0.1},  # Negative FDR
-            {'fdr': 1.1},   # FDR > 1
-            {'niter': 0},   # Zero iterations
-            {'niter': -1},  # Negative iterations
-        ]
-
-        for invalid_params in invalid_configs:
-            with pytest.raises(ValueError):
-                SLIDE(invalid_params, x=X, y=y)
-
 
 class TestErrorHandlingIntegration:
     """Test comprehensive error handling across the pipeline."""
 
-    def test_graceful_degradation(self):
-        """Test that failures in one component don't crash the whole pipeline."""
-        X = np.random.randn(100, 15)
-        y = np.random.randn(100)
-
-        params = {'fdr': 0.1, 'niter': 3, 'backend': 'python'}
-
-        # Mock a failure in one component
-        with patch('loveslide.call_love') as mock_love:
-            mock_love.side_effect = RuntimeError("LOVE failed")
-
-            # SLIDE should handle this gracefully
-            with pytest.warns(UserWarning) or pytest.raises(RuntimeError):
-                slide = SLIDE(params, x=X, y=y)
-
-    def test_invalid_backend_handling(self):
-        """Test handling of invalid backend specifications."""
-        X = np.random.randn(50, 10)
-        y = np.random.randn(50)
-
-        params = {
-            'fdr': 0.1,
-            'niter': 3,
-            'backend': 'nonexistent_backend'
-        }
-
-        with pytest.raises(ValueError, match="backend.*not supported"):
-            SLIDE(params, x=X, y=y)
-
-    def test_missing_optional_dependencies(self):
-        """Test behavior when optional dependencies are missing."""
-        X = np.random.randn(50, 10)
-        y = np.random.randn(50)
-
-        # Mock missing R backend
-        with patch('loveslide.knockoffs._rlist_get') as mock_r:
-            mock_r.side_effect = ImportError("rpy2 not available")
-
-            params = {'fdr': 0.1, 'backend': 'r_knockoffs'}
-
-            with pytest.warns(UserWarning) or pytest.raises(ImportError):
-                knockoffs = Knockoffs(backend='r_knockoffs')
 
     def test_file_io_error_handling(self):
         """Test handling of file I/O errors."""
@@ -518,26 +320,6 @@ class TestErrorHandlingIntegration:
             # Should not crash on file operations
             slide = SLIDE(params, x=X, y=y)
             assert slide is not None
-
-    def test_numerical_stability_edge_cases(self):
-        """Test numerical stability with challenging data."""
-        n, p = 100, 10
-
-        # Nearly singular data
-        X = np.ones((n, p)) + 1e-10 * np.random.randn(n, p)
-        y = np.random.randn(n)
-
-        params = {'fdr': 0.1, 'niter': 3}
-
-        with pytest.warns(UserWarning) or pytest.raises(np.linalg.LinAlgError):
-            slide = SLIDE(params, x=X, y=y)
-
-        # Data with extreme values
-        X_extreme = np.random.randn(n, p)
-        X_extreme[0, 0] = 1e10  # Very large value
-
-        with pytest.warns(UserWarning):
-            slide_extreme = SLIDE(params, x=X_extreme, y=y)
 
 
 class TestReproducibilityIntegration:

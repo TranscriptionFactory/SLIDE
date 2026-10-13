@@ -4,15 +4,50 @@ Pytest configuration and fixtures for SLIDE_py tests.
 This module provides shared fixtures and configuration for the test suite.
 """
 
+import functools
+import os
+import shutil
+from pathlib import Path
+
 import pytest
 import numpy as np
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
-def pytest_configure(config):
-    """Configure pytest with custom markers."""
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
-    )
+
+@functools.lru_cache(maxsize=None)
+def r_unavailable_reason():
+    """Return why R-backed tests cannot run, or None when Rscript, rpy2 and R knockoff load."""
+    if shutil.which("Rscript") is None:
+        return "Rscript not found on PATH"
+    try:
+        from rpy2.robjects.packages import importr
+
+        importr("knockoff")
+    except Exception as e:  # rpy2 missing, R/CFFI load failure, or knockoff not installed
+        return f"rpy2 or the R knockoff package is unavailable: {type(e).__name__}: {e}"
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def rust_unavailable_reason():
+    """Return why Rust-binary tests cannot run, or None when the `slide` binary exists."""
+    candidates = [os.environ.get("SLIDE_RS_BIN"), shutil.which("slide")]
+    candidates += [str(_REPO_ROOT / "target" / kind / "slide") for kind in ("release", "debug")]
+    if any(c and Path(c).is_file() for c in candidates):
+        return None
+    return "Rust `slide` binary not found (build with `cargo build --release` or set SLIDE_RS_BIN)"
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip requires_r / requires_rust tests when their toolchain is missing."""
+    checks = {"requires_r": r_unavailable_reason, "requires_rust": rust_unavailable_reason}
+    for item in items:
+        for marker, reason_fn in checks.items():
+            if item.get_closest_marker(marker) is not None:
+                reason = reason_fn()
+                if reason is not None:
+                    item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture(scope="session")

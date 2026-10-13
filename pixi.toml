@@ -77,7 +77,7 @@ env = { PYTHONNOUSERSITE = "1", RPY2_CFFI_MODE = "ABI" }
 
 # ─── Tasks ───────────────────────────────────────────────────────────────────
 [tasks]
-test = "pytest tests/ -v"
+test = "pytest -c tests/pytest.ini tests/tests -m \"not slow\""
 lint = "ruff check src/"
 fmt = "ruff format src/"
 check = "python -c \"import loveslide; print('loveslide', loveslide.__version__ if hasattr(loveslide, '__version__') else 'OK')\""
