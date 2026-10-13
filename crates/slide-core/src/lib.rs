@@ -696,6 +696,7 @@ pub fn optimize_slide_resume(
     finalize_checkpoint(checkpoint)
 }
 
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 pub fn optimize_slide_with_checkpoint(
     path: impl AsRef<Path>,
     x: &Matrix,
@@ -719,6 +720,7 @@ pub fn optimize_slide_with_checkpoint(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 pub fn optimize_slide_with_checkpoint_progress(
     path: impl AsRef<Path>,
     x: &Matrix,
@@ -980,6 +982,7 @@ fn grid_pairs(delta_grid: &[Scalar], lambda_grid: &[Scalar]) -> Vec<(Scalar, Sca
     grid
 }
 
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 fn run_slide_evaluation(
     standardized_x: &Matrix,
     y: &Vector,

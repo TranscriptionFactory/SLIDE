@@ -61,7 +61,7 @@ pub fn cal_fitted_sigma(
         .map(|group| group.pos.len() + group.neg.len())
         .collect();
 
-    if group_sizes.is_empty() || group_sizes.iter().any(|&size| size == 1) {
+    if group_sizes.is_empty() || group_sizes.contains(&1) {
         return Ok(CalFittedSigmaResult {
             pure_vec: None,
             fitted: None,
@@ -222,7 +222,7 @@ fn update_best_loss(
     best_delta: &mut Option<Scalar>,
     best_loss: &mut Scalar,
 ) {
-    if *best_delta == None || loss < *best_loss {
+    if best_delta.is_none() || loss < *best_loss {
         *best_delta = Some(delta);
         *best_loss = loss;
     }

@@ -65,17 +65,9 @@ pub struct StandardizedMatrix {
     pub zero_variance_columns: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OutputWriteOptions {
     pub no_overwrite: bool,
-}
-
-impl Default for OutputWriteOptions {
-    fn default() -> Self {
-        Self {
-            no_overwrite: false,
-        }
-    }
 }
 
 #[derive(Debug, Error)]

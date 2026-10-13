@@ -315,8 +315,8 @@ mod tests {
         let (o, k) = (original.as_ndarray(), knockoff.as_ndarray());
         let p = o.ncols();
         let mut out = Array2::zeros((o.nrows(), 2 * p));
-        for j in 0..p {
-            let (left, right) = if swap[j] { (k.column(j), o.column(j)) } else { (o.column(j), k.column(j)) };
+        for (j, &swapped) in swap.iter().enumerate().take(p) {
+            let (left, right) = if swapped { (k.column(j), o.column(j)) } else { (o.column(j), k.column(j)) };
             out.column_mut(j).assign(&left);
             out.column_mut(p + j).assign(&right);
         }

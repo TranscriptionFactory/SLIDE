@@ -162,6 +162,7 @@ fn gaussian_lasso_path_with_grid_endpoint(
 /// Like `gaussian_lasso_path` but reuses precomputed per-column stats for X
 /// columns and only prepares X_tilde columns from scratch. The `swap` mask
 /// indicates which column pairs have X_j ↔ X_tilde_j swapped.
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 pub fn gaussian_lasso_path_with_left_cache(
     x_cache: &HalfPreparedData,
     tilde_cache: &HalfPreparedData,
@@ -290,11 +291,11 @@ pub fn binomial_lasso_path(
             let eta = x_scaled.dot(&beta_scaled).mapv(|v| v + intercept_scaled);
             let working_residual = y_raw - &eta.mapv(sigmoid);
             let mut kkt_violated = false;
-            for j in 0..p {
-                if !candidate[j] {
+            for (j, is_candidate) in candidate.iter_mut().enumerate().take(p) {
+                if !*is_candidate {
                     let grad = (x_scaled.column(j).dot(&working_residual) / n_f).abs();
                     if grad > lambda_value * config.alpha {
-                        candidate[j] = true;
+                        *is_candidate = true;
                         kkt_violated = true;
                     }
                 }
@@ -552,6 +553,7 @@ fn knockoff_path_config(config: &GaussianLassoPathConfig) -> GaussianLassoPathCo
 /// Like `stat_glmnet_lambdasmax_prebuilt` but reuses precomputed per-column
 /// stats for X and X_tilde, applying the swap mask to assemble PreparedData
 /// without re-centering/scaling the X columns each iteration.
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 pub fn stat_glmnet_lambdasmax_prebuilt_cached(
     x_cache: &HalfPreparedData,
     tilde_cache: &HalfPreparedData,
