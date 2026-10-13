@@ -13,7 +13,7 @@ omni-SLIDE is a Rust rewrite of the SLIDE (Statistical Latent Inference for Disc
 3. **Interaction detection** — tests pairs of selected factors for multiplicative interactions
 4. **Scoring** — reports AUC (binary y) or Pearson correlation (continuous y)
 
-There's a legacy Python wrapper (`src/loveslide/`) that calls R via rpy2. The Rust code in `crates/` is the active implementation.
+The Python package (`src/loveslide/`) implements the same pipeline in Python, with optional R backends via rpy2. The Rust code in `crates/` is the primary implementation.
 
 ---
 
@@ -29,18 +29,17 @@ crates/                        # Rust workspace — the real implementation
 ├── slide-sdp/                 #   SDP solvers (Clarabel-backed)
 ├── slide-types/               #   Matrix/Vector types, linear algebra
 ├── slide-data-io/             #   CSV/TSV I/O
-├── slide-cv/                  #   [STUB — needs implementation]
-└── slide-score/               #   [STUB — needs implementation]
+├── slide-cv/                  #   Final-model cross-validation
+└── slide-score/               #   AUC / correlation scoring
 
-src/loveslide/                 # Python layer (legacy, still used for notebooks + fixtures)
+src/loveslide/                 # Python package (`loveslide run`, OptimizeSLIDE)
 ├── plotting.py                #   Visualization (matplotlib, networkx)
 ├── slide.py                   #   SLIDE/OptimizeSLIDE classes
 ├── love.py                    #   LOVE via rpy2
 ├── knockoffs.py               #   Knockoffs class
 └── ...
 
-docs/                          # Documentation
-specs/                         # Design docs + task tracking
+docs/                          # User docs; docs/dev-notes/ holds design specs and research notes
 example/                       # HIV cytokines example dataset + notebook
 tests/                         # Configs, fixtures, test scripts
 ```
@@ -61,10 +60,10 @@ module load openblas
 cargo build --release
 
 # The binary lands at:
-target/release/slide-cli
+target/release/slide
 ```
 
-### Python (only if you're touching the legacy layer)
+### Python
 
 ```bash
 # Option A — pixi (preferred):
@@ -103,13 +102,13 @@ SLIDE_iter: 500         # knockoff iterations per grid point
 
 ```bash
 # Run:
-slide-cli run --config config.yaml --checkpoint results.json
+slide run --config config.yaml --checkpoint results.json
 
 # Watch in the TUI:
-slide-cli tui --checkpoint results.json
+slide tui --checkpoint results.json
 
 # Or both at once (monitor mode):
-slide-cli monitor --config config.yaml --checkpoint results.json
+slide monitor --config config.yaml --checkpoint results.json
 ```
 
 Results are checkpointed after each (delta, lambda) evaluation. Restarting with the same checkpoint file skips completed evaluations.
@@ -124,6 +123,14 @@ cargo test --workspace
 
 # With stdout visible:
 cargo test --workspace -- --nocapture
+```
+
+```bash
+# Python core suite (R-dependent tests skip when R/knockoff are missing):
+pytest tests/tests -m "not slow"
+
+# Slow end-to-end tests:
+pytest tests/tests -m slow
 ```
 
 The integration test in `slide-core` loads the HIV cytokines fixture from `tests/fixtures/` and checks that the Rust output is close to the R reference.
@@ -182,17 +189,9 @@ The TUI has solid coverage, but the Python plotting layer (`src/loveslide/plotti
 
 If you want to add Python visualizations, use **seaborn** for everything (project convention). Look at the TUI code for the data structures and what fields are available.
 
-### Stub crates that need implementation
-
-Two crates are currently placeholders:
-
-- **`slide-cv`** — cross-validation wrapper. The Python layer has `SLIDEcv` in `src/loveslide/cv.py` as a reference. This should wrap the grid search with k-fold CV.
-- **`slide-score`** — scoring metrics. Currently scoring is done inline in `slide-core/src/lib.rs`. This should be extracted into its own crate with proper AUC and correlation implementations.
-
 ### Other gaps
 
 - **`tests/fixtures/` regeneration** — the R fixture generation script (`.tmp/generate_slide_core_hiv_fixture.R`) needs an R environment. Making this portable or documenting the exact setup would help.
-- **README.md** — currently describes only the Python wrapper. Needs to mention the Rust CLI, YAML config, and TUI.
 
 ---
 

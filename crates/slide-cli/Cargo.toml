@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 publish = false
-description = "CLI for the SLIDE (Statistical Learning for Integrative Data Exploration) pipeline"
+description = "CLI for the SLIDE (Significant Latent Factor Interaction Discovery and Exploration) pipeline"
 
 [lints.rust]
 unsafe_code = "forbid"
