@@ -124,6 +124,7 @@ fn optimize_slide_matches_committed_r_hiv_fixture() {
             family: GlmnetFamily::Binomial,
         },
         final_cv: None,
+        env_overrides: Default::default(),
     };
 
     let result = optimize_slide(

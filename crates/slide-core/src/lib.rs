@@ -14,7 +14,7 @@ use slide_love::{
     compute_z_map, love_cached, LoveCache, LoveConfig, LoveError, LoveResult, ZMatrixError,
 };
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -110,6 +110,8 @@ pub struct OptimizeSlideConfig {
     pub knockoff: MarginalLfSelectionConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_cv: Option<slide_cv::FinalCvConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env_overrides: BTreeMap<String, String>,
 }
 
 impl Default for OptimizeSlideConfig {
@@ -120,6 +122,7 @@ impl Default for OptimizeSlideConfig {
             love: LoveConfig::default(),
             knockoff: MarginalLfSelectionConfig::default(),
             final_cv: None,
+            env_overrides: BTreeMap::new(),
         }
     }
 }
@@ -423,7 +426,7 @@ pub fn find_standalone_lfs(
             });
         }
         knockoff_config.spec += 0.1;
-        eprintln!(
+        log::warn!(
             "[SLIDE] {} marginals reach the sample size {}; increasing spec to {:.2}",
             voting.selected.len(),
             n,
@@ -592,14 +595,14 @@ fn find_interaction_lfs_with_progress(
         }
 
         spec += 0.1;
-        eprintln!(
+        log::warn!(
             "[SLIDE] interaction model exceeded {} terms; increasing spec to {:.2}",
             max_interactions, spec
         );
         // R and python let selection empty out naturally as spec climbs. Bound it
         // here so a pathological run cannot spin forever.
         if spec > 1.0 {
-            eprintln!("[SLIDE] interaction spec exceeded 1.0; returning no interactions");
+            log::warn!("[SLIDE] interaction spec exceeded 1.0; returning no interactions");
             break Vec::new();
         }
     };
@@ -683,7 +686,7 @@ pub fn optimize_slide_resume(
         ) {
             Ok(result) => checkpoint.evaluations.push(Some(result)),
             Err(SlideCoreError::Love(LoveError::DantzigFailed)) => {
-                eprintln!(
+                log::warn!(
                     "[SLIDE] LOVE Dantzig LP solver failed for delta={delta}, lambda={lambda} — skipping"
                 );
                 checkpoint.evaluations.push(None);
@@ -819,7 +822,7 @@ pub fn optimize_slide_with_checkpoint_progress(
         ) {
             Ok(result) => checkpoint.evaluations.push(Some(result)),
             Err(SlideCoreError::Love(LoveError::DantzigFailed)) => {
-                eprintln!(
+                log::warn!(
                     "[SLIDE] LOVE Dantzig LP solver failed for delta={delta}, lambda={lambda} — skipping"
                 );
                 checkpoint.evaluations.push(None);
@@ -1012,7 +1015,7 @@ fn run_slide_evaluation(
 
     let love_result = love_cached(standardized_x, &love_config, love_cache)?;
     let love_elapsed = eval_start.elapsed();
-    eprintln!("[SLIDE timing] LOVE: {:.2}s (K={})", love_elapsed.as_secs_f64(), love_result.k);
+    log::info!("[SLIDE timing] LOVE: {:.2}s (K={})", love_elapsed.as_secs_f64(), love_result.k);
 
     // Write live sidecar so the TUI can display LOVE results immediately.
     write_live_evaluation(
@@ -1033,12 +1036,12 @@ fn run_slide_evaluation(
         &love_result.gamma,
         &love_result.c,
     )?;
-    eprintln!("[SLIDE timing] Z-map: {:.2}s", stage_start.elapsed().as_secs_f64());
+    log::info!("[SLIDE timing] Z-map: {:.2}s", stage_start.elapsed().as_secs_f64());
 
     write_progress(progress_path, &mk(Phase::KnockoffMarginal));
     let stage_start = Instant::now();
     let marginal = find_standalone_lfs(&z, y, &config.knockoff)?;
-    eprintln!("[SLIDE timing] Knockoff marginal: {:.2}s ({} sig LFs)", stage_start.elapsed().as_secs_f64(), marginal.sig_lfs.len());
+    log::info!("[SLIDE timing] Knockoff marginal: {:.2}s ({} sig LFs)", stage_start.elapsed().as_secs_f64(), marginal.sig_lfs.len());
 
     let stage_start = Instant::now();
     let interactions = if config.do_interacts && !marginal.sig_lfs.is_empty() {
@@ -1057,7 +1060,7 @@ fn run_slide_evaluation(
             voting: Vec::new(),
         }
     };
-    eprintln!("[SLIDE timing] Knockoff interactions: {:.2}s ({} sig interacts)", stage_start.elapsed().as_secs_f64(), interactions.sig_interacts.len());
+    log::info!("[SLIDE timing] Knockoff interactions: {:.2}s ({} sig interacts)", stage_start.elapsed().as_secs_f64(), interactions.sig_interacts.len());
 
     write_progress(progress_path, &mk(Phase::Scoring));
     let stage_start = Instant::now();
@@ -1068,8 +1071,8 @@ fn run_slide_evaluation(
         &marginal.sig_lfs,
         config.response_type,
     )?;
-    eprintln!("[SLIDE timing] Scoring: {:.2}s", stage_start.elapsed().as_secs_f64());
-    eprintln!("[SLIDE timing] TOTAL: {:.2}s (delta={}, lambda={})", eval_start.elapsed().as_secs_f64(), delta, lambda);
+    log::info!("[SLIDE timing] Scoring: {:.2}s", stage_start.elapsed().as_secs_f64());
+    log::info!("[SLIDE timing] TOTAL: {:.2}s (delta={}, lambda={})", eval_start.elapsed().as_secs_f64(), delta, lambda);
 
     Ok(SlideRunResult {
         delta,
@@ -1751,6 +1754,7 @@ mod tests {
                 ..MarginalLfSelectionConfig::default()
             },
             final_cv: None,
+            env_overrides: Default::default(),
         };
 
         let result = optimize_slide(&x, &y, &[0.05], &[0.1], &config)
@@ -2140,6 +2144,7 @@ mod tests {
                 ..MarginalLfSelectionConfig::default()
             },
             final_cv: None,
+            env_overrides: Default::default(),
         };
         let delta_grid = [0.05];
         let lambda_grid = [0.1];
