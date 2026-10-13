@@ -2157,7 +2157,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slide-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "ndarray",
@@ -2177,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "slide-cv"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ndarray",
  "rand",
@@ -2192,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "slide-data-io"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "csv",
  "log",
@@ -2206,7 +2206,7 @@ dependencies = [
 
 [[package]]
 name = "slide-glmnet"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ndarray",
  "rayon",
@@ -2217,7 +2217,7 @@ dependencies = [
 
 [[package]]
 name = "slide-knockoff"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "nalgebra",
  "ndarray",
@@ -2233,7 +2233,7 @@ dependencies = [
 
 [[package]]
 name = "slide-love"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "clarabel",
  "highs",
@@ -2250,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "slide-rs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2275,7 +2275,7 @@ dependencies = [
 
 [[package]]
 name = "slide-score"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ndarray",
  "serde",
@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "slide-sdp"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "blas-src",
  "clarabel",
@@ -2299,7 +2299,7 @@ dependencies = [
 
 [[package]]
 name = "slide-types"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "nalgebra",
  "nalgebra-lapack",
