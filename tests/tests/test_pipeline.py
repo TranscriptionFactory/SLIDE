@@ -21,7 +21,6 @@ Test classes:
 
 import os
 import pickle
-import shutil
 import warnings
 from pathlib import Path
 
@@ -30,25 +29,9 @@ import pandas as pd
 import pytest
 
 # ---------------------------------------------------------------------------
-# rpy2 availability guard
-# ---------------------------------------------------------------------------
-try:
-    import rpy2.robjects
-    from rpy2.robjects.packages import importr
-    _knockoff_r = importr('knockoff')
-    RPY2_AVAILABLE = True
-except Exception:
-    RPY2_AVAILABLE = False
-
-requires_rpy2 = pytest.mark.skipif(
-    not RPY2_AVAILABLE,
-    reason="rpy2 or R knockoff package not available"
-)
-
-# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLE_DIR = _PROJECT_ROOT / "example"
 _REFERENCE_BASE = (
     _PROJECT_ROOT
@@ -58,8 +41,6 @@ _REFERENCE_BASE = (
     / "20260122_135613"
 )
 _REF_GLMNET = _REFERENCE_BASE / "Py_pyLOVE_kf_glmnet" / "0.1_0.5_out"
-_TEST_CONFIG = Path(__file__).resolve().parent / "test_config.yaml"
-_TEST_OUTPUTS = Path(__file__).resolve().parent / "test_outputs"
 
 _SSC_X = Path("/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/X.csv")
 _SSC_Y = Path("/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/Y.csv")
@@ -137,12 +118,16 @@ def hiv_data():
 @pytest.fixture(scope="module")
 def reference_A():
     """Load reference A matrix from build check."""
+    if not (_REF_GLMNET / "A.csv").exists():
+        pytest.skip(f"build-check reference outputs not on disk: {_REF_GLMNET}")
     return pd.read_csv(_REF_GLMNET / "A.csv", index_col=0)
 
 
 @pytest.fixture(scope="module")
 def reference_z_matrix():
     """Load reference z_matrix from build check."""
+    if not (_REF_GLMNET / "z_matrix.csv").exists():
+        pytest.skip(f"build-check reference outputs not on disk: {_REF_GLMNET}")
     return pd.read_csv(_REF_GLMNET / "z_matrix.csv", index_col=0)
 
 
@@ -169,14 +154,9 @@ def love_result_on_hiv(hiv_data):
 
 
 @pytest.fixture(scope="module")
-def pipeline_output_dir():
-    """Provide a clean output directory for pipeline tests, cleaned up after."""
-    out = _TEST_OUTPUTS
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True, exist_ok=True)
-    yield out
-    # Don't remove - keep for manual inspection after test run
+def pipeline_output_dir(tmp_path_factory):
+    """Provide a clean output directory for pipeline tests (pytest keeps the last 3 runs)."""
+    return tmp_path_factory.mktemp("pipeline_outputs")
 
 
 @pytest.fixture(scope="module")
@@ -184,7 +164,7 @@ def ssc_data():
     """Load SSc data (24 x 804, continuous outcome MRSS)."""
     pytest.importorskip("pandas")
     if not _SSC_X.exists() or not _SSC_Y.exists():
-        pytest.skip("SSc data files not found")
+        pytest.skip(f"SSc cluster data not on disk: {_SSC_X.parent}")
     X = pd.read_csv(_SSC_X, index_col=0)
     y = pd.read_csv(_SSC_Y, index_col=0).iloc[:, 0]
     return X, y
@@ -271,6 +251,7 @@ class TestLOVEPipeline:
 class TestKnockoffPipeline:
     """Test knockoff selection on HIV latent factors."""
 
+    @pytest.mark.slow
     def test_knockoff_python_backend(self, hiv_data, love_result_on_hiv):
         """Run select_short_freq with python backend on latent factors."""
         from loveslide import Knockoffs
@@ -472,19 +453,10 @@ class TestDSDPFallback:
     """Verify SDP solver detection chain works."""
 
     def test_sdp_solver_detection(self):
-        """_get_sdp_solver should return 'dsdp' or 'cvxpy' (not None)."""
-        from loveslide.knockoff.solve import _get_sdp_solver, _SDP_SOLVER
+        """The default SDP solver is DSDP, with no implicit cvxpy fallback."""
+        from loveslide.knockoff.solve import _get_sdp_solver
 
-        # Reset cached value to force re-detection
-        import loveslide.knockoff.solve as solve_mod
-        solve_mod._SDP_SOLVER = None
-
-        solver = _get_sdp_solver()
-        assert solver in ("dsdp", "cvxpy"), f"No SDP solver found: {solver}"
-        print(f"\nSDP solver: {solver}")
-
-        # Restore
-        solve_mod._SDP_SOLVER = solver
+        assert _get_sdp_solver() == "dsdp"
 
     def test_sdp_solve_produces_valid_diag(self):
         """create_solve_sdp should produce valid diag_s for a small matrix."""
@@ -507,7 +479,7 @@ class TestDSDPFallback:
 # ===========================================================================
 # 7. Backend Comparison Tests (HIV data, requires rpy2)
 # ===========================================================================
-@requires_rpy2
+@pytest.mark.requires_r
 @pytest.mark.slow
 class TestBackendComparison:
     """Compare Python, r_knockoffs, and full R backends on HIV data."""
@@ -711,7 +683,7 @@ class TestSScPipeline:
 # ===========================================================================
 # 9. SSc Backend Comparison Tests (requires rpy2)
 # ===========================================================================
-@requires_rpy2
+@pytest.mark.requires_r
 @pytest.mark.slow
 class TestSScBackendComparison:
     """Compare Python, r_knockoffs, and full R backends on SSc data."""

@@ -450,6 +450,7 @@ class TestFeatureChunking:
         assert total == p
 
     @pytest.mark.skipif(not _slide_voting_available, reason="knockoff_filter_voting_slide not yet implemented")
+    @pytest.mark.slow
     def test_chunking_preserves_feature_indices(self, large_feature_data):
         """
         Verify selected indices from chunks map back to original feature space.
@@ -491,6 +492,7 @@ class TestFeatureChunking:
 class TestTwoStageScreening:
     """Tests for two-stage screening behavior with multiple chunks."""
 
+    @pytest.mark.slow
     def test_second_stage_runs_on_combined_candidates(self, large_feature_data):
         """
         Verify second-stage knockoff runs on combined screened variables.
@@ -724,6 +726,7 @@ class TestKnockoffFilterVotingSlide:
         assert result.spec == 0.1  # R default
         assert result.niter == 5   # Our override
 
+    @pytest.mark.slow
     def test_stability_rule_returns_the_frequency_set(self, simple_data):
         """
         slide_selection=False reports exactly the frequency set: every feature
@@ -790,6 +793,7 @@ class TestKnockoffFilterVotingSlide:
             # Expect reasonable precision (>50%) for strong signals
             assert precision > 0.3 or true_positives >= 3
 
+    @pytest.mark.slow
     def test_slide_with_large_features(self, large_feature_data):
         """
         Test SLIDE wrapper with features requiring chunking.

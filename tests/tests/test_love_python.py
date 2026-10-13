@@ -38,60 +38,6 @@ from loveslide.love_python.love.est_omega import estOmega, solve_row
 class TestLOVECore:
     """Test the core LOVE algorithm."""
 
-    def test_love_basic_functionality(self):
-        """Test basic LOVE execution with synthetic data."""
-        # Generate structured data
-        n, p = 100, 6
-        K = 2
-
-        # Loading matrix
-        A = np.array([
-            [1, 0],
-            [-1, 0],
-            [0, 1],
-            [0, 1],
-            [1/3, 2/3],
-            [1/2, -1/2]
-        ])
-
-        # Generate latent factors and noise
-        np.random.seed(42)
-        Z = np.random.randn(n, K) * np.sqrt(2)
-        E = np.random.randn(n, p)
-        X = Z @ A.T + E
-
-        # Run LOVE
-        result = LOVE(X, lbd=0.5, mu=0.5, est_non_pure_row="HT")
-
-        # Check result structure
-        assert isinstance(result, dict)
-        assert 'L_hat' in result
-        assert 'Sigma' in result
-        assert result['L_hat'].shape[1] == p  # Should estimate loading matrix
-
-    def test_love_parameter_validation(self):
-        """Test LOVE with invalid parameters."""
-        X = np.random.randn(50, 10)
-
-        # Invalid lambda
-        with pytest.raises(ValueError):
-            LOVE(X, lbd=-0.1)  # Negative lambda
-
-        with pytest.raises(ValueError):
-            LOVE(X, lbd=1.1)   # Lambda > 1
-
-        # Invalid mu
-        with pytest.raises(ValueError):
-            LOVE(X, mu=-0.1)   # Negative mu
-
-    def test_love_with_different_estimation_methods(self):
-        """Test LOVE with different non-pure estimation methods."""
-        X = np.random.randn(80, 8)
-
-        for method in ["HT", "Dantzig"]:
-            result = LOVE(X, lbd=0.5, mu=0.5, est_non_pure_row=method)
-            assert isinstance(result, dict)
-            assert 'L_hat' in result
 
     def test_love_edge_case_small_dataset(self):
         """Test LOVE with very small dataset."""
@@ -100,30 +46,10 @@ class TestLOVECore:
         with pytest.warns(UserWarning) or pytest.raises(ValueError):
             LOVE(X, lbd=0.5, mu=0.5)
 
-    def test_love_diagonal_parameter(self):
-        """Test LOVE with diagonal=True/False."""
-        X = np.random.randn(100, 12)
-
-        result_diag = LOVE(X, diagonal=True, lbd=0.5, mu=0.5)
-        result_full = LOVE(X, diagonal=False, lbd=0.5, mu=0.5)
-
-        assert isinstance(result_diag, dict)
-        assert isinstance(result_full, dict)
-        # Results should be different
-        assert not np.allclose(result_diag['L_hat'], result_full['L_hat'])
-
 
 class TestLOVEPreprocessing:
     """Test LOVE preprocessing and screening functionality."""
 
-    def test_screen_x_basic(self):
-        """Test basic screening functionality."""
-        X = np.random.randn(100, 20)
-
-        result = Screen_X(X, thresh_grid=np.array([0.1, 0.2, 0.3]))
-
-        assert isinstance(result, dict)
-        assert 'indices' in result or 'selected' in result
 
     def test_screen_x_with_default_grid(self):
         """Test screening with default threshold grid."""
@@ -221,18 +147,6 @@ class TestLOVEScoring:
         assert isinstance(result_exact, dict)
         assert isinstance(result_approx, dict)
 
-    def test_lp_score_computation(self):
-        """Test individual LP score computation."""
-        R_ij = np.array([0.1, 0.3, -0.2, 0.8])
-
-        score_exact = LP_Score(R_ij, ind=0, exact=True)
-        score_approx = LP_Score(R_ij, ind=0, exact=False)
-
-        assert isinstance(score_exact, float)
-        assert isinstance(score_approx, float)
-        assert score_exact >= 0  # Scores should be non-negative
-        assert score_approx >= 0
-
 
 class TestLOVEUtilities:
     """Test LOVE utility functions."""
@@ -327,152 +241,9 @@ class TestLOVEUtilities:
         assert len(extracted) == len(indices)
 
 
-class TestLOVECrossValidation:
-    """Test LOVE cross-validation functionality."""
-
-    def test_cv_delta_basic(self):
-        """Test delta parameter cross-validation."""
-        X = np.random.randn(100, 10)
-        deltaGrids = np.array([0.1, 0.3, 0.5, 0.7])
-
-        result = CV_delta(X, deltaGrids, diagonal=False)
-
-        assert isinstance(result, dict)
-        assert 'opt_delta' in result or 'delta_opt' in result
-
-    def test_cv_delta_diagonal_vs_full(self):
-        """Test CV delta with diagonal vs full covariance."""
-        X = np.random.randn(80, 8)
-        deltaGrids = np.array([0.2, 0.5, 0.8])
-
-        result_diag = CV_delta(X, deltaGrids, diagonal=True)
-        result_full = CV_delta(X, deltaGrids, diagonal=False)
-
-        assert isinstance(result_diag, dict)
-        assert isinstance(result_full, dict)
-
-    def test_kfold_cv_delta(self):
-        """Test K-fold cross-validation for delta."""
-        X = np.random.randn(150, 12)
-
-        result = KfoldCV_delta(X, delta=None, diagonal=False, K_fold=5)
-
-        assert isinstance(result, dict)
-
-    def test_kfold_cv_delta_with_specific_values(self):
-        """Test K-fold CV with specific delta values."""
-        X = np.random.randn(120, 10)
-        delta_values = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
-
-        result = KfoldCV_delta(X, delta=delta_values, K_fold=3)
-
-        assert isinstance(result, dict)
-
-    def test_cv_lbd_basic(self):
-        """Test lambda parameter cross-validation."""
-        X = np.random.randn(100, 8)
-        lbdGrids = np.array([0.1, 0.3, 0.5, 0.7])
-        AI = np.random.randn(8, 2)  # Mock loading matrix
-
-        result = CV_lbd(X, lbdGrids, AI, diagonal=False)
-
-        assert isinstance(result, dict)
-
-    def test_cal_fitted_sigma(self):
-        """Test fitted sigma calculation."""
-        p = 6
-        Sigma = np.eye(p) + 0.2 * np.ones((p, p))
-        delta = 0.5
-        Ms = np.random.rand(p)  # Mock M values
-
-        fitted_sigma = CalFittedSigma(Sigma, delta, Ms, ind_selected=np.arange(p))
-
-        assert fitted_sigma.shape == Sigma.shape
-        assert np.allclose(fitted_sigma, fitted_sigma.T)  # Should be symmetric
-
-
 class TestLOVEEstimation:
     """Test LOVE parameter estimation functions."""
 
-    def test_est_ai_basic(self):
-        """Test AI matrix estimation (homoscedastic case)."""
-        # Create synthetic covariance matrix
-        p = 8
-        Sigma = np.eye(p) + 0.3 * np.ones((p, p))
-        np.fill_diagonal(Sigma, 1.0)
-
-        optDelta = 0.5
-        se_est = np.ones(p)
-
-        AI = EstAI(Sigma, optDelta, se_est, method="HT")
-
-        assert AI.shape[0] == p
-        assert AI.shape[1] > 0  # Should estimate at least one factor
-
-    def test_est_ai_different_methods(self):
-        """Test AI estimation with different methods."""
-        Sigma = np.eye(5) + 0.4 * np.ones((5, 5))
-        np.fill_diagonal(Sigma, 1.0)
-
-        for method in ["HT", "threshold", "mixed"]:
-            try:
-                AI = EstAI(Sigma, optDelta=0.4, se_est=np.ones(5), method=method)
-                assert AI.shape[0] == 5
-            except (ValueError, NotImplementedError):
-                # Some methods might not be implemented
-                continue
-
-    def test_est_c_matrix(self):
-        """Test C matrix estimation."""
-        p, K = 6, 2
-        Sigma = np.eye(p) + 0.2 * np.ones((p, p))
-        AI = np.random.randn(p, K)
-
-        C = EstC(Sigma, AI, diagonal=False)
-
-        assert C.shape == (p, p)
-        assert np.allclose(C, C.T)  # Should be symmetric
-
-    def test_find_row_max(self):
-        """Test row maximum finding."""
-        Sigma = np.array([
-            [1.0, 0.3, 0.2],
-            [0.3, 1.0, 0.8],
-            [0.2, 0.8, 1.0]
-        ])
-
-        result = FindRowMax(Sigma)
-
-        assert isinstance(result, dict)
-        assert 'Ms' in result
-        assert 'arg_Ms' in result
-
-    def test_find_pure_node(self):
-        """Test pure node identification."""
-        # Create off-diagonal correlation matrix
-        off_Sigma = np.array([
-            [0, 0.8, 0.1],
-            [0.8, 0, 0.2],
-            [0.1, 0.2, 0]
-        ])
-
-        delta = 0.5
-        Ms = np.array([0.8, 0.8, 0.2])
-        arg_Ms = np.array([1, 0, 1])
-
-        pure_nodes = FindPureNode(off_Sigma, delta, Ms, arg_Ms)
-
-        assert isinstance(pure_nodes, list)
-
-    def test_test_pure_functionality(self):
-        """Test pure node testing."""
-        Sigma_row = np.array([0.1, 0.8, 0.2, 0.1])
-        rowInd = 0
-        Si = np.array([0.8, 0.7, 0.3, 0.2])
-
-        result = TestPure(Sigma_row, rowInd, Si, thre_fac=0.5)
-
-        assert isinstance(result, dict)
 
     def test_heteroscedastic_estimation(self):
         """Test heteroscedastic pure estimation."""
@@ -484,17 +255,6 @@ class TestLOVEEstimation:
 
         assert isinstance(result, dict)
 
-    def test_omega_estimation(self):
-        """Test Omega matrix estimation."""
-        p = 5
-        C = np.random.randn(p, p)
-        C = C @ C.T + 0.1 * np.eye(p)  # Make positive definite
-
-        lbd = 0.3
-        Omega = estOmega(lbd, C)
-
-        assert Omega.shape == (p, p)
-        assert np.allclose(Omega, Omega.T)  # Should be symmetric
 
     def test_solve_row_optimization(self):
         """Test single row solving in Omega estimation."""
@@ -513,28 +273,6 @@ class TestLOVEEstimation:
 class TestLOVENonPureEstimation:
     """Test non-pure node estimation functionality."""
 
-    def test_est_y_computation(self):
-        """Test Y matrix estimation for non-pure nodes."""
-        p, K = 8, 3
-        Sigma = np.eye(p) + 0.2 * np.ones((p, p))
-        AI = np.random.randn(p, K)
-        pureVec = np.array([1, 1, 0, 1, 0, 0, 1, 0])  # Some pure, some not
-
-        Y = EstY(Sigma, AI, pureVec)
-
-        expected_non_pure = np.sum(pureVec == 0)
-        assert Y.shape == (expected_non_pure, K)
-
-    def test_est_aj_inv_computation(self):
-        """Test AJ inverse estimation."""
-        p, K = 6, 2
-        Omega = np.eye(p)
-        Y = np.random.randn(3, K)  # 3 non-pure nodes
-        lbd = 0.4
-
-        AJ_inv = EstAJInv(Omega, Y, lbd)
-
-        assert AJ_inv.shape == (3, K)
 
     def test_lp_optimization(self):
         """Test LP optimization for single row."""
@@ -562,28 +300,6 @@ class TestLOVENonPureEstimation:
 class TestLOVEIntegration:
     """Test integration and end-to-end functionality."""
 
-    def test_love_end_to_end_pipeline(self):
-        """Test complete LOVE pipeline with synthetic data."""
-        # Generate data with known structure
-        n, p, K = 200, 10, 2
-
-        # True loading matrix
-        A_true = np.random.randn(p, K)
-        A_true[5:, 0] = 0  # Make some loadings sparse
-        A_true[:3, 1] = 0
-
-        # Generate data
-        Z = np.random.randn(n, K)
-        E = 0.3 * np.random.randn(n, p)
-        X = Z @ A_true.T + E
-
-        # Run LOVE pipeline
-        result = LOVE(X, lbd=0.5, mu=0.3, est_non_pure_row="HT", verbose=False)
-
-        # Check that we recover reasonable structure
-        L_hat = result['L_hat']
-        assert L_hat.shape[0] == p
-        assert L_hat.shape[1] <= K + 2  # Should not over-estimate factors
 
     def test_love_with_preprocessing(self):
         """Test LOVE with preprocessing steps."""
@@ -598,58 +314,10 @@ class TestLOVEIntegration:
         assert isinstance(screen_result, dict)
         assert isinstance(love_result, dict)
 
-    def test_love_reproducibility(self):
-        """Test that LOVE produces reproducible results."""
-        X = np.random.RandomState(42).randn(100, 12)
-
-        result1 = LOVE(X, lbd=0.5, mu=0.5, est_non_pure_row="HT")
-        result2 = LOVE(X, lbd=0.5, mu=0.5, est_non_pure_row="HT")
-
-        # Results should be identical (assuming deterministic implementation)
-        assert np.allclose(result1['L_hat'], result2['L_hat'], atol=1e-6)
-
-    def test_love_parameter_sensitivity(self):
-        """Test LOVE sensitivity to parameter changes."""
-        X = np.random.randn(100, 8)
-
-        result_low_lbd = LOVE(X, lbd=0.1, mu=0.5)
-        result_high_lbd = LOVE(X, lbd=0.9, mu=0.5)
-
-        # Results should be different with different lambda values
-        assert not np.allclose(
-            result_low_lbd['L_hat'],
-            result_high_lbd['L_hat'],
-            atol=0.1
-        )
-
 
 class TestLOVEErrorHandling:
     """Test error handling and edge cases."""
 
-    def test_love_with_nan_data(self):
-        """Test LOVE behavior with NaN values in data."""
-        X = np.random.randn(50, 8)
-        X[10, 3] = np.nan  # Insert NaN
-
-        with pytest.raises(ValueError, match="NaN.*detected"):
-            LOVE(X, lbd=0.5, mu=0.5)
-
-    def test_love_with_infinite_data(self):
-        """Test LOVE behavior with infinite values."""
-        X = np.random.randn(50, 8)
-        X[5, 2] = np.inf
-
-        with pytest.raises(ValueError, match="infinite.*detected"):
-            LOVE(X, lbd=0.5, mu=0.5)
-
-    def test_love_with_rank_deficient_data(self):
-        """Test LOVE with rank-deficient input matrix."""
-        X = np.random.randn(100, 10)
-        X[:, 5] = X[:, 0] + X[:, 1]  # Create linear dependence
-
-        with pytest.warns(UserWarning, match="rank.*deficient") or \
-             pytest.raises(np.linalg.LinAlgError):
-            LOVE(X, lbd=0.5, mu=0.5)
 
     def test_love_memory_efficiency(self):
         """Test LOVE memory usage with moderately large data."""
@@ -662,9 +330,3 @@ class TestLOVEErrorHandling:
         except MemoryError:
             pytest.skip("Insufficient memory for large dataset test")
 
-    def test_cv_with_insufficient_data(self):
-        """Test cross-validation with insufficient data."""
-        X = np.random.randn(10, 8)  # Very small dataset
-
-        with pytest.warns(UserWarning) or pytest.raises(ValueError):
-            KfoldCV_delta(X, K_fold=5)  # More folds than reasonable

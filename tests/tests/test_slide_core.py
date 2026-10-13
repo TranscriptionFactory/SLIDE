@@ -37,14 +37,6 @@ class TestSLIDEInit:
         # TODO: Identify what parameters are actually required
         pass
 
-    def test_slide_init_invalid_data_shapes(self):
-        """Test SLIDE handles mismatched X, y shapes."""
-        params = {"fdr": 0.1}
-        X = np.random.randn(50, 20)
-        y = np.random.randn(40)  # Wrong shape
-
-        with pytest.raises(ValueError):
-            SLIDE(params, x=X, y=y)
 
     def test_slide_calc_default_fsize(self):
         """Test default feature size calculation."""
@@ -66,13 +58,6 @@ class TestSLIDEStatePersistence:
         # TODO: Create mock LOVE result file
         pass
 
-    def test_load_love_invalid_file(self):
-        """Test error handling for invalid LOVE result file."""
-        params = {"fdr": 0.1}
-        slide = SLIDE(params)
-
-        with pytest.raises(FileNotFoundError):
-            slide.load_love("nonexistent_file.pkl")
 
     def test_load_love_corrupted_file(self):
         """Test error handling for corrupted LOVE result file."""

@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pytest
+from joblib.externals.loky import get_reusable_executor
 
 from loveslide.knockoff.filter import (
     VotingResult,
@@ -39,6 +40,8 @@ def test_profiling_disabled_preserves_return_type(monkeypatch, tmp_path):
 def test_profiling_emits_all_iteration_stages(monkeypatch, tmp_path, n_jobs):
     profile = tmp_path / "profile.jsonl"
     monkeypatch.setenv("SLIDE_KNOCKOFF_PROFILE", str(profile))
+    # Workers read the env var at spawn; drop loky workers reused from earlier tests.
+    get_reusable_executor().shutdown(wait=True)
     result = _run(monkeypatch, n_jobs)
     records = [json.loads(line) for line in profile.read_text().splitlines()]
     assert isinstance(result, VotingResult)
