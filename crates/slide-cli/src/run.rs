@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -33,6 +34,7 @@ pub struct RunArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunConfig {
     pub x_path: PathBuf,
     pub y_path: PathBuf,
@@ -98,6 +100,20 @@ pub struct RunCvConfig {
     pub eval_type: Option<String>,
 }
 
+const RESULT_CHANGING_ENV_VARS: [&str; 4] = [
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA",
+    "SLIDE_KNOCKOFF_TOL",
+    "SLIDE_KNOCKOFF_MAX_ITER",
+    "SLIDE_KNOCKOFF_MATCH_R_COV",
+];
+
+fn active_env_overrides() -> BTreeMap<String, String> {
+    RESULT_CHANGING_ENV_VARS
+        .iter()
+        .filter_map(|&name| std::env::var(name).ok().map(|value| (name.to_string(), value)))
+        .collect()
+}
+
 pub fn run(args: RunArgs) -> Result<()> {
     run_pipeline(&args.config, &args.checkpoint)?;
     Ok(())
@@ -112,6 +128,19 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
         .with_context(|| format!("failed to read config file: {}", config.display()))?;
     let cfg: RunConfig =
         serde_yaml::from_str(&yaml).with_context(|| "failed to parse YAML config")?;
+    let mut opt_config = optimize_config_from_run_config(&cfg)?;
+    opt_config.env_overrides = active_env_overrides();
+    if !opt_config.env_overrides.is_empty() {
+        let active: Vec<String> = opt_config
+            .env_overrides
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        log::warn!(
+            "environment overrides change knockoff results: {}; recorded as config.env_overrides in the checkpoint",
+            active.join(", ")
+        );
+    }
 
     eprintln!("Loading feature matrix from {}", cfg.x_path.display());
     let loaded = read_feature_matrix(&cfg.x_path, &MatrixReadOptions::default())
@@ -121,8 +150,6 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
     eprintln!("Loading response vector from {}", cfg.y_path.display());
     let y = read_response_vector(&cfg.y_path, &ResponseReadOptions::default())
         .with_context(|| format!("failed to read response vector: {}", cfg.y_path.display()))?;
-
-    let opt_config = optimize_config_from_run_config(&cfg)?;
 
     eprintln!(
         "Starting SLIDE optimization: {} delta(s) x {} lambda(s) = {} evaluations",

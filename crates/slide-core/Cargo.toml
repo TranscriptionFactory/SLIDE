@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 ndarray.workspace = true
 rayon.workspace = true
+log = "0.4"
 serde.workspace = true
 serde_json = "1.0"
 sha2 = "0.10"

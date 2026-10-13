@@ -2159,6 +2159,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 name = "slide-core"
 version = "0.1.0"
 dependencies = [
+ "log",
  "ndarray",
  "rayon",
  "serde",
@@ -2255,6 +2256,7 @@ dependencies = [
  "clap",
  "crossterm",
  "csv",
+ "log",
  "ndarray",
  "ratatui",
  "rayon",
