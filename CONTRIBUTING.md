@@ -228,7 +228,7 @@ The best (delta, lambda) by score is selected at the end. Checkpoint files inclu
 ## Questions?
 
 Ask Aaron, or check:
-- `specs/design.md` — full architectural rationale
-- `specs/tasks.md` — detailed task checklist with completion status
+- `docs/dev-notes/specs/design.md` — full architectural rationale
+- `docs/dev-notes/specs/tasks.md` — detailed task checklist with completion status
 - `docs/tui-guide.md` — TUI user guide
 - `example/example.ipynb` — Jupyter notebook walkthrough
