@@ -139,6 +139,9 @@ dev = [
     "ruff>=0.15.9",
 ]
 
+[project.scripts]
+loveslide = "loveslide.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/alw399/SLIDE_py"
 Issues = "https://github.com/alw399/SLIDE_py/issues"
