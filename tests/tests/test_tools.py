@@ -100,6 +100,39 @@ class TestInitData:
             init_data(params, x=X, y=y)
 
 
+class TestInitDataYFactor:
+    """init_data(y_factor=True) encodes y of any container type as 0..k-1 labels."""
+
+    @pytest.mark.parametrize(
+        "make_y",
+        [
+            lambda idx: np.array(["case", "ctrl", "case", "ctrl"]),
+            lambda idx: np.array([3, 5, 3, 5]),
+            lambda idx: np.array([[3], [5], [3], [5]]),
+            lambda idx: pd.Series(["case", "ctrl", "case", "ctrl"], index=idx),
+            lambda idx: pd.DataFrame({"y": [3.0, 5.0, 3.0, 5.0]}, index=idx),
+        ],
+        ids=["numpy-str", "numpy-int", "numpy-column", "series", "dataframe"],
+    )
+    def test_y_factor_encodes_any_y_container(self, make_y):
+        idx = ["a", "b", "c", "d"]
+        X = pd.DataFrame(np.random.randn(4, 3), index=idx)
+
+        data, params = init_data({}, x=X, y=make_y(idx))
+
+        assert params["y_factor"] is True
+        assert isinstance(data.Y, (pd.Series, pd.DataFrame))
+        assert data.Y.values.ravel().tolist() == [0, 1, 0, 1]
+        assert list(data.Y.index) == idx
+
+    def test_numpy_x_and_y_become_aligned_frames(self):
+        data, _ = init_data({}, x=np.random.randn(4, 3), y=np.array([1, 0, 1, 0]))
+
+        assert isinstance(data.X, pd.DataFrame) and isinstance(data.Y, pd.DataFrame)
+        assert data.X.index.equals(data.Y.index)
+        assert data.Y.values.ravel().tolist() == [1, 0, 1, 0]
+
+
 class TestShowParams:
     """Test show_params function for parameter display."""
 
