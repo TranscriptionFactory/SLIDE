@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+publish = false
 description = "Shared types and linear algebra primitives for the SLIDE pipeline"
 
 [lints.rust]

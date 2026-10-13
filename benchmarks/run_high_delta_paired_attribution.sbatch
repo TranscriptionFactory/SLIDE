@@ -36,9 +36,9 @@ export RAYON_NUM_THREADS=1
 export LIBRARY_PATH="$ROOT/.pixi/envs/dev/lib:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="$ROOT/.pixi/envs/dev/lib:${LD_LIBRARY_PATH:-}"
 
-rust_bin="$ROOT/target/release/paired_xtilde"
+rust_bin="$ROOT/target/release/examples/paired_xtilde"
 if [[ ! -x "$rust_bin" ]]; then
-    echo "ERROR: $rust_bin is missing; prebuild before array submission"
+    echo "ERROR: $rust_bin is missing; prebuild with cargo build --release -p slide-rs --example paired_xtilde"
     exit 1
 fi
 if [[ -e "$out" ]]; then

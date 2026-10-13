@@ -14,4 +14,4 @@ out=$1; shift
 "$ENV/bin/python" benchmarks/replay_paired_xtilde.py \
   --fixtures .tmpfiles/2026-09-14_paired-convergence/results \
   --sampler-audit .tmpfiles/2026-09-28_sampler-audit/run_5 \
-  --rust-bin target/release/paired_xtilde --out "$out" "$@"
+  --rust-bin target/release/examples/paired_xtilde --out "$out" "$@"
