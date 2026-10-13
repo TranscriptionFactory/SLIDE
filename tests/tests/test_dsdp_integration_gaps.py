@@ -10,7 +10,9 @@ from unittest.mock import Mock, patch, MagicMock
 from loveslide.knockoff.solve import (
     create_solve_sdp, create_solve_asdp, _get_sdp_solver
 )
-from loveslide.dsdp_solver import pydsdp5
+pydsdp5 = pytest.importorskip(
+    "loveslide.dsdp_solver.pydsdp5", reason="DSDP C extension not built (pip install . or python setup.py build_ext --inplace)"
+)
 
 
 class TestSDPSolverFallback:
