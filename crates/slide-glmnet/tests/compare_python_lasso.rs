@@ -2,9 +2,16 @@ use ndarray::{Array1, Array2};
 use slide_glmnet::{gaussian_lasso_path, GaussianLassoPathConfig};
 use slide_types::{Matrix, Vector};
 use std::fs;
+use std::path::PathBuf;
 
-fn load_csv_matrix(path: &str) -> Array2<f64> {
-    let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {path}: {e}"));
+fn compare_dir() -> PathBuf {
+    PathBuf::from(std::env::var("SLIDE_COMPARE_DIR").expect(
+        "SLIDE_COMPARE_DIR must point to a directory holding augmented_chunk0.csv and y_vector.csv",
+    ))
+}
+
+fn load_csv_matrix(path: &std::path::Path) -> Array2<f64> {
+    let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
     let rows: Vec<Vec<f64>> = content
         .lines()
         .filter(|l| !l.is_empty())
@@ -21,8 +28,8 @@ fn load_csv_matrix(path: &str) -> Array2<f64> {
     arr
 }
 
-fn load_csv_vector(path: &str) -> Array1<f64> {
-    let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {path}: {e}"));
+fn load_csv_vector(path: &std::path::Path) -> Array1<f64> {
+    let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
     Array1::from_iter(
         content
             .lines()
@@ -45,9 +52,11 @@ fn count_ties(entries: &ndarray::Array1<f64>, p: usize) -> usize {
 }
 
 #[test]
+#[ignore = "requires externally generated CSVs: set SLIDE_COMPARE_DIR to a directory with augmented_chunk0.csv and y_vector.csv"]
 fn compare_tolerances() {
-    let x_arr = load_csv_matrix("/tmp/augmented_chunk0.csv");
-    let y_arr = load_csv_vector("/tmp/y_vector.csv");
+    let dir = compare_dir();
+    let x_arr = load_csv_matrix(&dir.join("augmented_chunk0.csv"));
+    let y_arr = load_csv_vector(&dir.join("y_vector.csv"));
     let (_n, two_p) = (x_arr.nrows(), x_arr.ncols());
     let p = two_p / 2;
 
