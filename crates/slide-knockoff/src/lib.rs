@@ -1693,8 +1693,8 @@ mod tests {
                 counts_noswap[idx] += 1;
             }
 
-            for j in 0..p {
-                corr_accum[j] += pearson(za.column(j), xta.column(j)).abs();
+            for (j, accum) in corr_accum.iter_mut().enumerate().take(p) {
+                *accum += pearson(za.column(j), xta.column(j)).abs();
             }
         }
 

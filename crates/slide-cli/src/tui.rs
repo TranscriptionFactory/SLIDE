@@ -442,7 +442,7 @@ impl App {
         }
 
         // Read live evaluation sidecar when no real runs exist yet.
-        let has_real_runs = self.data.as_ref().map_or(false, |d| !d.runs.is_empty());
+        let has_real_runs = self.data.as_ref().is_some_and(|d| !d.runs.is_empty());
         if has_real_runs {
             self.clear_live_state();
             return;
@@ -592,10 +592,8 @@ impl App {
             KeyCode::Backspace => {
                 self.feature_search_input.pop();
             }
-            KeyCode::Char(c) => {
-                if !c.is_control() {
-                    self.feature_search_input.push(c);
-                }
+            KeyCode::Char(c) if !c.is_control() => {
+                self.feature_search_input.push(c);
             }
             _ => {}
         }
@@ -1981,6 +1979,7 @@ impl App {
             return empty_table(title);
         };
         let k = run.love.k;
+        #[allow(clippy::type_complexity)] // one-off tuple; a named alias would not be reused
         let mut rows_data: BTreeMap<(usize, usize), (bool, Option<Scalar>, Option<Scalar>)> =
             BTreeMap::new();
         for &(left, right) in &run.interactions.sig_interacts {
@@ -2829,6 +2828,7 @@ struct DashboardData {
 }
 
 #[derive(Debug, Default)]
+#[allow(clippy::type_complexity)] // one-off tuple; a named alias would not be reused
 struct DerivedDashboardData {
     standardized_x: Option<Matrix>,
     y: Option<Vector>,
@@ -3503,6 +3503,7 @@ fn matrix_title(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 fn loading_matrix_status_title(
     label: &'static str,
     mode: LoadingRowMode,

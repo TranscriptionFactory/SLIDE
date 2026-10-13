@@ -7,11 +7,6 @@ const ABS_TOL: f64 = 1.0e-6;
 const REL_TOL: f64 = 1.0e-6;
 const FEASIBILITY_FLOOR: f64 = 1.0e-10;
 
-// Relaxed tolerance for SDP/ASDP tests: the closed-form feasibility scaling
-// (replacing the 64-step binary search) produces valid but numerically different
-// results. Feasibility is verified separately; this tolerance is for rough agreement.
-const SDP_REL_TOL: f64 = 0.25;
-
 #[test]
 fn equi_matches_r_knockoff_fixture() {
     let fixture = fixture_dir("corr3");
@@ -155,17 +150,6 @@ fn assert_vector_close(actual: &Array1<f64>, expected: &Array1<f64>) {
     assert_eq!(actual.len(), expected.len());
     for (&actual_value, &expected_value) in actual.iter().zip(expected.iter()) {
         assert_close(actual_value, expected_value);
-    }
-}
-
-fn assert_vector_close_relaxed(actual: &Array1<f64>, expected: &Array1<f64>, rel_tol: f64) {
-    assert_eq!(actual.len(), expected.len());
-    for (&actual_value, &expected_value) in actual.iter().zip(expected.iter()) {
-        let tolerance = ABS_TOL.max(rel_tol * expected_value.abs());
-        assert!(
-            (actual_value - expected_value).abs() <= tolerance,
-            "expected {expected_value:.12e}, got {actual_value:.12e}, tolerance {tolerance:.12e}"
-        );
     }
 }
 

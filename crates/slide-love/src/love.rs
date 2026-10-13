@@ -356,6 +356,7 @@ fn select_homogeneous_delta(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 fn resolve_homogeneous_estimate<F>(
     sigma: &Matrix,
     x: &Matrix,
@@ -396,6 +397,7 @@ where
     Ok((result_ai, opt_delta))
 }
 
+#[allow(clippy::type_complexity)] // one-off tuple; a named alias would not be reused
 fn heterogeneous_path(
     x: &Matrix,
     config: &LoveConfig,
@@ -487,6 +489,7 @@ fn heterogeneous_path(
     ))
 }
 
+#[allow(clippy::too_many_arguments)] // independent inputs; a one-off params struct would add no clarity
 fn estimate_non_pure_rows(
     sigma: &Matrix,
     x: &Matrix,

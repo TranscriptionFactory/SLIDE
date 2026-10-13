@@ -568,7 +568,7 @@ mod tests {
         };
 
         let lower = decomposition.lower_factor().to_nalgebra();
-        assert_matrix_close(&lower, &dmatrix![2.0, 0.0; 1.0, 1.4142135623730951], 1.0e-9);
+        assert_matrix_close(&lower, &dmatrix![2.0, 0.0; 1.0, std::f64::consts::SQRT_2], 1.0e-9);
 
         let solved_vector = match decomposition.solve_vector(&rhs_vector, "Sigma") {
             Ok(value) => value,
