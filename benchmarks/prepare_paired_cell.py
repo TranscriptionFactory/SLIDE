@@ -10,6 +10,8 @@ import json
 import math
 from pathlib import Path
 
+from loveslide.tools import calc_default_fsize
+
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -37,21 +39,22 @@ def verify_matrix(rows: list[list[str]], saved: dict, label: str) -> float:
     return max(abs(a - b) for a, b in zip(values, saved["data"]))
 
 
-def prepare(cell_dir: Path, checkpoint: Path, y_csv: Path, out: Path) -> dict:
+def prepare(cell_dir: Path, checkpoint: Path, y_csv: Path, out: Path, delta: float = 0.1,
+            lam: float = 1.0, shape: tuple[int, int] = (24, 88), union_size: int = 11) -> dict:
     sources = {"z": cell_dir / "z_matrix.csv", "a": cell_dir / "A.csv",
                "y": y_csv, "checkpoint": checkpoint}
     saved = json.loads(checkpoint.read_text())
     if len(saved["evaluations"]) != 1:
         raise ValueError("Expected a single-cell checkpoint")
     cell = saved["evaluations"][0]
-    if cell["delta"] != 0.1 or cell["lambda"] != 1.0:
-        raise ValueError("Expected the delta=0.1, lambda=1.0 cell")
+    if cell["delta"] != delta or cell["lambda"] != lam:
+        raise ValueError(f"Expected the delta={delta}, lambda={lam} cell")
     zh, z = read_csv(sources["z"])
     ah, a = read_csv(sources["a"])
     yh, y = read_csv(y_csv)
     n, p = len(z), len(zh) - 1
-    if (n, p) != (24, 88):
-        raise ValueError("Expected the saved 24 x 88 high-delta design")
+    if (n, p) != tuple(shape):
+        raise ValueError(f"Expected the saved {shape[0]} x {shape[1]} design")
     if zh[1:] != [f"Z{i}" for i in range(p)] or ah[1:] != zh[1:]:
         raise ValueError("A/Z column names or order differ")
     if len(y) != n or len(yh) != 2 or sha256(y_csv) != saved["y_ref"]["sha256"]:
@@ -62,17 +65,16 @@ def prepare(cell_dir: Path, checkpoint: Path, y_csv: Path, out: Path) -> dict:
     samples = [row[0] for row in y]
     if original_samples not in (samples, [f"V{i + 1}" for i in range(n)]):
         raise ValueError("Z sample order is neither Y labels nor verified positional labels")
-    # calc_default_fsize(24, 88) = 24; select_short_freq balances four chunks.
-    f_size = saved["config"]["knockoff"]["f_size"] or n
-    if f_size != 24:
-        raise ValueError("Expected marginal f_size=24")
+    # As in SLIDE's select_short_freq: calc_default_fsize(24, 88) = 24 gives four
+    # balanced chunks of 22; calc_default_fsize(24, 172) = 24 gives eight (seven of 22, one of 18).
+    f_size = saved["config"]["knockoff"]["f_size"] or calc_default_fsize(n, p)
     splits = math.ceil(p / f_size)
     width = math.ceil(p / splits)
     designs = [(f"marginal_chunk_{i + 1}", list(range(i * width, min((i + 1) * width, p))))
                for i in range(splits)]
     union = cell["marginal"]["voting"]["stage_one_union"]
-    if len(union) != 11 or union != sorted(set(union)) or any(i < 0 or i >= p for i in union):
-        raise ValueError("Expected the saved ordered 11-column second-stage union")
+    if len(union) != union_size or union != sorted(set(union)) or any(i < 0 or i >= p for i in union):
+        raise ValueError(f"Expected the saved ordered {union_size}-column second-stage union")
     designs.append(("rust_stage_two_union", union))
     metadata = {
         "delta": cell["delta"], "lambda": cell["lambda"],
@@ -116,8 +118,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ("cell-dir", "checkpoint", "y-csv", "out"):
         parser.add_argument(f"--{option}", type=Path, required=True)
+    parser.add_argument("--delta", type=float, default=0.1)
+    parser.add_argument("--lambda", dest="lam", type=float, default=1.0)
+    parser.add_argument("--shape", type=int, nargs=2, default=[24, 88], metavar=("N", "P"))
+    parser.add_argument("--union-size", type=int, default=11)
     args = parser.parse_args()
-    prepare(args.cell_dir, args.checkpoint, args.y_csv, args.out)
+    prepare(args.cell_dir, args.checkpoint, args.y_csv, args.out, args.delta, args.lam,
+            args.shape, args.union_size)
 
 
 if __name__ == "__main__":
