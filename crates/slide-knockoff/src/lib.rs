@@ -86,7 +86,7 @@ pub struct KnockoffConfig {
     /// Defaults to `true`, matching native-R SLIDE. Set `false` to report the
     /// frequency (stability) set instead; that lowers run-to-run variance
     /// within a backend but measurably widens cross-backend divergence, so it
-    /// is not the default (see docs/backend-benchmark.md).
+    /// is not the default (see docs/dev-notes/backend-benchmark.md).
     pub slide_selection: bool,
     pub f_size: Option<usize>,
     pub family: GlmnetFamily,

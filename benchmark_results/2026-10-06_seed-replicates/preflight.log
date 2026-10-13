@@ -1,4 +1,0 @@
-files compared: 12
-dorng pair differing files: []
-stock pair differing files: ['pure_r/0.1_1.0_out/ControlPerformance.rds', 'pure_r/0.1_1.0_out/SLIDE_LFs.rds', 'pure_r/0.1_1.0_out/feature_list_Z12.txt', 'pure_r/0.1_1.0_out/feature_list_Z16.txt', 'pure_r/0.1_1.0_out/feature_list_Z19.txt', 'pure_r/0.1_1.0_out/feature_list_Z33.txt', 'pure_r/0.1_1.0_out/feature_list_Z39.txt', 'pure_r/0.1_1.0_out/feature_list_Z45.txt', 'pure_r/0.1_1.0_out/feature_list_Z56.txt', 'pure_r/0.1_1.0_out/feature_list_Z59.txt', 'pure_r/0.1_1.0_out/feature_list_Z62.txt', 'pure_r/0.1_1.0_out/feature_list_Z63.txt', 'pure_r/0.1_1.0_out/feature_list_Z67.txt', 'pure_r/0.1_1.0_out/feature_list_Z68.txt', 'pure_r/0.1_1.0_out/feature_list_Z70.txt', 'pure_r/0.1_1.0_out/feature_list_Z74.txt', 'pure_r/0.1_1.0_out/feature_list_Z77.txt', 'pure_r/0.1_1.0_out/feature_list_Z8.txt', 'pure_r/0.1_1.0_out/sig_LFs.txt', 'pure_r/0.1_1.0_out/sig_interacts.txt']
-PREFLIGHT PASS

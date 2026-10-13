@@ -1,6 +1,0 @@
-design,draws,draws_with_positive_ties,positive_ties_total,draws_matching_counterfactual,selection_changed_vs_baseline,baseline_draws_matching_r,fixed_draws_matching_r,fixed_draws_matching_python,baseline_findOptIter,fixed_findOptIter,r_findOptIter,python_findOptIter,aggregate_matches_counterfactual,aggregate_matches_saved_tie_zero,rust_bin_sha256
-marginal_chunk_1,1000,1000,9320,1000,336,521,725,942,0;5,0;10,0;10,0;10,True,True,2812a73861084df76bbca270d1d4e0476da721ddcaab5df5c2d623b1b95f0286
-marginal_chunk_2,1000,1000,8820,1000,454,544,926,916,3;11;17,3;10;11;16,3;10;11;16,3;10;11;16,True,True,2812a73861084df76bbca270d1d4e0476da721ddcaab5df5c2d623b1b95f0286
-marginal_chunk_3,1000,1000,7582,1000,408,594,936,939,0;17,0;8;11;18,0;8;11;18,0;8;11;18,True,True,2812a73861084df76bbca270d1d4e0476da721ddcaab5df5c2d623b1b95f0286
-marginal_chunk_4,1000,1000,10653,1000,585,419,842,847,0;3;10;21,0;3;9;10;12;18;19;20,0;3;9;10;12;18;19;20,0;3;9;10;12;18;19;20,True,True,2812a73861084df76bbca270d1d4e0476da721ddcaab5df5c2d623b1b95f0286
-rust_stage_two_union,1000,312,320,1000,58,901,944,945,0;1;2;3;4;5;6;7;8;9;10,1;2;3;4;5;6;7;8;9;10,0;1;2;3;4;5;6;7;8;9;10,0;1;2;3;4;5;6;7;8;9;10,True,True,2812a73861084df76bbca270d1d4e0476da721ddcaab5df5c2d623b1b95f0286

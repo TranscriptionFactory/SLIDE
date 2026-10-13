@@ -1,7 +1,0 @@
-left,right,mean_per_draw_jaccard,final_findOptIter_jaccard
-python,r,1.0,1.0
-python,rust_250,0.9386307491059666,1.0
-python,rust_500,0.966923133822699,1.0
-r,rust_250,0.9386307491059666,1.0
-r,rust_500,0.966923133822699,1.0
-rust_250,rust_500,0.9618462977602108,1.0
