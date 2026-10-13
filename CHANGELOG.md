@@ -11,6 +11,7 @@ First production release of the Rust `slide` CLI/TUI and the Python
 - Config files reject unknown keys and invalid `knockoff_backend` values before loading data.
 - `SLIDE_KNOCKOFF_*` environment overrides print a warning and are recorded as `config.env_overrides` in the checkpoint.
 - `paired_xtilde` moved from an installed binary to an example; all crates are `publish = false`.
+- The Gaussian lasso preserves active-set entry order to reproduce R's near-duplicate knockoff ties (W = 0). Knockoff tolerance is now 1e-7 and max_iter 1e5 for both Gaussian and binomial fits; the binomial active-set algorithm is unchanged. See `benchmark_results/2026-10-13_glmnet-tie-diagnosis`.
 - `cargo test --workspace` passes on a clean clone (parity fixtures are now tracked; tests that need external CSVs are `#[ignore]`d); `cargo clippy --all-targets` is warning-free.
 
 ### Python (`loveslide`)

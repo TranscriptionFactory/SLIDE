@@ -514,13 +514,13 @@ fn knockoff_match_r_lambda() -> bool {
     })
 }
 
-const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-4;
-const DEFAULT_KNOCKOFF_MAX_ITER: usize = 1_000;
+const DEFAULT_KNOCKOFF_TOLERANCE: Scalar = 1.0e-7;
+const DEFAULT_KNOCKOFF_MAX_ITER: usize = 100_000;
 
 /// Returns `(tolerance, max_iter)` for the knockoff CD path, allowing
 /// env-var overrides:
-///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-4) — CD convergence threshold
-///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 1000) — per-lambda CD iter cap
+///   - `SLIDE_KNOCKOFF_TOL`      (default 1e-7) — CD convergence threshold
+///   - `SLIDE_KNOCKOFF_MAX_ITER` (default 100000) — per-lambda CD iter cap
 ///
 /// Read once per process via OnceLock so we don't hit getenv per knockoff iter.
 fn knockoff_cd_tunables() -> (Scalar, usize) {
@@ -1246,6 +1246,7 @@ pub struct GaussianCdWorkspace {
     residual: Array1<Scalar>,
     candidate_indices: Vec<usize>,
     active_indices: Vec<usize>,
+    in_active: Vec<bool>,
     in_candidate: Vec<bool>,
     ever_nonzero: Vec<bool>,
 }
@@ -1258,6 +1259,7 @@ impl GaussianCdWorkspace {
             residual: Array1::zeros(n),
             candidate_indices: Vec::with_capacity(total_p),
             active_indices: Vec::with_capacity(total_p),
+            in_active: vec![false; total_p],
             in_candidate: vec![false; total_p],
             ever_nonzero: vec![false; total_p],
         }
@@ -1269,6 +1271,7 @@ impl GaussianCdWorkspace {
         self.residual.assign(y_centered);
         self.candidate_indices.clear();
         self.active_indices.clear();
+        self.in_active.fill(false);
         self.in_candidate.fill(false);
         self.ever_nonzero.fill(false);
     }
@@ -1332,6 +1335,7 @@ fn run_gaussian_cd(
                 config.max_iter,
                 &ws.candidate_indices,
                 &mut ws.active_indices,
+                &mut ws.in_active,
             );
 
             let mut kkt_violated = false;
@@ -1345,6 +1349,7 @@ fn run_gaussian_cd(
                     }
                 }
             }
+            ws.candidate_indices.sort_unstable();
             if !kkt_violated {
                 break;
             }
@@ -1418,17 +1423,9 @@ fn coordinate_descent_step(
     max_iter: usize,
     candidate_indices: &[usize],
     active_indices: &mut Vec<usize>,
+    in_active: &mut [bool],
 ) -> usize {
     let n = x.nrows();
-
-    // Active set: non-zero betas within the candidate set
-    active_indices.clear();
-    active_indices.extend(
-        candidate_indices
-            .iter()
-            .copied()
-            .filter(|&j| beta[j].abs() > 0.0),
-    );
 
     let mut iters_done = 0usize;
     for _ in 0..max_iter {
@@ -1462,13 +1459,12 @@ fn coordinate_descent_step(
             n,
         );
 
-        active_indices.clear();
-        active_indices.extend(
-            candidate_indices
-                .iter()
-                .copied()
-                .filter(|&j| beta[j].abs() > 0.0),
-        );
+        for &j in candidate_indices {
+            if beta[j] != 0.0 && !in_active[j] {
+                active_indices.push(j);
+                in_active[j] = true;
+            }
+        }
 
         if candidate_change.max(max_change) < convergence_threshold {
             break;
@@ -1842,10 +1838,59 @@ mod tests {
     }
 
     #[test]
-    fn knockoff_cd_defaults_use_fast_path() {
+    fn knockoff_cd_defaults_match_glmnet() {
         let (tolerance, max_iter) = super::knockoff_cd_tunables();
-        assert_eq!(tolerance, 1.0e-4);
-        assert_eq!(max_iter, 1_000);
+        assert_eq!(tolerance, 1.0e-7);
+        assert_eq!(max_iter, 100_000);
+    }
+
+    #[test]
+    fn near_duplicate_knockoff_pair_ties_under_both_swaps() {
+        // Column 0's knockoff is x0 + 1e-5·e. The other columns enter first and sit
+        // between the pair in [X | X̃], so a column-order active sweep zeroes the
+        // second copy. glmnet's entry-order sweep enters both at the same lambda.
+        let (n, p) = (30, 6);
+        let mut state: u64 = 94;
+        let draws: Vec<f64> = (0..n * (2 * p + 2))
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+            })
+            .collect();
+        let u = |i: usize, k: usize| draws[k * n + i];
+        let x = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((n, p), |(i, j)| u(i, j)));
+        let x_tilde = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((n, p), |(i, j)| {
+            if j == 0 {
+                u(i, 0) + 1.0e-5 * u(i, 2 * p)
+            } else {
+                u(i, p + j)
+            }
+        }));
+        let y_values = ndarray::Array1::from_iter((0..n).map(|i| {
+            u(i, 0) + (1..p).map(|j| 2.0 * u(i, j)).sum::<f64>() + 0.3 * u(i, 2 * p + 1)
+        }));
+        let y_mean = y_values.mean().unwrap_or(0.0);
+        let y_centered = y_values.mapv(|v| v - y_mean);
+        let y = Vector::from_ndarray(y_values);
+        let x_cache = super::HalfPreparedData::new(&x, &y_centered, true);
+        let tilde_cache = super::HalfPreparedData::new(&x_tilde, &y_centered, true);
+        let config = GaussianLassoPathConfig {
+            nlambda: 100,
+            ..GaussianLassoPathConfig::default()
+        };
+        let mut workspace = super::GaussianCdWorkspace::new(n, 2 * p);
+        for swap0 in [false, true, false] {
+            let mut swap = vec![false; p];
+            swap[0] = swap0;
+            let statistic = super::stat_glmnet_lambdasmax_prebuilt_cached(
+                &x_cache, &tilde_cache, &swap, p, &y, y_mean, &y_centered,
+                GlmnetFamily::Gaussian, &config, &mut workspace,
+            )
+            .unwrap_or_else(|error| panic!("cached knockoff path failed: {error}"));
+            assert_eq!(statistic.as_ndarray()[0], 0.0, "swap {swap:?}: W = {statistic:?}");
+        }
     }
 
     #[test]
@@ -1904,6 +1949,7 @@ mod tests {
         let mut beta = arr1(&[0.0, 0.0]);
         let mut residual = arr1(&[2.0, 1.0]);
         let mut active_indices = Vec::new();
+        let mut in_active = vec![false; 2];
         let iterations = coordinate_descent_step(
             &x,
             &column_sq_norm,
@@ -1915,6 +1961,7 @@ mod tests {
             2,
             &[0, 1],
             &mut active_indices,
+            &mut in_active,
         );
 
         assert_eq!(iterations, 2);
