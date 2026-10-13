@@ -19,4 +19,4 @@ path = "src/lib.rs"
 ndarray.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-slide-types = { version = "0.1.0", path = "../slide-types" }
+slide-types = { version = "1.0.0", path = "../slide-types" }

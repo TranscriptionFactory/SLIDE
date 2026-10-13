@@ -23,6 +23,6 @@ rand_distr = "0.4"
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-slide-glmnet = { version = "0.1.0", path = "../slide-glmnet" }
-slide-sdp = { version = "0.1.0", path = "../slide-sdp" }
-slide-types = { version = "0.1.0", path = "../slide-types" }
+slide-glmnet = { version = "1.0.0", path = "../slide-glmnet" }
+slide-sdp = { version = "1.0.0", path = "../slide-sdp" }
+slide-types = { version = "1.0.0", path = "../slide-types" }
