@@ -15,9 +15,15 @@ logger = logging.getLogger(__name__)
 try:
     from loveslide.knockoff._vendor.glmnet import ElasticNet, LogitNet
     HAS_GLMNET = True
-except ImportError:
+except ImportError as e:
     HAS_GLMNET = False
-    logger.debug("Vendored glmnet not available, using sklearn fallback")
+    # Module import runs once per process, so this warns once.
+    logger.warning(
+        f"Vendored Fortran glmnet not available ({e}); knockoff statistics will use "
+        "the sklearn fallback, which does not match R's glmnet. The bundled "
+        "_glmnet extension is prebuilt for CPython 3.9/3.11 on Linux x86_64; rebuild "
+        "it with `pixi run build-glmnet` for other platforms."
+    )
 
 
 def _r_scale(X: np.ndarray) -> tuple:

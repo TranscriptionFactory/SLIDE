@@ -22,7 +22,8 @@ except ImportError:
     except ImportError:
         raise ImportError(
             "DSDP C extension not available. Either:\n"
-            "  - Rebuild the bundled extension: cd src/loveslide/dsdp_solver && python setup.py build_ext --inplace\n"
+            "  - Rebuild the bundled extension from the repository root: pip install -e . "
+            "(or python setup.py build_ext --inplace)\n"
             "  - Install the system package: pip install pydsdp"
         )
 

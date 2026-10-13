@@ -1,6 +1,7 @@
 """Optimization solvers for knockoff construction."""
 
 from typing import List, Tuple, Optional
+import logging
 import warnings
 import numpy as np
 from scipy import linalg
@@ -8,35 +9,40 @@ from scipy.cluster.hierarchy import linkage, fcluster
 
 from .utils import is_posdef, cov2cor
 
+logger = logging.getLogger(__name__)
 
-# Track which SDP solver is available
-_SDP_SOLVER = None
+SDP_SOLVERS = ("dsdp", "cvxpy")
+
+_DSDP_MISSING_MESSAGE = (
+    "The DSDP C extension (loveslide.dsdp_solver.pydsdp5) is not available, "
+    "and knockoff SDPs require it by default to match R's Rdsdp solver.\n"
+    "Build it from the repository root with a C compiler and BLAS/LAPACK:\n"
+    "  pip install -e .            (or: python setup.py build_ext --inplace)\n"
+    "  HPC: module load gcc openblas | Debian/Ubuntu: apt install libopenblas-dev | "
+    "macOS: brew install openblas | conda: conda install openblas\n"
+    "To use the slower, non-R-matching cvxpy solver instead, pass "
+    "sdp_solver='cvxpy' (SLIDE input_params key 'sdp_solver')."
+)
 
 
-def _get_sdp_solver():
-    """Determine which SDP solver is available."""
-    global _SDP_SOLVER
-    if _SDP_SOLVER is not None:
-        return _SDP_SOLVER
+def _get_sdp_solver(solver: str = "dsdp") -> str:
+    """Return the requested SDP solver name after checking that it can be imported.
 
-    # Try DSDP first (exact R match)
+    DSDP is the default and is required unless the caller explicitly selects
+    'cvxpy'; there is no silent fallback between the two.
+    """
+    if solver not in SDP_SOLVERS:
+        raise ValueError(f"sdp_solver must be one of {SDP_SOLVERS}, got {solver!r}")
+
+    if solver == "cvxpy":
+        import cvxpy  # noqa: F401
+        return solver
+
     try:
-        from .pydsdp import dsdp
-        _SDP_SOLVER = 'dsdp'
-        return _SDP_SOLVER
-    except ImportError:
-        pass
-
-    # Try cvxpy fallback
-    try:
-        import cvxpy as cp
-        _SDP_SOLVER = 'cvxpy'
-        return _SDP_SOLVER
-    except ImportError:
-        pass
-
-    _SDP_SOLVER = None
-    return _SDP_SOLVER
+        from .pydsdp import dsdp  # noqa: F401
+    except ImportError as e:
+        raise ImportError(_DSDP_MISSING_MESSAGE) from e
+    return solver
 
 
 def _solve_sdp_cvxpy(
@@ -195,6 +201,7 @@ def create_solve_sdp(
     gaptol: float = 1e-6,
     maxit: int = 1000,
     verbose: bool = False,
+    solver: str = "dsdp",
     **kwargs
 ) -> np.ndarray:
     """
@@ -205,8 +212,7 @@ def create_solve_sdp(
         subject to  0 <= s <= 1
                     2*Sigma - diag(s) >= 0 (positive semidefinite)
 
-    This implementation tries DSDP first (for exact R compatibility),
-    then falls back to cvxpy if DSDP is not available.
+    DSDP (exact R compatibility) is used unless ``solver='cvxpy'`` is passed.
 
     Parameters
     ----------
@@ -218,21 +224,25 @@ def create_solve_sdp(
         Maximum number of iterations for the solver.
     verbose : bool, default=False
         Whether to display progress.
+    solver : {'dsdp', 'cvxpy'}, default='dsdp'
+        SDP solver. 'dsdp' requires the bundled C extension and raises
+        ImportError when it is missing; 'cvxpy' must be selected explicitly.
 
     Returns
     -------
     np.ndarray of shape (p,)
         The solution s to the optimization problem.
+
+    Raises
+    ------
+    ImportError
+        If the selected solver is not installed.
+    RuntimeError
+        If DSDP raises while solving.
     """
     from scipy import sparse
 
-    solver = _get_sdp_solver()
-    if solver is None:
-        raise ImportError(
-            "No SDP solver available. Install either:\n"
-            "  - scikit-dsdp (for exact R match): rebuild C extension in dsdp_solver/\n"
-            "  - cvxpy (pure Python fallback): pip install cvxpy"
-        )
+    solver = _get_sdp_solver(solver)
 
     Sigma = np.asarray(Sigma)
 
@@ -252,13 +262,10 @@ def create_solve_sdp(
         )
 
     if verbose:
-        print(f"Solving SDP using {solver} ... ", end="", flush=True)
+        logger.info(f"Solving SDP using {solver}")
 
-    # Use cvxpy if DSDP is not available
     if solver == 'cvxpy':
         s_val = _solve_sdp_cvxpy(G, gaptol=gaptol, maxit=maxit, verbose=verbose)
-        if verbose:
-            print("done.")
     else:
         # Use DSDP (exact R compatibility)
         from .pydsdp import dsdp
@@ -324,11 +331,7 @@ def create_solve_sdp(
         try:
             sol = dsdp(A_mat, b_mat, c_mat, K, OPTIONS)
         except Exception as e:
-            warnings.warn(f"DSDP solver failed with error: {e}")
-            return np.zeros(p) * np.diag(Sigma)
-
-        if verbose:
-            print("done.")
+            raise RuntimeError(f"DSDP solver failed for a {p}x{p} SDP: {e}") from e
 
         # Check solution status
         if sol['STATS']['stype'] != 'PDFeasible':
@@ -343,7 +346,7 @@ def create_solve_sdp(
 
     # Compensate for numerical errors (feasibility)
     if verbose:
-        print("Verifying that the solution is correct ... ", end="", flush=True)
+        logger.info("Verifying that the solution is correct")
 
     # Match R's feasibility shrinkage: allow up to 10% (s_eps <= 0.1)
     s_eps = 1e-8
@@ -356,9 +359,6 @@ def create_solve_sdp(
 
     s_val = s_val * (1 - s_eps)
     s_val = np.clip(s_val, 0, 1)
-
-    if verbose:
-        print("done.")
 
     # Verify solution
     if np.all(s_val == 0):
@@ -395,7 +395,7 @@ def create_solve_sdp(
         alpha = alpha_low * 0.99
         diag_s = diag_s * alpha
         if verbose:
-            print(f"(Sigma feasibility: scaled by {alpha:.3f})")
+            logger.info(f"Sigma feasibility: scaled by {alpha:.3f}")
 
     return diag_s
 
@@ -513,6 +513,7 @@ def create_solve_asdp(
     gaptol: float = 1e-6,
     maxit: int = 1000,
     verbose: bool = False,
+    solver: str = "dsdp",
     **kwargs
 ) -> np.ndarray:
     """
@@ -533,6 +534,8 @@ def create_solve_asdp(
         Maximum number of iterations.
     verbose : bool, default=False
         Whether to display progress.
+    solver : {'dsdp', 'cvxpy'}, default='dsdp'
+        SDP solver passed to :func:`create_solve_sdp`.
 
     Returns
     -------
@@ -549,26 +552,29 @@ def create_solve_asdp(
 
     # If small enough, use full SDP
     if p <= max_size:
-        return create_solve_sdp(Sigma, gaptol=gaptol, maxit=maxit, verbose=verbose)
+        return create_solve_sdp(
+            Sigma, gaptol=gaptol, maxit=maxit, verbose=verbose, solver=solver
+        )
 
     if verbose:
-        print(f"Dividing the problem into subproblems of size <= {max_size} ... ", end="", flush=True)
+        logger.info(f"Dividing the problem into subproblems of size <= {max_size}")
 
     # Divide into blocks
     clusters, sub_sigmas = _divide_sdp(Sigma, max_size)
     n_blocks = int(np.max(clusters))
 
     if verbose:
-        print("done.")
-        print(f"Solving {n_blocks} smaller SDPs ... ")
+        logger.info(f"Solving {n_blocks} smaller SDPs")
 
     # Solve SDPs for each block
     s_list = []
     for k in range(n_blocks):
-        s_k = create_solve_sdp(sub_sigmas[k], gaptol=gaptol, maxit=maxit, verbose=False)
+        s_k = create_solve_sdp(
+            sub_sigmas[k], gaptol=gaptol, maxit=maxit, verbose=False, solver=solver
+        )
         s_list.append(s_k)
         if verbose:
-            print(f"  Block {k + 1}/{n_blocks} done")
+            logger.info(f"Block {k + 1}/{n_blocks} done")
 
     # Assemble solutions
     idx_count = np.zeros(n_blocks, dtype=int)
@@ -581,7 +587,7 @@ def create_solve_asdp(
 
     # Maximize shrinkage factor via binary search
     if verbose:
-        print(f"Combining the solutions of the {n_blocks} smaller SDPs ... ", end="", flush=True)
+        logger.info(f"Combining the solutions of the {n_blocks} smaller SDPs")
 
     gamma_range = np.linspace(0, 1, 1000)
 
@@ -614,8 +620,7 @@ def create_solve_asdp(
     s_asdp_scaled = gamma_opt * s_asdp
 
     if verbose:
-        print("done.")
-        print("Verifying that the solution is correct ... ", end="", flush=True)
+        logger.info("Verifying that the solution is correct")
 
     # Verify solution
     if not is_posdef(2 * Sigma - np.diag(s_asdp_scaled)):
@@ -624,8 +629,5 @@ def create_solve_asdp(
             "Knockoffs will have no power."
         )
         s_asdp_scaled = np.zeros(p)
-
-    if verbose:
-        print("done.")
 
     return s_asdp_scaled

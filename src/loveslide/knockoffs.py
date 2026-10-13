@@ -1,9 +1,7 @@
 import numpy as np
 import pandas as pd
 import os, pickle, sys
-from concurrent.futures import ProcessPoolExecutor
 import math
-from pqdm.processes import pqdm
 from functools import partial
 from tqdm import tqdm
 import copy
@@ -331,6 +329,7 @@ class Knockoffs:
         offset=0,
         fstat="glmnet_lambdasmax",
         n_jobs=-1,
+        sdp_solver="dsdp",
         **kwargs,
     ):
         """Run knockoff filter using pure Python package with parallel processing.
@@ -365,6 +364,9 @@ class Knockoffs:
             - 'glmnet_coefdiff': Coefficient difference at CV-selected lambda
         n_jobs : int
             Number of parallel jobs. -1 uses all available cores.
+        sdp_solver : {'dsdp', 'cvxpy'}
+            SDP solver for 'sdp'/'asdp'. DSDP is required unless 'cvxpy' is
+            selected explicitly.
         **kwargs
             Additional keyword arguments (ignored).
 
@@ -412,20 +414,12 @@ class Knockoffs:
         logger.info(
             f"Pre-computing SDP solution for {p} features using method={method}"
         )
-        try:
-            if method == "equi":
-                diag_s = create_solve_equi(Sigma)
-            elif method == "asdp":
-                diag_s = create_solve_asdp(Sigma)
-            else:
-                diag_s = create_solve_sdp(Sigma)
-        except ImportError as e:
-            # Fall back to equi only if solver package not installed
-            logger.warning(
-                f"SDP/ASDP solver not available ({e}), falling back to equi method"
-            )
-            method = "equi"
+        if method == "equi":
             diag_s = create_solve_equi(Sigma)
+        elif method == "asdp":
+            diag_s = create_solve_asdp(Sigma, solver=sdp_solver)
+        else:
+            diag_s = create_solve_sdp(Sigma, solver=sdp_solver)
 
         # Match R: if SDP returns all zeros, return empty (no power)
         if np.all(diag_s == 0):
@@ -723,7 +717,9 @@ class Knockoffs:
         verbose : bool
             Print progress information. Default: False.
         **kwargs
-            Additional arguments passed to knockoff_filter_voting_slide.
+            Additional arguments passed to knockoff_filter_voting_slide, e.g.
+            ``sdp_solver='cvxpy'`` to opt out of the default DSDP solver
+            (python backend; r_knockoffs always uses R's SDP).
 
         Returns
         -------
@@ -881,7 +877,9 @@ class Knockoffs:
             run-to-run variance within a backend but measurably widens
             cross-backend divergence (see docs/backend-benchmark.md).
         **kwargs
-            Additional arguments passed to knockoff_filter_voting_slide.
+            Additional arguments passed to knockoff_filter_voting_slide, e.g.
+            ``sdp_solver='cvxpy'`` to opt out of the default DSDP solver
+            (python backend; r_knockoffs always uses R's SDP).
 
         Returns
         -------

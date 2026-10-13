@@ -1,9 +1,10 @@
 """
 Setup script for loveslide with optional C extension.
 
-The dsdp_solver C extension provides fast SDP solving via DSDP.
-If compilation fails (missing BLAS/LAPACK or compiler), the package
-still installs successfully and falls back to cvxpy for SDP solving.
+The dsdp_solver C extension provides the DSDP SDP solver that knockoff
+construction requires by default (it matches R's Rdsdp). If compilation fails
+(missing BLAS/LAPACK or compiler), the package still installs, but knockoff
+SDPs raise ImportError unless sdp_solver='cvxpy' is selected explicitly.
 
 Environment variables for customization:
     BLAS_LIB_DIR    - Directory containing BLAS library
@@ -31,15 +32,15 @@ class OptionalBuildExt(build_ext):
     def build_extension(self, ext):
         try:
             super().build_extension(ext)
-            print(f"\n✓ Successfully built {ext.name}")
-            print("  DSDP acceleration is available for fast SDP solving.\n")
+            print(f"\nSuccessfully built {ext.name}: DSDP SDP solver available.\n")
         except Exception as e:
             warnings.warn(
-                f"\n⚠️  Could not build C extension '{ext.name}': {e}\n"
-                "   DSDP acceleration unavailable; cvxpy fallback will be used.\n"
-                "   This is fine - loveslide will work correctly, just slower for SDP.\n"
+                f"\nCould not build C extension '{ext.name}': {e}\n"
+                "   Knockoff SDPs require DSDP and will raise ImportError at run time\n"
+                "   unless sdp_solver='cvxpy' is selected explicitly (slower, and its\n"
+                "   solutions do not match R's Rdsdp).\n"
                 "\n"
-                "   To enable DSDP acceleration:\n"
+                "   To build DSDP, install BLAS/LAPACK and a C compiler, then reinstall:\n"
                 "   - On HPC: module load gcc openblas\n"
                 "   - On Ubuntu/Debian: apt install libopenblas-dev\n"
                 "   - On macOS: brew install openblas\n"
