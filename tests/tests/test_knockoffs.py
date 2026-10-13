@@ -11,6 +11,8 @@ Major gaps identified:
 - Memory efficiency with large datasets
 - Parallelization correctness
 """
+import sys
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -149,13 +151,63 @@ class TestKnockoffCreation:
 class TestSDPSolvers:
     """Test SDP solving for knockoff generation."""
 
-    def test_solver_selection_fallback(self):
-        """Test SDP solver selection and fallback behavior."""
+    @staticmethod
+    def _sigma(p=6):
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(60, p))
+        return np.cov(X, rowvar=False)
+
+    @staticmethod
+    def _hide_dsdp(monkeypatch):
+        # A None entry in sys.modules makes `from .pydsdp import dsdp` raise ImportError.
+        monkeypatch.setitem(sys.modules, "loveslide.knockoff.pydsdp", None)
+
+    def test_default_solver_is_dsdp(self):
         from loveslide.knockoff.solve import _get_sdp_solver
 
-        # Should return a valid solver name
-        solver = _get_sdp_solver()
-        assert solver in ['cvxpy', 'dsdp', 'equicorrelated']
+        pytest.importorskip("loveslide.dsdp_solver.pydsdp5")
+        assert _get_sdp_solver() == "dsdp"
+
+    def test_unknown_solver_rejected(self):
+        with pytest.raises(ValueError, match="sdp_solver"):
+            create_solve_sdp(self._sigma(), solver="scs")
+
+    def test_missing_dsdp_raises_instead_of_cvxpy_fallback(self, monkeypatch):
+        self._hide_dsdp(monkeypatch)
+        with pytest.raises(ImportError, match="sdp_solver='cvxpy'"):
+            create_solve_sdp(self._sigma())
+        with pytest.raises(ImportError, match="build_ext --inplace"):
+            create_solve_asdp(self._sigma())
+
+    def test_cvxpy_is_explicit_opt_in(self, monkeypatch):
+        pytest.importorskip("cvxpy")
+        self._hide_dsdp(monkeypatch)
+        Sigma = self._sigma()
+        s = create_solve_sdp(Sigma, solver="cvxpy")
+        assert s.shape == (Sigma.shape[0],)
+        assert np.all(s > 0)
+        assert is_posdef(2 * Sigma - np.diag(s))
+
+    def test_dsdp_failure_raises(self, monkeypatch):
+        pytest.importorskip("loveslide.dsdp_solver.pydsdp5")
+        import loveslide.knockoff.pydsdp as pydsdp
+
+        def failing_dsdp(*args, **kwargs):
+            raise RuntimeError("solver blew up")
+
+        monkeypatch.setattr(pydsdp, "dsdp", failing_dsdp)
+        with pytest.raises(RuntimeError, match="DSDP solver failed"):
+            create_solve_sdp(self._sigma())
+
+    def test_voting_propagates_missing_dsdp(self, monkeypatch):
+        self._hide_dsdp(monkeypatch)
+        rng = np.random.default_rng(1)
+        X = rng.normal(size=(40, 6))
+        y = X[:, 0] + rng.normal(size=40)
+        with pytest.raises(ImportError, match="DSDP"):
+            knockoff_filter_voting(X, y, niter=2, match_r=True)
+        with pytest.raises(ImportError, match="DSDP"):
+            Knockoffs.filter_knockoffs_iterative_python(X, y, niter=2, n_jobs=1)
 
     def test_create_solve_equi_basic(self):
         """Test equicorrelated knockoff solving."""

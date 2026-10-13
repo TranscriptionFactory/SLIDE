@@ -266,6 +266,7 @@ def create_gaussian(
     Sigma: np.ndarray,
     method: str = 'asdp',
     diag_s: Optional[np.ndarray] = None,
+    sdp_solver: str = 'dsdp',
     **kwargs
 ) -> np.ndarray:
     """
@@ -283,6 +284,8 @@ def create_gaussian(
         Method for minimizing correlation between original and knockoffs.
     diag_s : array-like of shape (p,), optional
         Pre-computed covariances between original variables and knockoffs.
+    sdp_solver : {'dsdp', 'cvxpy'}, default='dsdp'
+        SDP solver used when ``diag_s`` is computed here.
 
     Returns
     -------
@@ -311,9 +314,9 @@ def create_gaussian(
         if method == 'equi':
             diag_s = create_solve_equi(Sigma)
         elif method == 'sdp':
-            diag_s = create_solve_sdp(Sigma)
+            diag_s = create_solve_sdp(Sigma, solver=sdp_solver)
         else:  # asdp
-            diag_s = create_solve_asdp(Sigma)
+            diag_s = create_solve_asdp(Sigma, solver=sdp_solver)
 
     diag_s = np.asarray(diag_s)
 
@@ -374,6 +377,7 @@ def create_second_order(
     method: str = 'asdp',
     shrink: bool = False,
     match_r: bool = False,
+    sdp_solver: str = 'dsdp',
     **kwargs
 ) -> np.ndarray:
     """
@@ -393,6 +397,8 @@ def create_second_order(
     match_r : bool, default=False
         Retained for API compatibility. Native Python covariance estimation is
         R-compatible regardless of this value.
+    sdp_solver : {'dsdp', 'cvxpy'}, default='dsdp'
+        SDP solver passed to :func:`create_gaussian`.
 
     Returns
     -------
@@ -425,4 +431,4 @@ def create_second_order(
     Sigma = _estimate_covariance_corpcor(X, shrink=shrink)
 
     # Sample the Gaussian knockoffs
-    return create_gaussian(X, mu, Sigma, method=method)
+    return create_gaussian(X, mu, Sigma, method=method, sdp_solver=sdp_solver)

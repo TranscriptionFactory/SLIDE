@@ -10,6 +10,7 @@ from itertools import product
 from collections import defaultdict
 from contextlib import redirect_stdout
 from io import StringIO
+import logging
 
 from .tools import init_data, calc_default_fsize, show_params
 from .love import call_love
@@ -17,6 +18,8 @@ from .knockoffs import Knockoffs
 
 from .plotting import Plotter
 from .score import Estimator, SLIDE_Estimator
+
+logger = logging.getLogger(__name__)
 
 
 def _format_interaction_pairs(interaction_pairs):
@@ -66,7 +69,7 @@ class SLIDE:
             self.love_result = love_result
 
         except Exception as e:
-            print(f"Error loading LOVE result: {e}")
+            logger.warning(f"Error loading LOVE result: {e}")
             return
 
     def load_state(self, out_iter):
@@ -94,7 +97,7 @@ class SLIDE:
             )[0]
 
         except Exception as e:
-            print(f"No previous state found for {out_iter}")
+            logger.info(f"No previous state found for {out_iter}")
             self.marginal_idxs = []
 
     @staticmethod
@@ -411,6 +414,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
         slide_selection=True,
+        sdp_solver="dsdp",
     ):
 
         machop = Knockoffs(y=self.data.Y.values, z2=latent_factors.values)
@@ -434,6 +438,7 @@ class OptimizeSLIDE(SLIDE):
                 base_seed=knockoff_base_seed,
                 fstat=fstat,
                 slide_selection=slide_selection,
+                sdp_solver=sdp_solver,
             )
             if len(marginal_idxs) < n_samples:
                 break
@@ -461,6 +466,7 @@ class OptimizeSLIDE(SLIDE):
         fstat="glmnet_lambdasmax",
         use_r_style=True,
         slide_selection=True,
+        sdp_solver="dsdp",
     ):
         """
         Find interacting latent factors using knockoff filter.
@@ -498,6 +504,8 @@ class OptimizeSLIDE(SLIDE):
             Knockoff procedure offset (0 or 1).
         fstat : str
             Feature statistic method.
+        sdp_solver : str
+            Python knockoff SDP solver: 'dsdp' (default, required) or 'cvxpy'.
         use_r_style : bool
             If True (default), use R-style sequential per-marginal processing.
             If False, use legacy batch processing.
@@ -517,6 +525,7 @@ class OptimizeSLIDE(SLIDE):
                 knockoff_offset,
                 fstat,
                 slide_selection=slide_selection,
+                sdp_solver=sdp_solver,
             )
             return
 
@@ -576,6 +585,7 @@ class OptimizeSLIDE(SLIDE):
                     ),
                     fstat=fstat,
                     slide_selection=slide_selection,
+                    sdp_solver=sdp_solver,
                 )
 
                 # R interactionSLIDE reruns the whole interaction pass with a
@@ -627,6 +637,7 @@ class OptimizeSLIDE(SLIDE):
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
         slide_selection=True,
+        sdp_solver="dsdp",
     ):
         """
         Legacy batch interaction detection (original Python implementation).
@@ -637,7 +648,7 @@ class OptimizeSLIDE(SLIDE):
         machop.add_z1(marginal_idxs=self.marginal_idxs)
 
         if machop.z2.shape[1] == 0:
-            print(
+            logger.info(
                 "All LFs are standalone, consider lowering delta for LOVE to find more LFs"
             )
             self.interaction_pairs = np.array([])
@@ -663,6 +674,7 @@ class OptimizeSLIDE(SLIDE):
             base_seed=knockoff_base_seed,
             fstat=fstat,
             slide_selection=slide_selection,
+            sdp_solver=sdp_solver,
         )
 
         if len(sig_interactions) == 0:
@@ -704,19 +716,20 @@ class OptimizeSLIDE(SLIDE):
         knockoff_base_seed=None,
         fstat="glmnet_lambdasmax",
         slide_selection=True,
+        sdp_solver="dsdp",
     ):
 
         f_size = self.calc_default_fsize(latent_factors.shape[1])
 
         if verbose:
-            print(f"Calculated f_size: {f_size}")
-            print(f"Knockoff backend: {knockoff_backend}")
+            logger.info(f"Calculated f_size: {f_size}")
+            logger.info(f"Knockoff backend: {knockoff_backend}")
             if knockoff_backend in ("python", "knockpy"):
-                print(f"Knockoff method: {knockoff_method}")
-                print(f"Knockoff shrink: {knockoff_shrink}")
-                print(f"Knockoff offset: {knockoff_offset}")
-            print(f"Feature statistic: {fstat}")
-            print(f"Finding standalone LF...")
+                logger.info(f"Knockoff method: {knockoff_method}")
+                logger.info(f"Knockoff shrink: {knockoff_shrink}")
+                logger.info(f"Knockoff offset: {knockoff_offset}")
+            logger.info(f"Feature statistic: {fstat}")
+            logger.info(f"Finding standalone LF...")
 
         ### Find standalone LFs
         machop = self.find_standalone_LFs(
@@ -733,10 +746,11 @@ class OptimizeSLIDE(SLIDE):
             knockoff_base_seed=knockoff_base_seed,
             fstat=fstat,
             slide_selection=slide_selection,
+            sdp_solver=sdp_solver,
         )
 
         if len(self.marginal_idxs) == 0:
-            print("No standalone LF found")
+            logger.info("No standalone LF found")
             self.sig_LFs = []
             self.sig_interacts = []
             return
@@ -745,13 +759,13 @@ class OptimizeSLIDE(SLIDE):
         np.savetxt(os.path.join(outpath, "sig_LFs.txt"), self.sig_LFs, fmt="%s")
 
         if verbose:
-            print(f"Found {len(self.marginal_idxs)} standalone LF")
+            logger.info(f"Found {len(self.marginal_idxs)} standalone LF")
 
         ### Find interacting LFs
 
         if do_interacts:
             if verbose:
-                print(f"Finding interacting LF...")
+                logger.info(f"Finding interacting LF...")
 
             self.find_interaction_LFs(
                 machop,
@@ -767,10 +781,11 @@ class OptimizeSLIDE(SLIDE):
                 knockoff_base_seed=knockoff_base_seed,
                 fstat=fstat,
                 slide_selection=slide_selection,
+                sdp_solver=sdp_solver,
             )
 
             if verbose:
-                print(f"Found {len(self.interaction_pairs)} interacting LF")
+                logger.info(f"Found {len(self.interaction_pairs)} interacting LF")
 
             self.sig_interacts = [f"Z{j}" for i, j in self.interaction_pairs.T]
             np.savetxt(
@@ -800,20 +815,20 @@ class OptimizeSLIDE(SLIDE):
                 try:
                     self.data.Y = self.adata.Y.loc[self.latent_factors.index]
                 except:
-                    print("input data obs do not match previous results")
+                    logger.info("input data obs do not match previous results")
                     continue
 
                 try:
                     self.data.X = self.data.X[self.A.columns]
                 except:
-                    print("input data vars do not match previous results")
+                    logger.info("input data vars do not match previous results")
                     continue
 
             else:
                 os.makedirs(out_iter, exist_ok=True)
 
                 if verbose:
-                    print(
+                    logger.info(
                         f"Running LOVE with delta={delta_iter} and lambda={lambda_iter}"
                     )
 
@@ -833,23 +848,22 @@ class OptimizeSLIDE(SLIDE):
                     # Handle LOVE returning None (Dantzig LP failure, matches R)
                     if self.love_result is None:
                         if verbose:
-                            print(f"LOVE returned None for delta={delta_iter}, "
+                            logger.info(f"LOVE returned None for delta={delta_iter}, "
                                   f"lambda={lambda_iter} — skipping.")
                         continue
 
                     if verbose:
-                        print(
+                        logger.info(
                             f"LOVE found {self.latent_factors.shape[1]} latent factors."
                         )
 
                 except Exception as e:
-                    print(f"\nError running LOVE: {e}\n")
-                    print("##################\n")
+                    logger.error(f"Error running LOVE: {e}")
 
                     continue
 
                 if verbose:
-                    print("\nRunning SLIDE knockoffs...")
+                    logger.info("\nRunning SLIDE knockoffs...")
 
                 self.run_SLIDE(
                     latent_factors=self.latent_factors,
@@ -867,10 +881,11 @@ class OptimizeSLIDE(SLIDE):
                     knockoff_base_seed=self.input_params.get("knockoff_base_seed"),
                     fstat=self.input_params.get("fstat", "glmnet_lambdasmax"),
                     slide_selection=self.input_params.get("slide_selection", True),
+                    sdp_solver=self.input_params.get("sdp_solver", "dsdp"),
                 )
 
                 if verbose:
-                    print("\nSLIDE complete.")
+                    logger.info("\nSLIDE complete.")
 
             if len(self.marginal_idxs) > 0:
                 sig_LF_genes = {
@@ -935,7 +950,7 @@ class OptimizeSLIDE(SLIDE):
             self.save_params(out_iter, scores)
 
             if verbose:
-                print(f"\nCompleted {delta_iter}_{lambda_iter}\n")
-                print("##################\n")
+                logger.info(f"\nCompleted {delta_iter}_{lambda_iter}\n")
+                logger.info("##################\n")
 
         self.create_summary_table(self.input_params["out_path"])

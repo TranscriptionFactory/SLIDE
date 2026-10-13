@@ -438,7 +438,7 @@ def _prepare_knockoff_cache(
     method: str = 'asdp',
     shrink: bool = False,
     match_r: bool = False,
-    sdp_solver: Optional[Callable] = None,
+    sdp_solver: Union[Callable, str, None] = None,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -460,6 +460,9 @@ def _prepare_knockoff_cache(
     match_r : bool, default=False
         Retained for API compatibility. Native Python covariance estimation is
         R-compatible regardless of this value.
+    sdp_solver : callable, {'dsdp', 'cvxpy'} or None, default=None
+        A callable ``sdp_solver(Sigma, method)`` returning ``diag_s`` (e.g. R's
+        SDP), or the name of the Python SDP solver. None means 'dsdp'.
 
     Returns
     -------
@@ -485,14 +488,14 @@ def _prepare_knockoff_cache(
     Sigma = _estimate_covariance_corpcor(X, shrink=shrink)
 
     # Compute diag_s using the solver (or external solver, e.g. R's SDP)
-    if sdp_solver is not None:
+    if callable(sdp_solver):
         diag_s = sdp_solver(Sigma, method)
     elif method == 'equi':
         diag_s = create_solve_equi(Sigma)
     elif method == 'sdp':
-        diag_s = create_solve_sdp(Sigma)
+        diag_s = create_solve_sdp(Sigma, solver=sdp_solver or 'dsdp')
     else:  # asdp
-        diag_s = create_solve_asdp(Sigma)
+        diag_s = create_solve_asdp(Sigma, solver=sdp_solver or 'dsdp')
 
     diag_s = np.asarray(diag_s)
     if diag_s.ndim == 2:
@@ -880,11 +883,18 @@ def knockoff_filter_voting(
     if not 0 < spec <= 1:
         raise ValueError(f"spec must be in (0, 1], got {spec}")
 
+    # Callable: external solver (r_knockoffs backend); str: Python SDP solver name.
+    sdp_solver = kwargs.pop('sdp_solver', None)
+    sdp_solver_name = sdp_solver if isinstance(sdp_solver, str) else 'dsdp'
+    knockoff_sampler = kwargs.pop('knockoff_sampler', None)
+
     # Set defaults
     # If match_r is True and no custom knockoffs function provided, wrap create_second_order
     if knockoffs is None:
         if match_r:
-            knockoffs = lambda X: create_second_order(X, match_r=True)
+            knockoffs = lambda X: create_second_order(
+                X, match_r=True, sdp_solver=sdp_solver_name
+            )
         else:
             knockoffs = create_second_order
     if statistic is None:
@@ -901,15 +911,11 @@ def knockoff_filter_voting(
     selected_list = [] if (slide_selection or return_selected_list) else None
 
     if verbose:
-        print(f"Running {niter} knockoff iterations with {n_jobs} jobs...")
+        logger.info(f"Running {niter} knockoff iterations with {n_jobs} jobs...")
 
     # Prepare arguments for each iteration
     # Note: We can't pickle lambdas, so we pass knockoffs/statistic as None
     # and rely on defaults, or we run sequentially
-
-    # Extract sdp_solver from kwargs (used by r_knockoffs backend)
-    sdp_solver = kwargs.pop('sdp_solver', None)
-    knockoff_sampler = kwargs.pop('knockoff_sampler', None)
 
     # Check if we can use caching optimization (default knockoffs and use_cache enabled)
     can_use_cache = use_cache and (knockoffs is create_second_order or
@@ -917,7 +923,7 @@ def knockoff_filter_voting(
                   hasattr(knockoffs, '__name__') and knockoffs.__name__ == '<lambda>' and match_r))
 
     # Force caching when an external SDP solver is provided (r_knockoffs hybrid path)
-    if sdp_solver is not None and use_cache:
+    if callable(sdp_solver) and use_cache:
         can_use_cache = True
 
     if can_use_cache:
@@ -925,13 +931,17 @@ def knockoff_filter_voting(
         # This avoids redundant SDP solving, covariance estimation, and Cholesky
         # decomposition on every iteration (3-4x speedup)
         if verbose:
-            solver_name = "R SDP" if sdp_solver is not None else "Python"
-            print(f"  Using cached knockoff computation ({solver_name} solver)...")
+            solver_name = "R SDP" if callable(sdp_solver) else sdp_solver_name
+            logger.info(f"  Using cached knockoff computation ({solver_name} solver)...")
 
         try:
             cache = _prepare_knockoff_cache(X, method='asdp', shrink=False, match_r=match_r,
                                             sdp_solver=sdp_solver)
             cache['sampler'] = knockoff_sampler
+        except ImportError:
+            # A missing SDP solver is an install problem; every uncached
+            # iteration would fail the same way.
+            raise
         except Exception as e:
             warnings.warn(f"Cache preparation failed: {e}. Falling back to uncached path.")
             can_use_cache = False
@@ -957,7 +967,7 @@ def knockoff_filter_voting(
                 if selected_list is not None:
                     selected_list.append(selected_iter.copy())
             if verbose:
-                print(f"  Completed {niter}/{niter} iterations ({n_jobs} parallel jobs)")
+                logger.info(f"  Completed {niter}/{niter} iterations ({n_jobs} parallel jobs)")
         else:
             for i in range(niter):
                 seed = None if base_seed is None else base_seed + i
@@ -977,7 +987,7 @@ def knockoff_filter_voting(
                         selected_list.append(selected_iter.copy())
 
                     if verbose and (i + 1) % 50 == 0:
-                        print(f"  Completed {i + 1}/{niter} iterations")
+                        logger.info(f"  Completed {i + 1}/{niter} iterations")
 
                 except Exception as e:
                     warnings.warn(f"Knockoff iteration {i} failed: {e}")
@@ -1006,8 +1016,10 @@ def knockoff_filter_voting(
                     selected_list.append(result.selected.copy())
 
                 if verbose and (i + 1) % 50 == 0:
-                    print(f"  Completed {i + 1}/{niter} iterations")
+                    logger.info(f"  Completed {i + 1}/{niter} iterations")
 
+            except ImportError:
+                raise
             except Exception as e:
                 warnings.warn(f"Knockoff iteration {i} failed: {e}")
                 if selected_list is not None:
@@ -1047,13 +1059,15 @@ def knockoff_filter_voting(
                     # Store selected list if needed for findOptIter
                     if selected_list is not None:
                         selected_list.append(np.array(selected_iter, dtype=int))
+                except ImportError:
+                    raise
                 except Exception as e:
                     warnings.warn(f"Knockoff iteration failed: {e}")
                     if selected_list is not None:
                         selected_list.append(np.array([], dtype=int))
 
                 if verbose and (i + 1) % 50 == 0:
-                    print(f"  Completed {i + 1}/{niter} iterations")
+                    logger.info(f"  Completed {i + 1}/{niter} iterations")
 
     # Compute selection frequency (this is the "W" for voting)
     selection_frequency = selection_counts / niter
@@ -1080,12 +1094,12 @@ def knockoff_filter_voting(
             optimal_iter, len(selected),
         )
         if verbose:
-            print(f"  findOptIter: chose iteration {optimal_iter} with {len(selected)} variables")
+            logger.info(f"  findOptIter: chose iteration {optimal_iter} with {len(selected)} variables")
     else:
         selected = freq_vars
 
     if verbose:
-        print(f"  Selected {len(selected)} variables (>= {min_selections} selections)")
+        logger.info(f"  Selected {len(selected)} variables (>= {min_selections} selections)")
 
     return VotingResult(
         selection_counts=selection_counts,
@@ -1223,7 +1237,7 @@ def knockoff_filter_voting_slide(
     if n_splits == 1:
         # No chunking needed - just run voting with SLIDE selection
         if verbose:
-            print(f"Single chunk (p={p} <= f_size={f_size}), using direct voting...")
+            logger.info(f"Single chunk (p={p} <= f_size={f_size}), using direct voting...")
         return knockoff_filter_voting(
             X, y,
             knockoffs=knockoffs,
@@ -1244,7 +1258,7 @@ def knockoff_filter_voting_slide(
 
     # Multiple chunks - implement R SLIDE's two-stage screening
     if verbose:
-        print(f"Chunking: p={p} into {n_splits} chunks of ~{f_size} features...")
+        logger.info(f"Chunking: p={p} into {n_splits} chunks of ~{f_size} features...")
 
     # Calculate chunk boundaries
     feature_split = int(math.ceil(p / n_splits))
@@ -1256,7 +1270,7 @@ def knockoff_filter_voting_slide(
 
     for chunk_idx, (start, stop) in enumerate(zip(feature_starts, feature_stops)):
         if verbose:
-            print(f"  Chunk {chunk_idx + 1}/{n_splits}: features [{start}, {stop})")
+            logger.info(f"  Chunk {chunk_idx + 1}/{n_splits}: features [{start}, {stop})")
 
         X_chunk = X[:, start:stop]
 
@@ -1284,20 +1298,20 @@ def knockoff_filter_voting_slide(
         # Map chunk indices back to global indices
         chunk_selected = result_chunk.selected + start
         if verbose:
-            print(f"    Selected {len(chunk_selected)} variables from chunk")
+            logger.info(f"    Selected {len(chunk_selected)} variables from chunk")
 
         screen_var.extend(chunk_selected.tolist())
 
     screen_var = np.array(screen_var, dtype=int)
 
     if verbose:
-        print(f"  Stage 1 complete: {len(screen_var)} screened variables")
+        logger.info(f"  Stage 1 complete: {len(screen_var)} screened variables")
 
     # Stage 2: Re-run knockoff voting on combined screened variables
     if len(screen_var) <= 1:
         # Not enough variables to re-screen
         if verbose:
-            print(f"  Skipping Stage 2 (only {len(screen_var)} variables)")
+            logger.info(f"  Skipping Stage 2 (only {len(screen_var)} variables)")
 
         # Return a VotingResult with global indices
         selection_counts = np.zeros(p, dtype=np.int32)
@@ -1317,7 +1331,7 @@ def knockoff_filter_voting_slide(
         )
 
     if verbose:
-        print(f"  Stage 2: Re-screening {len(screen_var)} combined variables...")
+        logger.info(f"  Stage 2: Re-screening {len(screen_var)} combined variables...")
 
     X_screen = X[:, screen_var]
 
@@ -1356,7 +1370,7 @@ def knockoff_filter_voting_slide(
     final_selected = screen_var[local_selected]
 
     if verbose:
-        print(f"  Final selection: {len(final_selected)} variables")
+        logger.info(f"  Final selection: {len(final_selected)} variables")
 
     # Build global selection counts and frequency
     selection_counts = np.zeros(p, dtype=np.int32)
