@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+publish = false
 description = "CLI for the SLIDE (Statistical Learning for Integrative Data Exploration) pipeline"
 
 [lints.rust]
@@ -34,3 +35,7 @@ slide-score = { version = "0.1.0", path = "../slide-score" }
 slide-types = { version = "0.1.0", path = "../slide-types" }
 slide-glmnet = { version = "0.1.0", path = "../slide-glmnet" }
 slide-knockoff = { version = "0.1.0", path = "../slide-knockoff" }
+
+[[example]]
+name = "paired_xtilde"
+test = true
