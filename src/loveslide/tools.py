@@ -1,8 +1,11 @@
 from easydict import EasyDict
 from collections import defaultdict
+import logging
 import os
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 def init_data(input_params, x=None, y=None):
     """
@@ -66,13 +69,19 @@ def init_data(input_params, x=None, y=None):
 
     if x is None:
         data.X = pd.read_csv(input_params['x_path'], index_col=0)
-    else:
+    elif isinstance(x, pd.DataFrame):
         data.X = x
-    
+    else:
+        data.X = pd.DataFrame(np.asarray(x))
+
     if y is None:
         data.Y = pd.read_csv(input_params['y_path'], index_col=0)
-    else:
+    elif isinstance(y, (pd.Series, pd.DataFrame)):
         data.Y = y
+    else:
+        y = np.asarray(y)
+        index = data.X.index if len(data.X) == len(y) else None
+        data.Y = pd.DataFrame(y.reshape(len(y), -1), index=index)
 
     if input_params['y_factor'] is True:
         data.Y = data.Y.replace({
@@ -122,7 +131,7 @@ def check_params(input_params, data):
 
     zero_std_cols = data.X.columns[data.X.std() == 0]
     if len(zero_std_cols) > 0:
-        print(f"Warning: Found {len(zero_std_cols)} features with 0 standard deviation. These will be removed.")
+        logger.warning(f"Found {len(zero_std_cols)} features with 0 standard deviation. These will be removed.")
         data.X = data.X.loc[:, data.X.std() > 0]
 
 
