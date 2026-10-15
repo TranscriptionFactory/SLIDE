@@ -37,9 +37,9 @@ pub struct GaussianLassoPathResult {
     pub beta: Matrix,
     pub intercept: Vector,
     pub lambda: Vector,
-    /// Total coordinate-descent outer iterations summed across all lambda steps
-    /// actually computed for this path. Used by the SLIDE_KNOCKOFF_PROFILE env
-    /// instrumentation to distinguish path-length vs CD-grinding bottlenecks.
+    /// Total Gaussian coordinate-descent sweeps across computed lambda steps,
+    /// including KKT retries. Binomial paths currently report zero. Used by
+    /// SLIDE_KNOCKOFF_PROFILE to distinguish path length from CD grinding.
     pub total_cd_iters: usize,
 }
 
@@ -1303,6 +1303,7 @@ fn run_gaussian_cd(
     let mut n_computed = 0usize;
     let mut n_ever_nonzero = 0usize;
     let mut total_cd_iters = 0usize;
+    let mut warm_ever = false;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
         ws.candidate_indices.clear();
@@ -1323,6 +1324,7 @@ fn run_gaussian_cd(
             }
         }
 
+        let mut start_with_active = warm_ever;
         loop {
             total_cd_iters += coordinate_descent_step(
                 x_array,
@@ -1336,7 +1338,11 @@ fn run_gaussian_cd(
                 &ws.candidate_indices,
                 &mut ws.active_indices,
                 &mut ws.in_active,
+                &mut warm_ever,
+                start_with_active,
             );
+            // KKT extensions resume full sweeps, not a new lambda warm start.
+            start_with_active = false;
 
             let mut kkt_violated = false;
             for j in 0..total_p {
@@ -1424,15 +1430,19 @@ fn coordinate_descent_step(
     candidate_indices: &[usize],
     active_indices: &mut Vec<usize>,
     in_active: &mut [bool],
+    warm_ever: &mut bool,
+    start_with_active: bool,
 ) -> usize {
     let n = x.nrows();
 
+    // glmnet 5.0 gaussian_base.hpp: warm only after a partial fit has occurred.
+    let mut partial = start_with_active;
     let mut iters_done = 0usize;
     for _ in 0..max_iter {
         iters_done += 1;
-        let mut max_change = 0.0;
-        if !active_indices.is_empty() {
-            max_change = sweep_coordinates(
+        if partial {
+            *warm_ever = true;
+            let max_change = sweep_coordinates(
                 x,
                 column_sq_norm,
                 beta,
@@ -1442,12 +1452,12 @@ fn coordinate_descent_step(
                 alpha,
                 n,
             );
-            if max_change >= convergence_threshold {
-                continue;
+            if max_change < convergence_threshold {
+                partial = false;
             }
+            continue;
         }
 
-        // Sweep the full candidate set (not all p coordinates)
         let candidate_change = sweep_coordinates(
             x,
             column_sq_norm,
@@ -1466,9 +1476,10 @@ fn coordinate_descent_step(
             }
         }
 
-        if candidate_change.max(max_change) < convergence_threshold {
+        if candidate_change < convergence_threshold {
             break;
         }
+        partial = true;
     }
     iters_done
 }
@@ -1962,9 +1973,82 @@ mod tests {
             &[0, 1],
             &mut active_indices,
             &mut in_active,
+            &mut false,
+            false,
         );
 
         assert_eq!(iterations, 2);
+    }
+
+    #[test]
+    fn gaussian_schedule_uses_partial_fit_history_not_active_set_presence() {
+        for epsilon in [0.0, 1.0e-5] {
+            for swapped in [false, true] {
+                let first = usize::from(swapped);
+                let second = 1 - first;
+                let mut x = arr2(&[[1.0, 1.0], [1.0, 1.0]]);
+                x[[1, second]] += epsilon;
+                let norms = x.mapv(|v| v * v).sum_axis(ndarray::Axis(0)) / 2.0;
+                // A full sweep converged after entering `second`, without ever
+                // needing a partial fit: the next lambda must still start full.
+                for (warm_history, start_with_active) in
+                    [(false, false), (true, true), (true, false)]
+                {
+                    let mut beta = arr1(&[0.0, 0.0]);
+                    beta[second] = 0.5;
+                    let mut residual = arr1(&[0.5, 0.5]);
+                    let mut active = vec![second];
+                    let mut in_active = vec![false; 2];
+                    in_active[second] = true;
+                    let mut warm_ever = warm_history;
+                    coordinate_descent_step(
+                        &x,
+                        &norms,
+                        &mut beta,
+                        &mut residual,
+                        0.25,
+                        1.0,
+                        1.0,
+                        10,
+                        &[0, 1],
+                        &mut active,
+                        &mut in_active,
+                        &mut warm_ever,
+                        start_with_active,
+                    );
+                    if start_with_active || first == 1 {
+                        assert!(beta[first].abs() < 1.0e-8);
+                    } else {
+                        assert!((beta[first] - 0.25).abs() < 1.0e-12);
+                        assert_eq!(active, vec![second, first]);
+                    }
+                    assert_eq!(warm_ever, warm_history);
+                }
+            }
+        }
+
+        let mut beta = arr1(&[0.0]);
+        let mut residual = arr1(&[1.0]);
+        let mut warm_ever = false;
+        coordinate_descent_step(
+            &arr2(&[[1.0]]),
+            &arr1(&[1.0]),
+            &mut beta,
+            &mut residual,
+            0.25,
+            1.0,
+            1.0e-7,
+            10,
+            &[0],
+            &mut Vec::new(),
+            &mut [false],
+            &mut warm_ever,
+            false,
+        );
+        assert!(
+            warm_ever,
+            "a nonconverged full sweep must trigger partial fitting"
+        );
     }
 
     #[test]

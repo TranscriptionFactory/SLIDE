@@ -15,6 +15,29 @@ const GRID_REL_TOL: f64 = 1.0e-2;
 const CORRELATION_FLOOR: f64 = 0.97;
 
 #[test]
+fn gaussian_schedule_matches_saved_r_signs_with_fixed_preparation() {
+    let fixture = fixture_dir("gaussian_schedule");
+    let x = read_matrix(fixture.join("input_x.csv"));
+    let xtilde = read_matrix(fixture.join("input_xtilde.csv"));
+    let y = read_vector(fixture.join("input_y.csv"));
+    let lambda = read_vector(fixture.join("lambda.csv"));
+    let expected = read_vector(fixture.join("expected_sign.csv"));
+    let statistic = stat_glmnet_lambdasmax(
+        &x, &xtilde, &y, GlmnetFamily::Gaussian,
+        &GaussianLassoPathConfig {
+            standardize: false,
+            nlambda: lambda.len(),
+            lambda: Some(lambda),
+            tolerance: 1e-7,
+            max_iter: 100000,
+            ..GaussianLassoPathConfig::default()
+        },
+    ).unwrap_or_else(|error| panic!("saved scheduling replay failed: {error}"));
+    let signs = statistic.as_ndarray().mapv(|v| if v == 0.0 { 0.0 } else { v.signum() });
+    assert_eq!(signs, *expected.as_ndarray());
+}
+
+#[test]
 fn gaussian_path_matches_r_glmnet_fixture() {
     let fixture = fixture_dir("gaussian_path");
     let x = read_matrix(fixture.join("input_x.csv"));
