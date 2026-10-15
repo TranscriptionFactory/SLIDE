@@ -70,9 +70,9 @@ fn threshold(w: &[f64], fdr: f64) -> Result<Option<f64>> {
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args().collect();
-    if args.len() != 16 {
+    if args.len() != 16 && args.len() != 17 {
         bail!(
-            "usage: paired_xtilde <z.raw> <xtilde.raw> <y.raw> <a.raw> <swap.raw> <n> <p> <a_n> <a_p> <lf_names> <fdr> <nlambda> <tolerance> <max_iter> <output.json>"
+            "usage: paired_xtilde <z.raw> <xtilde.raw> <y.raw> <a.raw> <swap.raw> <n> <p> <a_n> <a_p> <lf_names> <fdr> <nlambda> <tolerance> <max_iter> <output.json> [lambda.raw for already-scaled inputs]"
         );
     }
     let n: usize = args[6].parse()?;
@@ -83,6 +83,13 @@ fn main() -> Result<()> {
     let nlambda: usize = args[12].parse()?;
     let tolerance: f64 = args[13].parse()?;
     let max_iter: usize = args[14].parse()?;
+    let supplied_lambda = args
+        .get(16)
+        .map(|path| {
+            read_f64(Path::new(path), nlambda)
+                .map(|(values, _)| Vector::from_ndarray(Array1::from_vec(values)))
+        })
+        .transpose()?;
     env::set_var("SLIDE_KNOCKOFF_TOL", tolerance.to_string());
     env::set_var("SLIDE_KNOCKOFF_MAX_ITER", max_iter.to_string());
     let cached = env::var("SLIDE_PAIRED_CACHED").is_ok_and(|value| value == "1");
@@ -163,7 +170,8 @@ fn main() -> Result<()> {
         nlambda,
         tolerance,
         max_iter,
-        standardize: true,
+        standardize: supplied_lambda.is_none(),
+        lambda: supplied_lambda,
         scale_ddof: 1,
         ..GaussianLassoPathConfig::default()
     };
@@ -171,8 +179,13 @@ fn main() -> Result<()> {
     let y = Vector::from_ndarray(Array1::from_vec(y_values));
     let path = if cached {
         let y_centered = y.as_ndarray().mapv(|value| value - response_mean);
-        let x_cache = HalfPreparedData::new(&Matrix::from_ndarray(z), &y_centered, true);
-        let tilde_cache = HalfPreparedData::new(&Matrix::from_ndarray(xtilde), &y_centered, true);
+        let x_cache =
+            HalfPreparedData::new(&Matrix::from_ndarray(z), &y_centered, config.standardize);
+        let tilde_cache = HalfPreparedData::new(
+            &Matrix::from_ndarray(xtilde),
+            &y_centered,
+            config.standardize,
+        );
         let swap: Vec<_> = swap_bytes.iter().map(|value| *value != 0).collect();
         let mut workspace = GaussianCdWorkspace::new(n, 2 * p);
         gaussian_lasso_path_with_left_cache(
