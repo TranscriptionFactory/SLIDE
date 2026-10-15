@@ -285,12 +285,8 @@ class ElasticNet(BaseEstimator):
         coef_bounds[0, :] = self.lower_limits
         coef_bounds[1, :] = self.upper_limits
 
-        if X.shape[1] > X.shape[0]:
-            # the glmnet docs suggest using a different algorithm for the case
-            # of p >> n
-            algo_flag = 2
-        else:
-            algo_flag = 1
+        # R's type.gaussian default counts columns, including appended knockoffs.
+        algo_flag = 1 if X.shape[1] < 500 else 2
 
         # This is a stopping criterion (nx)
         # R defaults to nx = num_features, and ne = num_features + 1
