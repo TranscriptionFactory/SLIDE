@@ -17,9 +17,12 @@ p.add_argument('out', type=Path)
 p.add_argument('--draws', type=int)
 p.add_argument('--designs', nargs='+', choices=['native_chunk_1','native_chunk_4','saved_stage2','saved_c8','saved_highdelta'])
 p.add_argument('--python-production', action='store_true')
+p.add_argument('--rust-binaries', nargs=2, metavar=('BASELINE', 'CANDIDATE'))
 a = p.parse_args()
 if a.draws is not None and a.draws < 2:
     p.error('--draws must be at least 2')
+if a.rust_binaries and a.python_production:
+    p.error('--rust-binaries cannot be combined with --python-production')
 run = ROOT / '.tmpfiles/2026-10-15_gaussian-parity'
 old_path = run / 'baseline-source/src/loveslide/knockoff/_vendor/glmnet/linear.py'
 spec = importlib.util.spec_from_file_location('loveslide.knockoff._vendor.glmnet.baseline_linear', old_path)
@@ -32,6 +35,9 @@ arms = ['rust_baseline', 'rust_schedule', 'rust_rprep', 'rust_schedule_rprep',
         'python_baseline', 'python_algorithm', 'python_rprep', 'python_algorithm_rprep']
 if a.python_production:
     arms = ['python_baseline','python_algorithm','python_arithmetic','python_algorithm_arithmetic']
+elif a.rust_binaries:
+    arms = ['rust_baseline', 'rust_candidate']
+    rust_binaries = dict(zip(arms, map(Path, a.rust_binaries)))
 source = ROOT / '.tmpfiles/2026-10-13_preliminary-selection-diagnosis/numerical'
 summary = {}
 for label, inp in [('native_chunk_1', source/'chunk_1'), ('native_chunk_4', source/'chunk_4'),
@@ -91,7 +97,8 @@ for label, inp in [('native_chunk_1', source/'chunk_1'), ('native_chunk_4', sour
         rl[d].tofile(prepared/'lambda.raw')
         for arm in arms:
             if arm.startswith('rust'):
-                binary = run/('schedule-prepared-xtilde' if 'schedule' in arm else 'baseline-prepared-xtilde')
+                binary = (rust_binaries[arm] if a.rust_binaries else
+                          run/('schedule-prepared-xtilde' if 'schedule' in arm else 'baseline-prepared-xtilde'))
                 args = SimpleNamespace(rust_bin=binary, tolerance=1e-7, max_iter=100000, nlambda=500, prepared_lambda=prepared/'lambda.raw' if 'rprep' in arm else None)
                 meta = {'shape':{'Z':[n,m], 'A':[1,m]}, 'rust_lambda_environment':'1', 'rust_cached':True, 'fdr':0.1}
                 inputs = prepared if 'rprep' in arm else out

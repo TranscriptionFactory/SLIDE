@@ -1,0 +1,882 @@
+{
+  "native_chunk_1": {
+    "draws": 500,
+    "factors": [
+      "Z0",
+      "Z1",
+      "Z2",
+      "Z3",
+      "Z4",
+      "Z5",
+      "Z6",
+      "Z7",
+      "Z8",
+      "Z9",
+      "Z10",
+      "Z11",
+      "Z12",
+      "Z13",
+      "Z14",
+      "Z15",
+      "Z16",
+      "Z17",
+      "Z18",
+      "Z19",
+      "Z20",
+      "Z21"
+    ],
+    "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-13_preliminary-selection-diagnosis/numerical/chunk_1",
+    "arms": {
+      "rust_baseline": {
+        "votes": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          2,
+          1,
+          1,
+          1,
+          0,
+          2,
+          0,
+          30,
+          1,
+          0,
+          138,
+          0,
+          138,
+          153,
+          82,
+          0
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          16,
+          18,
+          19,
+          20
+        ],
+        "findOptIter": {
+          "selected": [
+            16,
+            18,
+            19,
+            20
+          ],
+          "optimal_iteration": 13
+        },
+        "all_factor_sign_agreement_r": 0.9513636363636364,
+        "selected_set_agreement_r": 0.958,
+        "entry_index_agreement_r": 0.9152727272727272,
+        "entry_index0_count": 0
+      },
+      "rust_candidate": {
+        "votes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          0,
+          2,
+          0,
+          29,
+          0,
+          0,
+          138,
+          0,
+          138,
+          153,
+          82,
+          0
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          16,
+          18,
+          19,
+          20
+        ],
+        "findOptIter": {
+          "selected": [
+            16,
+            18,
+            19,
+            20
+          ],
+          "optimal_iteration": 13
+        },
+        "all_factor_sign_agreement_r": 0.9902727272727273,
+        "selected_set_agreement_r": 0.96,
+        "entry_index_agreement_r": 0.9870909090909091,
+        "entry_index0_count": 0
+      },
+      "r": {
+        "votes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          0,
+          2,
+          0,
+          26,
+          0,
+          0,
+          120,
+          0,
+          138,
+          134,
+          74,
+          0
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          16,
+          18,
+          19,
+          20
+        ],
+        "findOptIter": {
+          "selected": [
+            16,
+            18,
+            19,
+            20
+          ],
+          "optimal_iteration": 13
+        }
+      }
+    }
+  },
+  "native_chunk_4": {
+    "draws": 500,
+    "factors": [
+      "Z66",
+      "Z67",
+      "Z68",
+      "Z69",
+      "Z70",
+      "Z71",
+      "Z72",
+      "Z73",
+      "Z74",
+      "Z75",
+      "Z76",
+      "Z77",
+      "Z78",
+      "Z79",
+      "Z80",
+      "Z81",
+      "Z82",
+      "Z83",
+      "Z84",
+      "Z85",
+      "Z86",
+      "Z87"
+    ],
+    "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-13_preliminary-selection-diagnosis/numerical/chunk_4",
+    "arms": {
+      "rust_baseline": {
+        "votes": [
+          0,
+          13,
+          4,
+          1,
+          115,
+          34,
+          16,
+          232,
+          38,
+          112,
+          9,
+          15,
+          72,
+          76,
+          3,
+          74,
+          11,
+          115,
+          4,
+          2,
+          9,
+          275
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          4,
+          7,
+          9,
+          12,
+          13,
+          15,
+          17,
+          21
+        ],
+        "findOptIter": {
+          "selected": [
+            4,
+            7,
+            9,
+            12,
+            13,
+            15,
+            17,
+            21
+          ],
+          "optimal_iteration": 28
+        },
+        "all_factor_sign_agreement_r": 0.9891818181818182,
+        "selected_set_agreement_r": 0.984,
+        "entry_index_agreement_r": 0.9459545454545455,
+        "entry_index0_count": 0
+      },
+      "rust_candidate": {
+        "votes": [
+          0,
+          18,
+          4,
+          1,
+          115,
+          37,
+          16,
+          232,
+          38,
+          113,
+          9,
+          15,
+          73,
+          77,
+          3,
+          75,
+          12,
+          116,
+          4,
+          2,
+          9,
+          275
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          4,
+          7,
+          9,
+          12,
+          13,
+          15,
+          17,
+          21
+        ],
+        "findOptIter": {
+          "selected": [
+            4,
+            7,
+            9,
+            12,
+            13,
+            15,
+            17,
+            21
+          ],
+          "optimal_iteration": 28
+        },
+        "all_factor_sign_agreement_r": 0.9990909090909091,
+        "selected_set_agreement_r": 1.0,
+        "entry_index_agreement_r": 0.9929545454545454,
+        "entry_index0_count": 0
+      },
+      "r": {
+        "votes": [
+          0,
+          18,
+          4,
+          1,
+          115,
+          37,
+          16,
+          232,
+          38,
+          113,
+          9,
+          15,
+          73,
+          77,
+          3,
+          75,
+          12,
+          116,
+          4,
+          2,
+          9,
+          275
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          4,
+          7,
+          9,
+          12,
+          13,
+          15,
+          17,
+          21
+        ],
+        "findOptIter": {
+          "selected": [
+            4,
+            7,
+            9,
+            12,
+            13,
+            15,
+            17,
+            21
+          ],
+          "optimal_iteration": 28
+        }
+      }
+    }
+  },
+  "saved_stage2": {
+    "draws": 200,
+    "factors": [
+      "Z16",
+      "Z18",
+      "Z19",
+      "Z26",
+      "Z27",
+      "Z45",
+      "Z53",
+      "Z54",
+      "Z57",
+      "Z61",
+      "Z73",
+      "Z75",
+      "Z79",
+      "Z83",
+      "Z87",
+      "Z96",
+      "Z98",
+      "Z110",
+      "Z128",
+      "Z136",
+      "Z141",
+      "Z147",
+      "Z150",
+      "Z154",
+      "Z162"
+    ],
+    "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/diag_s2_001_10",
+    "arms": {
+      "rust_baseline": {
+        "votes": [
+          3,
+          115,
+          0,
+          0,
+          168,
+          99,
+          0,
+          3,
+          12,
+          0,
+          17,
+          1,
+          0,
+          3,
+          1,
+          0,
+          10,
+          0,
+          0,
+          99,
+          8,
+          0,
+          3,
+          1,
+          0
+        ],
+        "minimum_votes": 20,
+        "frequent": [
+          1,
+          4,
+          5,
+          19
+        ],
+        "findOptIter": {
+          "selected": [
+            1,
+            4,
+            5,
+            19
+          ],
+          "optimal_iteration": 0
+        },
+        "all_factor_sign_agreement_r": 0.9988,
+        "selected_set_agreement_r": 0.985,
+        "entry_index_agreement_r": 0.9641,
+        "entry_index0_count": 0
+      },
+      "rust_candidate": {
+        "votes": [
+          3,
+          115,
+          0,
+          0,
+          168,
+          99,
+          0,
+          3,
+          12,
+          0,
+          17,
+          1,
+          0,
+          3,
+          1,
+          0,
+          10,
+          0,
+          0,
+          99,
+          8,
+          0,
+          3,
+          1,
+          0
+        ],
+        "minimum_votes": 20,
+        "frequent": [
+          1,
+          4,
+          5,
+          19
+        ],
+        "findOptIter": {
+          "selected": [
+            1,
+            4,
+            5,
+            19
+          ],
+          "optimal_iteration": 0
+        },
+        "all_factor_sign_agreement_r": 1.0,
+        "selected_set_agreement_r": 0.985,
+        "entry_index_agreement_r": 0.9809,
+        "entry_index0_count": 0
+      },
+      "r": {
+        "votes": [
+          3,
+          115,
+          0,
+          0,
+          171,
+          99,
+          0,
+          3,
+          12,
+          0,
+          17,
+          1,
+          0,
+          3,
+          1,
+          0,
+          10,
+          0,
+          0,
+          99,
+          8,
+          0,
+          3,
+          1,
+          0
+        ],
+        "minimum_votes": 20,
+        "frequent": [
+          1,
+          4,
+          5,
+          19
+        ],
+        "findOptIter": {
+          "selected": [
+            1,
+            4,
+            5,
+            19
+          ],
+          "optimal_iteration": 0
+        }
+      }
+    }
+  },
+  "saved_c8": {
+    "draws": 1,
+    "factors": [
+      "Z154",
+      "Z155",
+      "Z156",
+      "Z157",
+      "Z158",
+      "Z159",
+      "Z160",
+      "Z161",
+      "Z162",
+      "Z163",
+      "Z164",
+      "Z165",
+      "Z166",
+      "Z167",
+      "Z168",
+      "Z169",
+      "Z170",
+      "Z171"
+    ],
+    "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/diag_c8",
+    "arms": {
+      "rust_baseline": {
+        "votes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "minimum_votes": 1,
+        "frequent": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          8,
+          11,
+          14,
+          15,
+          16,
+          17
+        ],
+        "findOptIter": {
+          "selected": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            8,
+            11,
+            14,
+            15,
+            16,
+            17
+          ],
+          "optimal_iteration": 0
+        },
+        "all_factor_sign_agreement_r": 0.8888888888888888,
+        "selected_set_agreement_r": 0.0,
+        "entry_index_agreement_r": 0.7222222222222222,
+        "entry_index0_count": 0
+      },
+      "rust_candidate": {
+        "votes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "minimum_votes": 1,
+        "frequent": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          8,
+          11,
+          14,
+          15,
+          16,
+          17
+        ],
+        "findOptIter": {
+          "selected": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            8,
+            11,
+            14,
+            15,
+            16,
+            17
+          ],
+          "optimal_iteration": 0
+        },
+        "all_factor_sign_agreement_r": 0.8888888888888888,
+        "selected_set_agreement_r": 0.0,
+        "entry_index_agreement_r": 0.75,
+        "entry_index0_count": 0
+      },
+      "r": {
+        "votes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          1,
+          0,
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        "minimum_votes": 1,
+        "frequent": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          8,
+          9,
+          11,
+          14,
+          15,
+          16
+        ],
+        "findOptIter": {
+          "selected": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            8,
+            9,
+            11,
+            14,
+            15,
+            16
+          ],
+          "optimal_iteration": 0
+        }
+      }
+    }
+  },
+  "saved_highdelta": {
+    "draws": 200,
+    "factors": [
+      "Z44",
+      "Z45",
+      "Z46",
+      "Z47",
+      "Z48",
+      "Z49",
+      "Z50",
+      "Z51",
+      "Z52",
+      "Z53",
+      "Z54",
+      "Z55",
+      "Z56",
+      "Z57",
+      "Z58",
+      "Z59",
+      "Z60",
+      "Z61",
+      "Z62",
+      "Z63",
+      "Z64",
+      "Z65"
+    ],
+    "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/diag_d01_l01",
+    "arms": {
+      "rust_baseline": {
+        "votes": [
+          50,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          63,
+          0,
+          2,
+          1,
+          0,
+          0,
+          0,
+          0,
+          26,
+          23,
+          0,
+          0,
+          0
+        ],
+        "minimum_votes": 20,
+        "frequent": [
+          0,
+          9,
+          17,
+          18
+        ],
+        "findOptIter": {
+          "selected": [
+            0,
+            9,
+            17,
+            18
+          ],
+          "optimal_iteration": 66
+        },
+        "all_factor_sign_agreement_r": 0.9638636363636364,
+        "selected_set_agreement_r": 0.69,
+        "entry_index_agreement_r": 0.9194318181818182,
+        "entry_index0_count": 0
+      },
+      "rust_candidate": {
+        "votes": [
+          50,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          63,
+          0,
+          2,
+          1,
+          0,
+          0,
+          0,
+          0,
+          26,
+          23,
+          0,
+          0,
+          0
+        ],
+        "minimum_votes": 20,
+        "frequent": [
+          0,
+          9,
+          17,
+          18
+        ],
+        "findOptIter": {
+          "selected": [
+            0,
+            9,
+            17,
+            18
+          ],
+          "optimal_iteration": 66
+        },
+        "all_factor_sign_agreement_r": 0.9763636363636363,
+        "selected_set_agreement_r": 0.69,
+        "entry_index_agreement_r": 0.9694318181818182,
+        "entry_index0_count": 0
+      },
+      "r": {
+        "votes": [
+          105,
+          0,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          2,
+          62,
+          0,
+          2,
+          1,
+          0,
+          0,
+          0,
+          0,
+          15,
+          22,
+          0,
+          0,
+          0
+        ],
+        "minimum_votes": 20,
+        "frequent": [
+          0,
+          9,
+          18
+        ],
+        "findOptIter": {
+          "selected": [
+            0,
+            9,
+            18
+          ],
+          "optimal_iteration": 54
+        }
+      }
+    }
+  }
+}

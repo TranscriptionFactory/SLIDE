@@ -26,7 +26,17 @@ DRIVER=tmpfiles/2026-10-15_gaussian-parity/replay.py
 "$ENV/bin/python" "$DRIVER" <new-output>/high-delta-python --designs saved_highdelta --python-production
 ```
 
-Optional `--draws 2` runs a smoke check. The driver expects rebuilt
+Optional `--draws 2` runs a smoke check. For a Rust-only baseline/candidate
+comparison, pass both explicit binary paths; this does not change the default
+eight-arm or `--python-production` invocations:
+
+```bash
+"$ENV/bin/python" "$DRIVER" <new-output>/fixed-draws \
+  --rust-binaries <baseline-binary> <candidate-binary> \
+  --designs native_chunk_1 native_chunk_4 saved_stage2 saved_c8 saved_highdelta
+```
+
+The driver expects rebuilt
 `baseline-prepared-xtilde` and `schedule-prepared-xtilde` under TMPDIR, and a
 `baseline-source` archive. Baseline and candidate use the same updated
 `crates/slide-cli/examples/paired_xtilde.rs`, but different `slide-glmnet` source.
