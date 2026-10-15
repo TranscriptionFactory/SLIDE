@@ -139,13 +139,16 @@ def fit_draw(args, metadata, inputs, xtilde, swap, target):
         "SLIDE_PAIRED_CACHED": "1" if metadata["rust_cached"] else "0",
     }
     env.pop("SLIDE_KNOCKOFF_PROFILE", None)
-    subprocess.run([
+    command = [
         str(args.rust_bin.resolve()), str(inputs / "z.raw"), str(xtilde),
         str(inputs / "y.raw"), str(inputs / "a.raw"), str(swap),
         str(n), str(p), str(a_n), str(a_p), str(inputs / "lf_names.txt"),
         str(metadata["fdr"]), str(args.nlambda), str(args.tolerance),
         str(args.max_iter), str(target),
-    ], check=True, cwd=ROOT, env=env)
+    ]
+    if getattr(args, "prepared_lambda", None) is not None:
+        command.append(str(args.prepared_lambda))
+    subprocess.run(command, check=True, cwd=ROOT, env=env)
     return json.loads(target.read_text())
 
 
@@ -239,7 +242,8 @@ def contrast_summary(selected, contrasts):
 
 
 def plot_sampler_votes(out, votes=None, facet="design", name="vote_deltas.png",
-                       title="Rust-S minus R-S selection votes on fixed designs"):
+                       title="Rust-S minus R-S selection votes on fixed designs",
+                       note="Common covariance, innovations, swaps and Rust fitter. Not full-pipeline or FDR inference."):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -260,8 +264,7 @@ def plot_sampler_votes(out, votes=None, facet="design", name="vote_deltas.png",
     grid.set_axis_labels("Saved feature", "Vote difference (pp)")
     grid.set_titles("{col_name}")
     grid.figure.suptitle(title, y=1.01)
-    grid.figure.text(0.02, 0.01, "Error bars: ±2 paired Monte Carlo SE; panel y-scales differ.\n"
-                     "Common covariance, innovations, swaps and Rust fitter. Not full-pipeline or FDR inference.")
+    grid.figure.text(0.02, 0.01, "Error bars: ±2 paired Monte Carlo SE; panel y-scales differ.\n" + note)
     grid.figure.tight_layout(rect=(0, 0.07, 1, 1))
     grid.savefig(out / name, dpi=160)
     plt.close(grid.figure)

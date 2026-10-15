@@ -1,7 +1,9 @@
 # Gaussian scheduling regression
 
 Captured 2026-10-15 from the saved `.tmpfiles/diag_c8` draw (24 rows,
-18 original/knockoff pairs). Its full benchmark-cell provenance is unknown.
+18 original/knockoff pairs). Its design matches the frozen delta 0.01/lambda 1.0
+checkpoint columns Z154–Z171 within 2.11e-13. Draw-generation provenance remains
+unverified.
 The inputs contain the swapped augmented design after installed R 4.5.3
 `scale()`. `lambda.csv` contains the exact grid passed by knockoff 0.3.6 to
 glmnet 5.0. `expected_sign.csv` contains all 18 R signed-max W signs before
