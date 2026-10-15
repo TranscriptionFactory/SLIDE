@@ -2,6 +2,7 @@
 
 from typing import Dict, Optional, Tuple, Union
 import logging
+import math
 import warnings
 import time
 import numpy as np
@@ -26,7 +27,7 @@ except ImportError as e:
     )
 
 
-def _r_scale(X: np.ndarray) -> tuple:
+def _r_scale(X: np.ndarray, *, extended_precision: bool = False) -> tuple:
     """
     Standardize X using R's scale() behavior: center and scale with ddof=1.
 
@@ -39,8 +40,15 @@ def _r_scale(X: np.ndarray) -> tuple:
         means: Column means
         stds: Column standard deviations (ddof=1)
     """
-    means = np.mean(X, axis=0)
-    stds = np.std(X, axis=0, ddof=1)  # R uses ddof=1 (sample std)
+    if extended_precision:
+        # R colMeans/sum accumulate in LDOUBLE, then return doubles.
+        means = np.mean(X, axis=0, dtype=np.longdouble).astype(np.float64)
+        centered = X - means
+        squares = np.sum(centered * centered, axis=0, dtype=np.longdouble).astype(np.float64)
+        stds = np.sqrt(squares / (X.shape[0] - 1))
+    else:
+        means = np.mean(X, axis=0)
+        stds = np.std(X, axis=0, ddof=1)  # Preserve non-Gaussian arithmetic.
     # Handle zero std columns (constant columns)
     stds = np.where(stds == 0, 1.0, stds)
     X_scaled = (X - means) / stds
@@ -99,7 +107,7 @@ def _lasso_max_lambda_glmnet(
     preparation_started = _preparation_started or time.perf_counter()
     # This matches R's knockoff package: lasso_max_lambda_glmnet
     if standardize:
-        X_std, _, stds = _r_scale(X)
+        X_std, _, stds = _r_scale(X, extended_precision=family == 'gaussian')
     else:
         X_std = X
         stds = None
@@ -117,7 +125,11 @@ def _lasso_max_lambda_glmnet(
         lambda_max = np.max(np.abs(X_std.T @ y_work)) / n
         lambda_min = lambda_max / 2000
         k = np.arange(nlambda) / nlambda
-        lambdas = lambda_max * (lambda_min / lambda_max) ** k
+        # R uses scalar libm pow; NumPy's vectorized power can round differently.
+        lambdas = lambda_max * np.fromiter(
+            (math.pow(lambda_min / lambda_max, exponent) for exponent in k),
+            dtype=np.float64, count=nlambda,
+        )
         from ..filter import _profile_stage
         _profile_stage("preparation", preparation_started)
         lasso_started = time.perf_counter()
