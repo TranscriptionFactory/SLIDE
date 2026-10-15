@@ -1277,6 +1277,124 @@ impl GaussianCdWorkspace {
     }
 }
 
+/// Signed gradients and crossproducts for glmnet's dense covariance solver.
+struct GaussianCovarianceState {
+    gram: Array2<Scalar>,
+    gradient: Array1<Scalar>,
+}
+
+impl GaussianCovarianceState {
+    fn new(prepared: &PreparedData) -> Option<Self> {
+        let x = prepared.x_scaled.as_ndarray();
+        let p = x.ncols();
+        if p >= 500 {
+            return None;
+        }
+        let n = x.nrows() as Scalar;
+        let mut gram = Array2::zeros((p, p));
+        for k in 0..p {
+            gram[[k, k]] = prepared.column_sq_norm[k];
+            for j in 0..k {
+                let product = x.column(j).dot(&x.column(k)) / n;
+                gram[[j, k]] = product;
+                gram[[k, j]] = product;
+            }
+        }
+        let gradient = Array1::from_iter(
+            (0..p).map(|j| x.column(j).dot(prepared.y_centered.as_ndarray()) / n),
+        );
+        Some(Self { gram, gradient })
+    }
+
+    fn sweep(
+        &mut self,
+        ws: &mut GaussianCdWorkspace,
+        lambda: Scalar,
+        alpha: Scalar,
+        partial: bool,
+    ) -> Scalar {
+        let p = ws.beta_scaled.len();
+        let count = if partial { ws.active_indices.len() } else { p };
+        let mut max_change: Scalar = 0.0;
+        for index in 0..count {
+            let k = if partial {
+                ws.active_indices[index]
+            } else {
+                index
+            };
+            let norm = self.gram[[k, k]];
+            if norm == 0.0 {
+                continue;
+            }
+            let old = ws.beta_scaled[k];
+            let next = soft_threshold(self.gradient[k] + old * norm, lambda * alpha)
+                / (norm + lambda * (1.0 - alpha));
+            let delta = next - old;
+            if delta == 0.0 {
+                continue;
+            }
+            ws.beta_scaled[k] = next;
+            if !ws.in_active[k] {
+                ws.in_active[k] = true;
+                ws.active_indices.push(k);
+            }
+            max_change = max_change.max(norm * delta * delta);
+            if partial {
+                for &j in &ws.active_indices {
+                    self.gradient[j] -= self.gram[[j, k]] * delta;
+                }
+            } else {
+                for j in 0..p {
+                    self.gradient[j] -= self.gram[[j, k]] * delta;
+                }
+            }
+        }
+        max_change
+    }
+
+    fn fit(
+        &mut self,
+        ws: &mut GaussianCdWorkspace,
+        lambda: Scalar,
+        config: &GaussianLassoPathConfig,
+        convergence_threshold: Scalar,
+        warm_ever: &mut bool,
+    ) -> usize {
+        // glmnet 5.0 gaussian_cov.hpp: partial fits defer inactive gradients
+        // until convergence, then reconcile them using net active beta changes.
+        let mut partial = *warm_ever;
+        let mut before_partial = ws.beta_scaled.clone();
+        let mut iters = 0;
+        while iters < config.max_iter {
+            iters += 1;
+            if partial {
+                *warm_ever = true;
+            }
+            let change = self.sweep(ws, lambda, config.alpha, partial);
+            if partial && (change < convergence_threshold || iters == config.max_iter) {
+                for j in 0..ws.beta_scaled.len() {
+                    if !ws.in_active[j] {
+                        let correction: Scalar = ws
+                            .active_indices
+                            .iter()
+                            .map(|&k| (before_partial[k] - ws.beta_scaled[k]) * self.gram[[j, k]])
+                            .sum();
+                        self.gradient[j] += correction;
+                    }
+                }
+                partial = false;
+            } else if !partial {
+                if change < convergence_threshold {
+                    break;
+                }
+                before_partial.assign(&ws.beta_scaled);
+                partial = true;
+            }
+        }
+        iters
+    }
+}
+
 /// Run the Gaussian coordinate descent loop on prepared data with a lambda grid.
 /// Uses the provided workspace to avoid per-call allocation.
 #[allow(clippy::too_many_arguments)]
@@ -1295,6 +1413,7 @@ fn run_gaussian_cd(
     let nlambda = lambda.len();
 
     ws.reset(y_array);
+    let mut covariance = GaussianCovarianceState::new(prepared);
     let mut beta_path = Array2::zeros((total_p, nlambda));
     let mut intercept = Array1::zeros(nlambda);
 
@@ -1306,58 +1425,76 @@ fn run_gaussian_cd(
     let mut warm_ever = false;
 
     for (lambda_index, &lambda_value) in lambda.as_ndarray().iter().enumerate() {
-        ws.candidate_indices.clear();
-        if lambda_index == 0 {
-            ws.candidate_indices.extend(0..total_p);
-            ws.in_candidate.fill(true);
-        } else {
-            let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
-            let threshold = 2.0 * lambda_value - prev_lambda;
-            ws.in_candidate.fill(false);
-            for j in 0..total_p {
-                if ws.beta_scaled[j].abs() > 0.0
-                    || (x_array.column(j).dot(&ws.residual) / n_f).abs() >= threshold
-                {
-                    ws.candidate_indices.push(j);
-                    ws.in_candidate[j] = true;
+        if let Some(state) = covariance.as_mut() {
+            total_cd_iters += state.fit(
+                ws,
+                lambda_value,
+                config,
+                convergence_threshold,
+                &mut warm_ever,
+            );
+            if early_stop_path {
+                // Residuals are only needed by the unchanged path-stop checks.
+                ws.residual.assign(y_array);
+                for &j in &ws.active_indices {
+                    ws.residual
+                        .scaled_add(-ws.beta_scaled[j], &x_array.column(j));
                 }
             }
-        }
-
-        let mut start_with_active = warm_ever;
-        loop {
-            total_cd_iters += coordinate_descent_step(
-                x_array,
-                &prepared.column_sq_norm,
-                &mut ws.beta_scaled,
-                &mut ws.residual,
-                lambda_value,
-                config.alpha,
-                convergence_threshold,
-                config.max_iter,
-                &ws.candidate_indices,
-                &mut ws.active_indices,
-                &mut ws.in_active,
-                &mut warm_ever,
-                start_with_active,
-            );
-            // KKT extensions resume full sweeps, not a new lambda warm start.
-            start_with_active = false;
-
-            let mut kkt_violated = false;
-            for j in 0..total_p {
-                if !ws.in_candidate[j] {
-                    let grad = (x_array.column(j).dot(&ws.residual) / n_f).abs();
-                    if grad > lambda_value * config.alpha {
+        } else {
+            ws.candidate_indices.clear();
+            if lambda_index == 0 {
+                ws.candidate_indices.extend(0..total_p);
+                ws.in_candidate.fill(true);
+            } else {
+                let prev_lambda = lambda.as_ndarray()[lambda_index - 1];
+                let threshold = 2.0 * lambda_value - prev_lambda;
+                ws.in_candidate.fill(false);
+                for j in 0..total_p {
+                    if ws.beta_scaled[j].abs() > 0.0
+                        || (x_array.column(j).dot(&ws.residual) / n_f).abs() >= threshold
+                    {
                         ws.candidate_indices.push(j);
                         ws.in_candidate[j] = true;
-                        kkt_violated = true;
                     }
                 }
             }
-            ws.candidate_indices.sort_unstable();
-            if !kkt_violated {
-                break;
+
+            let mut start_with_active = warm_ever;
+            loop {
+                total_cd_iters += coordinate_descent_step(
+                    x_array,
+                    &prepared.column_sq_norm,
+                    &mut ws.beta_scaled,
+                    &mut ws.residual,
+                    lambda_value,
+                    config.alpha,
+                    convergence_threshold,
+                    config.max_iter,
+                    &ws.candidate_indices,
+                    &mut ws.active_indices,
+                    &mut ws.in_active,
+                    &mut warm_ever,
+                    start_with_active,
+                );
+                // KKT extensions resume full sweeps, not a new lambda warm start.
+                start_with_active = false;
+
+                let mut kkt_violated = false;
+                for j in 0..total_p {
+                    if !ws.in_candidate[j] {
+                        let grad = (x_array.column(j).dot(&ws.residual) / n_f).abs();
+                        if grad > lambda_value * config.alpha {
+                            ws.candidate_indices.push(j);
+                            ws.in_candidate[j] = true;
+                            kkt_violated = true;
+                        }
+                    }
+                }
+                ws.candidate_indices.sort_unstable();
+                if !kkt_violated {
+                    break;
+                }
             }
         }
 
@@ -1934,6 +2071,201 @@ mod tests {
             )
             .unwrap_or_else(|error| panic!("knockoff path failed: {error}"));
             assert_eq!(diagnostics.path.lambda.as_ndarray().len(), nlambda);
+        }
+    }
+
+    #[test]
+    fn gaussian_covariance_dispatch_boundary_preserves_residual_fit() {
+        for p in [499, 500] {
+            let x = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((4, p), |(i, j)| {
+                if j == 0 {
+                    [-1.0, -1.0, 1.0, 1.0][i]
+                } else {
+                    3.0
+                }
+            }));
+            let y = Vector::from_ndarray(arr1(&[1.0, 1.0, 5.0, 5.0]));
+            let prepared = super::PreparedData::from_inputs(&x, &y, false, 0);
+            assert_eq!(
+                super::GaussianCovarianceState::new(&prepared).is_some(),
+                p < 500
+            );
+            let config = GaussianLassoPathConfig {
+                standardize: false,
+                lambda: Some(Vector::from_ndarray(arr1(&[1.0, 0.25]))),
+                ..GaussianLassoPathConfig::default()
+            };
+            let fit = gaussian_lasso_path(&x, &y, &config).expect("valid Gaussian path");
+            let mut ws = super::GaussianCdWorkspace::new(4, p);
+            ws.reset(prepared.y_centered.as_ndarray());
+            let mut warm = false;
+            let mut sweeps = 0;
+            for (index, &lambda) in fit.lambda.as_ndarray().iter().enumerate() {
+                let start_with_active = warm;
+                sweeps += coordinate_descent_step(
+                    prepared.x_scaled.as_ndarray(),
+                    &prepared.column_sq_norm,
+                    &mut ws.beta_scaled,
+                    &mut ws.residual,
+                    lambda,
+                    1.0,
+                    config.tolerance * 4.0,
+                    config.max_iter,
+                    &(0..p).collect::<Vec<_>>(),
+                    &mut ws.active_indices,
+                    &mut ws.in_active,
+                    &mut warm,
+                    start_with_active,
+                );
+                assert_eq!(fit.beta.as_ndarray().column(index), ws.beta_scaled.view());
+                assert_eq!(fit.intercept.as_ndarray()[index], 3.0);
+            }
+            assert_eq!(fit.total_cd_iters, sweeps);
+        }
+    }
+
+    #[test]
+    fn gaussian_cached_dispatch_matches_uncached_on_both_sides_of_boundary() {
+        for p in [249, 250] {
+            let x = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((4, p), |(i, j)| {
+                if j == 0 {
+                    [-1.0, -1.0, 1.0, 1.0][i]
+                } else {
+                    3.0
+                }
+            }));
+            let tilde = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((4, p), |(i, j)| {
+                if j == 0 {
+                    [-1.0, 1.0, -1.0, 1.0][i]
+                } else {
+                    2.0
+                }
+            }));
+            let y = Vector::from_ndarray(arr1(&[0.0, 2.0, 4.0, 6.0]));
+            let centered = y.as_ndarray().mapv(|v| v - 3.0);
+            let left = super::HalfPreparedData::new(&x, &centered, true);
+            let right = super::HalfPreparedData::new(&tilde, &centered, true);
+            let config = GaussianLassoPathConfig {
+                alpha: 0.4,
+                scale_ddof: 1,
+                lambda: Some(Vector::from_ndarray(arr1(&[1.0, 0.5]))),
+                ..GaussianLassoPathConfig::default()
+            };
+            let mut ws = super::GaussianCdWorkspace::new(4, 2 * p);
+            for swap in [false, true, false] {
+                let (a, b) = if swap { (&tilde, &x) } else { (&x, &tilde) };
+                let augmented = super::augment_features(a, b);
+                let uncached = super::gaussian_lasso_path_with_grid_endpoint(
+                    &augmented, &y, &config, false, false,
+                )
+                .expect("uncached path");
+                let cached = super::gaussian_lasso_path_with_left_cache(
+                    &left,
+                    &right,
+                    &vec![swap; p],
+                    &y,
+                    3.0,
+                    &centered,
+                    &config,
+                    &mut ws,
+                )
+                .expect("cached path");
+                assert_eq!(cached.lambda, uncached.lambda);
+                assert_eq!(cached.intercept, uncached.intercept);
+                assert_eq!(cached.total_cd_iters, uncached.total_cd_iters);
+                for (a, b) in cached
+                    .beta
+                    .as_ndarray()
+                    .iter()
+                    .zip(uncached.beta.as_ndarray())
+                {
+                    assert!((a - b).abs() < 1.0e-12);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gaussian_covariance_elastic_net_handles_constant_columns() {
+        let x = Matrix::from_ndarray(arr2(&[
+            [-1.0, -1.0, 7.0],
+            [-1.0, 1.0, 7.0],
+            [1.0, -1.0, 7.0],
+            [1.0, 1.0, 7.0],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[2.0, 0.0, 6.0, 4.0]));
+        for alpha in [0.0, 0.3, 1.0] {
+            for standardize in [false, true] {
+                let config = GaussianLassoPathConfig {
+                    alpha,
+                    standardize,
+                    lambda: Some(Vector::from_ndarray(arr1(&[2.0, 0.5, 0.0]))),
+                    ..GaussianLassoPathConfig::default()
+                };
+                let fit = gaussian_lasso_path(&x, &y, &config).expect("valid elastic net path");
+                for (index, &lambda) in fit.lambda.as_ndarray().iter().enumerate() {
+                    let denom = 1.0 + lambda * (1.0 - alpha);
+                    assert!(
+                        (fit.beta.as_ndarray()[[0, index]]
+                            - super::soft_threshold(2.0, lambda * alpha) / denom)
+                            .abs()
+                            < TOL
+                    );
+                    assert!(
+                        (fit.beta.as_ndarray()[[1, index]]
+                            - super::soft_threshold(-1.0, lambda * alpha) / denom)
+                            .abs()
+                            < TOL
+                    );
+                    assert_eq!(fit.beta.as_ndarray()[[2, index]], 0.0);
+                    assert_eq!(fit.intercept.as_ndarray()[index], 3.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gaussian_covariance_reconciles_inactive_gradients_after_partial_fit() {
+        let x = Matrix::from_ndarray(arr2(&[
+            [-2.0, -1.0, 0.1],
+            [-1.0, 1.0, 0.2],
+            [1.0, -1.0, -0.2],
+            [2.0, 1.0, -0.1],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[-7.0, 1.0, -1.0, 7.0]));
+        let prepared = super::PreparedData::from_inputs(&x, &y, false, 0);
+        let config = GaussianLassoPathConfig {
+            alpha: 0.5,
+            ..GaussianLassoPathConfig::default()
+        };
+        let mut state = super::GaussianCovarianceState::new(&prepared).expect("small design");
+        let mut ws = super::GaussianCdWorkspace::new(4, 3);
+        ws.reset(prepared.y_centered.as_ndarray());
+        let mut warm = false;
+        state.fit(&mut ws, 1.0, &config, 1.0e-12, &mut warm);
+        assert!(warm);
+        assert!(ws.in_active.iter().any(|&active| !active));
+        for j in 0..3 {
+            let expected = prepared
+                .y_centered
+                .as_ndarray()
+                .dot(&prepared.x_scaled.as_ndarray().column(j))
+                / 4.0
+                - state.gram.row(j).dot(&ws.beta_scaled);
+            assert!((state.gradient[j] - expected).abs() < 1.0e-12);
+        }
+        assert!(ws.active_indices.len() > 1);
+        // Re-enter via the warm partial-fit path at the next lambda.
+        state.fit(&mut ws, 0.9, &config, 1.0e-12, &mut warm);
+        for j in 0..3 {
+            let expected = prepared
+                .x_scaled
+                .as_ndarray()
+                .column(j)
+                .dot(prepared.y_centered.as_ndarray())
+                / 4.0
+                - state.gram.row(j).dot(&ws.beta_scaled);
+            assert!((state.gradient[j] - expected).abs() < 1.0e-12);
         }
     }
 

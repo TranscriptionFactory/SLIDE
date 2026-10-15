@@ -1,7 +1,9 @@
 use ndarray::{concatenate, Array1, Array2, Axis};
 use slide_glmnet::{
-    binomial_lasso_path, cross_validated_lambda, gaussian_lasso_path, stat_glmnet_coefdiff,
-    stat_glmnet_lambdadiff, stat_glmnet_lambdasmax, GaussianLassoPathConfig, GlmnetFamily,
+    binomial_lasso_path, cross_validated_lambda, gaussian_lasso_path,
+    gaussian_lasso_path_with_left_cache, stat_glmnet_coefdiff, stat_glmnet_lambdadiff,
+    stat_glmnet_lambdasmax, GaussianCdWorkspace, GaussianLassoPathConfig, GlmnetFamily,
+    HalfPreparedData,
 };
 use slide_types::{Matrix, Vector};
 use std::{fs, path::PathBuf};
@@ -35,6 +37,51 @@ fn gaussian_schedule_matches_saved_r_signs_with_fixed_preparation() {
     ).unwrap_or_else(|error| panic!("saved scheduling replay failed: {error}"));
     let signs = statistic.as_ndarray().mapv(|v| if v == 0.0 { 0.0 } else { v.signum() });
     assert_eq!(signs, *expected.as_ndarray());
+}
+
+#[test]
+fn gaussian_covariance_matches_r_entry_for_collinear_saved_draw() {
+    let fixture = fixture_dir("gaussian_covariance");
+    let x = read_matrix(fixture.join("input_x.csv"));
+    let xtilde = read_matrix(fixture.join("input_xtilde.csv"));
+    let y = read_vector(fixture.join("input_y.csv"));
+    let expected_entry = read_vector(fixture_dir("gaussian_covariance").join("expected_entry.csv"));
+    let swap = read_vector(fixture.join("swap.csv"))
+        .as_ndarray()
+        .iter()
+        .map(|value| *value != 0.0)
+        .collect::<Vec<_>>();
+    let y_mean = y.as_ndarray().mean().unwrap();
+    let y_centered = y.as_ndarray().mapv(|value| value - y_mean);
+    let x_cache = HalfPreparedData::new(&x, &y_centered, true);
+    let xtilde_cache = HalfPreparedData::new(&xtilde, &y_centered, true);
+    let config = GaussianLassoPathConfig {
+        nlambda: 500,
+        standardize: true,
+        tolerance: 1e-7,
+        max_iter: 100000,
+        scale_ddof: 1,
+        ..GaussianLassoPathConfig::default()
+    };
+    let mut workspace = GaussianCdWorkspace::new(x.shape().0, 2 * x.shape().1);
+    let result = gaussian_lasso_path_with_left_cache(
+        &x_cache,
+        &xtilde_cache,
+        &swap,
+        &y,
+        y_mean,
+        &y_centered,
+        &config,
+        &mut workspace,
+    )
+    .unwrap_or_else(|error| panic!("collinear covariance path failed: {error}"));
+    let beta = result.beta.as_ndarray();
+    let entry = beta
+        .row(5)
+        .iter()
+        .position(|value| *value != 0.0)
+        .expect("R-selected column should enter the path");
+    assert_eq!(entry as f64, expected_entry.as_ndarray()[0]);
 }
 
 #[test]
