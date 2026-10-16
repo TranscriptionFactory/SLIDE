@@ -157,6 +157,14 @@ fn solve_correlation_sdp(
     correlation: &Matrix,
     settings: &SdpSettings,
 ) -> Result<Vec<Scalar>, SdpError> {
+    let (raw, _) = solve_correlation_sdp_raw(correlation, settings)?;
+    Ok(raw.into_iter().map(clip_unit_interval).collect())
+}
+
+fn solve_correlation_sdp_raw(
+    correlation: &Matrix,
+    settings: &SdpSettings,
+) -> Result<(Vec<Scalar>, SolverStatus), SdpError> {
     let dimension = correlation.nrows();
     let objective = vec![-1.0; dimension];
     let quadratic = CscMatrix::<Scalar>::zeros((dimension, dimension));
@@ -187,12 +195,7 @@ fn solve_correlation_sdp(
         });
     }
 
-    Ok(solver
-        .solution
-        .x
-        .iter()
-        .map(|value| clip_unit_interval(*value))
-        .collect())
+    Ok((solver.solution.x, solver.solution.status))
 }
 
 fn clarabel_settings(settings: &SdpSettings) -> DefaultSettings<Scalar> {
@@ -517,6 +520,169 @@ mod tests {
     use slide_types::Matrix;
 
     const TOLERANCE: f64 = 1.0e-6;
+
+    #[test]
+    fn raw_solver_stages_match_public_solution_and_preserve_input_errors() {
+        use super::*;
+        let sigma = Matrix::from_ndarray(arr2(&[[4.0, 0.6], [0.6, 1.0]]));
+        let normalized = normalize_covariance(&sigma)
+            .unwrap_or_else(|error| panic!("normalization failed: {error}"));
+        let (raw, _) =
+            solve_correlation_sdp_raw(&normalized.correlation, &default_solver_settings())
+                .unwrap_or_else(|error| panic!("raw solve failed: {error}"));
+        let mut clipped: Vec<_> = raw.into_iter().map(clip_unit_interval).collect();
+        enforce_correlation_feasibility(&normalized.correlation, &mut clipped)
+            .unwrap_or_else(|error| panic!("correlation repair failed: {error}"));
+        let mut actual = rescale_solution(&clipped, &normalized.diagonal);
+        enforce_covariance_feasibility(&sigma, &mut actual)
+            .unwrap_or_else(|error| panic!("covariance repair failed: {error}"));
+        let expected =
+            create_solve_sdp(&sigma).unwrap_or_else(|error| panic!("public solve failed: {error}"));
+        assert_eq!(
+            actual.as_slice(),
+            expected.as_ndarray().as_slice().unwrap_or(&[])
+        );
+        assert!(
+            minimum_eigenvalue_of_shifted_matrix(&sigma, &actual) >= FEASIBILITY_FLOOR - 1.0e-8
+        );
+        assert!(matches!(
+            create_solve_sdp(&Matrix::from_ndarray(arr2(&[[1.0, 0.0]]))),
+            Err(SdpError::NonSquareMatrix { .. })
+        ));
+        assert!(matches!(
+            create_solve_sdp(&Matrix::from_ndarray(arr2(&[[0.0]]))),
+            Err(SdpError::NonPositiveDiagonal { index: 0, .. })
+        ));
+    }
+
+    /// Read headerless CSV inputs and expose the exact production solver/postprocessing.
+    #[test]
+    #[ignore = "diagnostic: set SDP_DIAG_DIR containing sigma.csv"]
+    fn emit_sdp_stages() -> Result<(), Box<dyn std::error::Error>> {
+        use super::*;
+        use std::{fs, path::Path};
+
+        fn read(path: &Path) -> Result<ndarray::Array2<f64>, Box<dyn std::error::Error>> {
+            let text = fs::read_to_string(path)?;
+            let rows: Vec<Vec<f64>> = text
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    line.split(',')
+                        .map(|cell| cell.trim().parse())
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<_, _>>()?;
+            let columns = rows.first().map_or(0, Vec::len);
+            assert!(columns > 0 && rows.iter().all(|row| row.len() == columns));
+            Ok(ndarray::Array2::from_shape_vec(
+                (rows.len(), columns),
+                rows.into_iter().flatten().collect(),
+            )?)
+        }
+        fn write(path: &Path, values: impl IntoIterator<Item = f64>) -> std::io::Result<()> {
+            fs::write(
+                path,
+                values
+                    .into_iter()
+                    .map(|value| format!("{value:.17e}\n"))
+                    .collect::<String>(),
+            )
+        }
+        fn write_matrix(path: &Path, matrix: &Matrix) -> std::io::Result<()> {
+            fs::write(
+                path,
+                matrix
+                    .as_ndarray()
+                    .rows()
+                    .into_iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|value| format!("{value:.17e}"))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                            + "\n"
+                    })
+                    .collect::<String>(),
+            )
+        }
+        let directory = std::path::PathBuf::from(std::env::var("SDP_DIAG_DIR")?);
+        let sigma = Matrix::from_ndarray(read(&directory.join("sigma.csv"))?);
+        let normalized = normalize_covariance(&sigma)?;
+        write_matrix(&directory.join("normalized.csv"), &normalized.correlation)?;
+        write(
+            &directory.join("diagonal.csv"),
+            normalized.diagonal.iter().copied(),
+        )?;
+        let correlation_path = directory.join("correlation.csv");
+        let correlation = if correlation_path.exists() {
+            Matrix::from_ndarray(read(&correlation_path)?)
+        } else {
+            normalized.correlation.clone()
+        };
+        validate_square_and_symmetric(&correlation, "diagnostic correlation")?;
+        assert_eq!(correlation.nrows(), normalized.dimension);
+        write_matrix(&directory.join("solver_correlation.csv"), &correlation)?;
+        let settings = default_solver_settings();
+        let (raw, status) = solve_correlation_sdp_raw(&correlation, &settings)?;
+        write(&directory.join("clarabel_raw.csv"), raw.iter().copied())?;
+        write(
+            &directory.join("objective.csv"),
+            vec![-1.0; normalized.dimension],
+        )?;
+        write(
+            &directory.join("rhs.csv"),
+            build_sdp_rhs(correlation.as_ndarray()),
+        )?;
+        let constraints = build_sdp_constraint_matrix(normalized.dimension);
+        let mut entries = String::from("row,column,value\n");
+        for column in 0..normalized.dimension {
+            for index in constraints.colptr[column]..constraints.colptr[column + 1] {
+                entries.push_str(&format!(
+                    "{},{},{:.17e}\n",
+                    constraints.rowval[index], column, constraints.nzval[index]
+                ));
+            }
+        }
+        fs::write(directory.join("constraints.csv"), entries)?;
+        fs::write(directory.join("solver.txt"), format!(
+            "status={status:?}\nobjective_minimize=-sum(s)\nobjective_value={:.17e}\ncones=Nonnegative({}),PSDTriangle({})\nsettings={:#?}\n",
+            -raw.iter().sum::<f64>(), 2 * normalized.dimension, normalized.dimension, clarabel_settings(&settings)))?;
+        let supplied = directory.join("raw_s.csv");
+        let input = if supplied.exists() {
+            read(&supplied)?.into_raw_vec_and_offset().0
+        } else {
+            raw
+        };
+        assert_eq!(input.len(), normalized.dimension);
+        assert!(input.iter().all(|value| value.is_finite()));
+        write(&directory.join("input_raw.csv"), input.iter().copied())?;
+        let mut solution: Vec<_> = input.into_iter().map(clip_unit_interval).collect();
+        write(&directory.join("clipped.csv"), solution.iter().copied())?;
+        enforce_correlation_feasibility(&correlation, &mut solution)?;
+        write(
+            &directory.join("correlation_repaired.csv"),
+            solution.iter().copied(),
+        )?;
+        let mut final_s = rescale_solution(&solution, &normalized.diagonal);
+        write(&directory.join("rescaled.csv"), final_s.iter().copied())?;
+        enforce_covariance_feasibility(&sigma, &mut final_s)?;
+        write(
+            &directory.join("covariance_repaired.csv"),
+            final_s.iter().copied(),
+        )?;
+        if !supplied.exists() && !correlation_path.exists() {
+            let production = create_solve_sdp(&sigma)?;
+            assert_eq!(
+                final_s.as_slice(),
+                production
+                    .as_ndarray()
+                    .as_slice()
+                    .ok_or("noncontiguous solution")?
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn equi_solver_matches_closed_form_on_correlation_matrix() {
