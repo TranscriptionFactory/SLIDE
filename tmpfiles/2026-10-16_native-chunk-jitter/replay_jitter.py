@@ -21,6 +21,8 @@ parser.add_argument("output", type=Path)
 parser.add_argument("--r-s", action="store_true", help="Also fit R S on the exact native covariance")
 parser.add_argument("--construction-arms", type=Path,
                     help="Add the four shared-S solver × postprocessor sampler arms")
+parser.add_argument("--s-arms", type=Path,
+                    help="Add baseline and candidate S sampler arms from PATH/{baseline,candidate}/chunk_{1,4}")
 options = parser.parse_args()
 root, binary, output = options.root, options.binary, options.output
 output.mkdir(parents=True, exist_ok=True)
@@ -83,15 +85,25 @@ for chunk in (1, 4):
                         "native_s": s.tolist(), "factor_covariance_residual": float(np.abs(r_residual).max())}
         arms["r_s"].tofile(d / "xt_r_s.raw")
     construction_geometry = {}
+    sampler_arms = {}
     if options.construction_arms:
+        sampler_arms.update({arm: options.construction_arms / arm / f"chunk_{chunk}"
+                            for arm in ("clarabel_rustpost", "clarabel_rpost", "dsdp_rustpost", "dsdp_rpost")})
+    if options.s_arms:
+        sampler_arms.update({arm: options.s_arms / arm / f"chunk_{chunk}"
+                            for arm in ("baseline", "candidate")})
+    if sampler_arms:
         sigma = matrix("rust_sigma.raw")
         saved_noise = noise
-        for arm in ("clarabel_rustpost", "clarabel_rpost", "dsdp_rustpost", "dsdp_rpost"):
-            arm_dir = options.construction_arms / arm / f"chunk_{chunk}"
+        for arm, arm_dir in sampler_arms.items():
             arm_noise = np.fromfile(arm_dir / "rust_noise_draws.raw", "<f8").reshape(500, 24, 22)
             np.testing.assert_array_equal(arm_noise, saved_noise)
             np.testing.assert_array_equal(
                 np.fromfile(arm_dir / "rust_sigma.raw", "<f8").reshape(22, 22), sigma)
+            if options.s_arms and arm in ("baseline", "candidate"):
+                np.testing.assert_array_equal(np.fromfile(arm_dir / "z.raw", "<f8").reshape(z.shape), z)
+                np.testing.assert_array_equal(np.fromfile(arm_dir / "swaps.raw", np.uint8),
+                                              np.fromfile(d / "swaps.raw", np.uint8))
             s_value = np.loadtxt(arm_dir / "r_s.csv")
             assert s_value.shape == (22,) and np.isfinite(s_value).all()
             assert (s_value >= 0).all() and (s_value <= np.diag(sigma)).all()
@@ -102,6 +114,15 @@ for chunk in (1, 4):
             diag_s = np.diag(s_value)
             target_s = 2 * diag_s - diag_s @ np.linalg.solve(sigma, diag_s)
             target_s = (target_s + target_s.T) / 2
+            if options.s_arms and arm in ("baseline", "candidate"):
+                actual_target = np.fromfile(arm_dir / "rust_shared_s_target.raw", "<f8").reshape(22, 22)
+                np.testing.assert_allclose(actual_target, target_s, rtol=0, atol=1e-13)
+                target_s = actual_target
+            try:
+                np.linalg.cholesky(target_s)
+                initial_cholesky_s = True
+            except np.linalg.LinAlgError:
+                initial_cholesky_s = False
             factor_residual = factor.T @ factor - target_s
             conditional_jitter = float(np.median(np.diag(factor_residual)))
             np.testing.assert_allclose(factor_residual, conditional_jitter * np.eye(22), rtol=0, atol=1e-13)
@@ -109,6 +130,7 @@ for chunk in (1, 4):
                 "s": s_value.tolist(), "zero_s": [names[j] for j in np.flatnonzero(s_value == 0)],
                 "minimum_target_eigenvalue": float(np.linalg.eigvalsh(target_s).min()),
                 "conditional_factor_jitter": conditional_jitter,
+                "initial_cholesky_succeeds_numpy": initial_cholesky_s,
                 "max_factor_residual_offdiagonal": float(np.abs(factor_residual - np.diag(np.diag(factor_residual))).max()),
                 "same_noise_as_native": True, "draws_reconstruct_from_factor": True,
             }
@@ -141,6 +163,8 @@ for chunk in (1, 4):
         ))
         pairs.extend((arm, "native") for arm in (
             "clarabel_rustpost", "clarabel_rpost", "dsdp_rustpost", "dsdp_rpost"))
+    if options.s_arms:
+        pairs.extend((("candidate", "baseline"), ("baseline", "native"), ("candidate", "native")))
     for left, right in pairs:
         table = paired_vote_summary(indicators[left], indicators[right], (left, right))
         table.insert(0, "factor", names)
@@ -169,7 +193,7 @@ for chunk in (1, 4):
     }
     if options.r_s:
         summary[d.name]["r_s_geometry"] = r_s_geometry
-    if options.construction_arms:
+    if sampler_arms:
         summary[d.name]["construction_geometry"] = construction_geometry
     np.savez_compressed(output / f"{d.name}_scores.npz", **{arm: np.array(w) for arm, w in ws.items()})
     logging.info("%s: %s", d.name, json.dumps(summary[d.name]))

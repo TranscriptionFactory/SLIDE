@@ -1824,15 +1824,24 @@ mod tests {
                 .map(|value| f64::from_le_bytes(value.try_into().unwrap())).collect();
             let x = Matrix::from_ndarray(Array2::from_shape_vec((values.len() / p, p), values).unwrap());
             let mu = estimate_mean(&x);
-            let native_sigma = match sample_covariance(&x) {
-                Some(cov) if raw_covariance_is_usable(&cov) => cov,
-                _ => estimate_covariance(&x).unwrap(),
+            let fixed_sigma = std::env::var("SLIDE_S_AUDIT_FIXED_SIGMA").as_deref() == Ok("1");
+            let native_sigma = if fixed_sigma {
+                sigma.clone()
+            } else {
+                match sample_covariance(&x) {
+                    Some(cov) if raw_covariance_is_usable(&cov) => cov,
+                    _ => estimate_covariance(&x).unwrap(),
+                }
             };
             let r_s = Vector::from_ndarray(Array1::from_vec(
                 std::fs::read_to_string(directory.join("r_s.csv")).unwrap()
                     .lines().map(|line| line.parse::<f64>().unwrap()).collect(),
             ));
-            let native = prepare_knockoff_cache(&x, &KnockoffMethod::default()).unwrap();
+            let native = if fixed_sigma {
+                build_knockoff_cache(&x, &mu, &sigma, &diag_s).unwrap()
+            } else {
+                prepare_knockoff_cache(&x, &KnockoffMethod::default()).unwrap()
+            };
             let shared_sigma = build_knockoff_cache(&x, &mu, &sigma, &diag_s).unwrap();
             let shared_s = build_knockoff_cache(&x, &mu, &sigma, &r_s).unwrap();
             let noise = KnockoffCache {
@@ -1845,7 +1854,11 @@ mod tests {
                 std::fs::write(directory.join(name), bytes).unwrap();
             };
             write_matrix("rust_sigma.raw", &native_sigma);
-            let native_s = solve_diag_s(&native_sigma, &KnockoffMethod::default()).unwrap();
+            let native_s = if fixed_sigma {
+                diag_s.clone()
+            } else {
+                solve_diag_s(&native_sigma, &KnockoffMethod::default()).unwrap()
+            };
             let native_inv_s = solve_sigma_inv_diag_s(&native_sigma, &native_s).unwrap();
             let s_matrix = Array2::from_diag(native_s.as_ndarray());
             let native_target = Matrix::from_ndarray(symmetrize(
@@ -1853,6 +1866,14 @@ mod tests {
             ));
             write_matrix("rust_native_s.raw", &Matrix::from_ndarray(s_matrix));
             write_matrix("rust_native_target.raw", &native_target);
+            let shared_inv_s = solve_sigma_inv_diag_s(&sigma, &r_s).unwrap();
+            let shared_s_matrix = Array2::from_diag(r_s.as_ndarray());
+            let shared_target = Matrix::from_ndarray(symmetrize(
+                2.0 * &shared_s_matrix - shared_s_matrix.dot(shared_inv_s.as_ndarray()),
+            ));
+            write_matrix("rust_shared_s_target.raw", &shared_target);
+            eprintln!("shared_s unregularized Cholesky succeeds: {}",
+                shared_target.cholesky_unchecked("sigma_k").is_ok());
             eprintln!("native unregularized Cholesky succeeds: {}",
                 native_target.cholesky_unchecked("sigma_k").is_ok());
             for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s)] {
