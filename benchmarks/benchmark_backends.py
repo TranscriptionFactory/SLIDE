@@ -36,8 +36,10 @@ import dataclasses
 import datetime as dt
 import json
 import logging
+import math
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -71,8 +73,12 @@ class TimingRecord:
     delta: float
     lam: float
     wall_seconds: float
-    status: str  # "success" | "failed" | "skipped"
+    status: str  # "success" | "failed" | "skipped" | "timeout"
     error: str = ""
+    peak_rss_bytes: int | None = None
+    memory_method: str | None = None
+    backend_wall_seconds: float | None = None
+    python_glmnet_available: bool | None = None
 
 
 @dataclasses.dataclass
@@ -164,6 +170,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--profile", action="store_true",
                    help="Enable internal knockoff stage profiling")
     p.add_argument("--skip-run", action="store_true", help="Only compare existing outputs")
+    p.add_argument("--measure-process", action="store_true",
+                   help="Measure each cell in a fresh process, including startup and I/O")
+    p.add_argument("--cell-timeout", type=float, default=300.0,
+                   help="Wall-time limit per measured cell in seconds (default 300)")
     # SLURM
     p.add_argument("--slurm", action="store_true", help="Submit to SLURM instead of running locally")
     p.add_argument("--slurm-time", default="1-00:00:00")
@@ -188,6 +198,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p.error("--threads must be positive")
     if args.slurm and args.threads > args.slurm_cpus:
         p.error("--threads must not exceed --slurm-cpus")
+    if args.cell_timeout <= 0 or not math.isfinite(args.cell_timeout):
+        p.error("--cell-timeout must be finite and positive")
+    if args.measure_process and not args.skip_run:
+        if sys.platform != "linux":
+            p.error("--measure-process requires Linux /proc memory sampling")
+        if any(b in ("rust", "rust_r_knockoffs") for b in args.backends):
+            if not args.rust_bin or not args.rust_bin.is_file() or not os.access(args.rust_bin, os.X_OK):
+                p.error("--measure-process requires an executable prebuilt --rust-bin")
     return args
 
 
@@ -396,7 +414,7 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
             "lambda_min_ratio": 1 / 2000,
         },
         "rust_native_defaults": {
-            "tolerance": 1e-4, "max_iter": 1000,
+            "tolerance": 1e-7, "max_iter": 100000,
             "covariance_gate": "positive definite and condition number <= 100000",
             "lambda_min_ratio": "1e-4 if n > 2p else 1/2000",
         },
@@ -411,7 +429,11 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
             backend: 1 if backend == "python_serial" else args.threads
             for backend in args.backends
         },
-        "timing_boundary": "Python excludes imports; Rust/R include subprocess startup",
+        "timing_boundary": ("fresh interpreter and backend startup, imports, I/O and preprocessing; excludes report generation"
+                            if args.measure_process else
+                            "Python excludes imports; Rust/R include subprocess startup"),
+        "cell_timeout_seconds": args.cell_timeout if args.measure_process else None,
+        "memory_method": _MEMORY_METHOD if args.measure_process else None,
         "paired_random_draws": False,
     }
     with (out_dir / "benchmark_environment.json").open("w") as stream:
@@ -615,6 +637,105 @@ def run_rust_backend(
     except Exception as exc:
         elapsed = time.perf_counter() - start
         return TimingRecord(backend, delta, lam, elapsed, "failed", str(exc))
+
+
+_MEMORY_METHOD = "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak"
+
+
+def _run_cell(args: argparse.Namespace, backend: str, delta: float, lam: float) -> TimingRecord:
+    backend_dir = args.out_dir.resolve() / backend
+    backend_dir.mkdir(parents=True, exist_ok=True)
+    if backend in ("rust", "rust_r_knockoffs"):
+        return run_rust_backend(args, backend, delta, lam, backend_dir / _param_subdir(delta, lam))
+    if backend == "pure_r":
+        return run_pure_r_backend(args, delta, lam, backend_dir)
+    return run_python_backend(args, backend, delta, lam, backend_dir)
+
+
+def _group_rss_bytes(pgid: int) -> int:
+    total = 0
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat_path.read_text().rsplit(")", 1)[1].split()
+            if int(fields[2]) == pgid:
+                total += int(fields[21]) * os.sysconf("SC_PAGE_SIZE")
+        except (OSError, ValueError, IndexError):
+            continue  # Processes can exit between listing /proc and reading stat.
+    return total
+
+
+def _monitor_process(cmd: list[str], log_path: Path, timeout: float) -> tuple[float, int, int, bool]:
+    start = time.perf_counter()
+    peak = 0
+    timed_out = False
+    with log_path.open("w") as stream:
+        proc = subprocess.Popen(cmd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            while proc.poll() is None:
+                peak = max(peak, _group_rss_bytes(proc.pid))
+                if time.perf_counter() - start >= timeout:
+                    timed_out = True
+                    break
+                time.sleep(0.05)
+        finally:
+            # Own session only: also clean up workers left behind after child failure.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+    return time.perf_counter() - start, peak, proc.returncode, timed_out
+
+
+def _measurement_child(config_path: Path) -> int:
+    config = json.loads(config_path.read_text())
+    args = argparse.Namespace(**config["args"])
+    args.out_dir = Path(args.out_dir)
+    backend, delta, lam = config["backend"], config["delta"], config["lam"]
+    available = None
+    start = time.perf_counter()
+    try:
+        if backend in ("python", "python_serial"):
+            from loveslide.knockoff.stats.glmnet import HAS_GLMNET
+            available = bool(HAS_GLMNET)
+            if not available:
+                raise RuntimeError("Measured Python requires compiled glmnet; sklearn fallback is forbidden")
+            if args.configuration == "parity":
+                from loveslide.knockoff.solve import _get_sdp_solver
+                _get_sdp_solver("dsdp")
+        record = _run_cell(args, backend, delta, lam)
+    except Exception as exc:
+        record = TimingRecord(backend, delta, lam, time.perf_counter() - start, "failed", str(exc))
+    record.python_glmnet_available = available
+    Path(config["result_path"]).write_text(json.dumps(dataclasses.asdict(record)))
+    return 0 if record.status == "success" else 1
+
+
+def run_measured_cell(args: argparse.Namespace, backend: str, delta: float, lam: float) -> TimingRecord:
+    measurement_dir = args.out_dir.resolve() / backend / "measurements"
+    measurement_dir.mkdir(parents=True, exist_ok=True)
+    stem = measurement_dir / f"{delta}_{lam}_{time.time_ns()}"
+    config_path, result_path = Path(f"{stem}.config.json"), Path(f"{stem}.result.json")
+    config_path.write_text(json.dumps({
+        "args": vars(args), "backend": backend, "delta": delta, "lam": lam,
+        "result_path": str(result_path),
+    }, default=str))
+    elapsed, peak, returncode, timed_out = _monitor_process(
+        [sys.executable, str(Path(__file__).resolve()), "--measurement-child-json", str(config_path)],
+        Path(f"{stem}.log"), args.cell_timeout,
+    )
+    if result_path.exists() and not timed_out:
+        record = TimingRecord(**json.loads(result_path.read_text()))
+        record.backend_wall_seconds = record.wall_seconds
+        if returncode != 0 and record.status == "success":
+            record.status, record.error = "failed", f"exit code {returncode}"
+    else:
+        record = TimingRecord(backend, delta, lam, elapsed, "timeout" if timed_out else "failed",
+                              f"timeout after {args.cell_timeout}s" if timed_out else f"exit code {returncode}; no child result")
+    record.wall_seconds = elapsed
+    record.peak_rss_bytes = peak
+    record.memory_method = _MEMORY_METHOD
+    return record
 
 
 # ---------------------------------------------------------------------------
@@ -840,8 +961,8 @@ def write_report(
 
         # Timing table
         f.write("Configuration matching does not pair random draws or establish equal "
-                "solver accuracy. Python excludes imports from timing; Rust/R include "
-                "subprocess startup. See `benchmark_environment.json` for settings.\n\n")
+                "solver accuracy. See `benchmark_environment.json` for timing boundaries "
+                "and settings; memory fields describe sampled RSS, not cgroup peaks.\n\n")
         f.write("## Timing\n\n")
         f.write("| Backend | Delta | Lambda | Seconds | Status |\n")
         f.write("|---------|------:|-------:|--------:|--------|\n")
@@ -901,7 +1022,10 @@ def write_report(
 # Main
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    raw_args = sys.argv[1:] if argv is None else argv
+    if len(raw_args) == 2 and raw_args[0] == "--measurement-child-json":
+        return _measurement_child(Path(raw_args[1]))
+    args = parse_args(raw_args)
 
     if args.slurm:
         return submit_slurm(args)
@@ -926,7 +1050,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["RAYON_NUM_THREADS"] = str(args.threads)
 
     if not args.skip_run:
-        if args.configuration == "parity" and any(
+        if not args.measure_process and args.configuration == "parity" and any(
             backend in ("python", "python_serial", "r_knockoffs")
             for backend in args.backends
         ):
@@ -941,13 +1065,10 @@ def main(argv: list[str] | None = None) -> int:
                 backend_dir.mkdir(parents=True, exist_ok=True)
                 log.info("=== %s delta=%s lambda=%s ===", backend, delta, lam)
 
-                if backend in ("rust", "rust_r_knockoffs"):
-                    rust_dir = backend_dir / _param_subdir(delta, lam)
-                    record = run_rust_backend(args, backend, delta, lam, rust_dir)
-                elif backend == "pure_r":
-                    record = run_pure_r_backend(args, delta, lam, backend_dir)
+                if args.measure_process:
+                    record = run_measured_cell(args, backend, delta, lam)
                 else:
-                    record = run_python_backend(args, backend, delta, lam, backend_dir)
+                    record = _run_cell(args, backend, delta, lam)
 
                 timings.append(record)
                 _save_timing(record, out_dir)

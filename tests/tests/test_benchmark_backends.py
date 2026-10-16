@@ -144,3 +144,105 @@ def test_python_runner_passes_base_seed_into_pipeline(monkeypatch, tmp_path):
     assert result.status == "success"
     assert captured["knockoff_base_seed"] == 123
     assert captured["slide_selection"] is False
+
+
+def test_measured_mode_requires_prebuilt_rust():
+    with pytest.raises(SystemExit):
+        benchmark.parse_args(["--measure-process", "--backends", "rust"])
+    for value in ("0", "nan", "inf"):
+        with pytest.raises(SystemExit):
+            benchmark.parse_args(["--cell-timeout", value])
+
+
+def test_process_monitor_records_nonzero_exit_and_memory(tmp_path):
+    elapsed, peak, code, timed_out = benchmark._monitor_process(
+        [sys.executable, "-c", "import time; time.sleep(0.2); raise SystemExit(7)"],
+        tmp_path / "child.log", 5,
+    )
+    assert elapsed >= 0.2
+    assert peak > 0
+    assert code == 7
+    assert not timed_out
+
+
+def test_process_monitor_timeout_kills_worker(tmp_path):
+    import time
+
+    pid_path = tmp_path / "worker.pid"
+    code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+        f"Path({str(pid_path)!r}).write_text(str(p.pid)); time.sleep(60)"
+    )
+    elapsed, peak, code, timed_out = benchmark._monitor_process(
+        [sys.executable, "-c", code], tmp_path / "timeout.log", 0.5,
+    )
+    assert timed_out and code != 0 and elapsed < 5 and peak > 0
+    pid = int(pid_path.read_text())
+    for _ in range(50):
+        stat = Path(f"/proc/{pid}/stat")
+        if not stat.exists() or stat.read_text().rsplit(")", 1)[1].split()[0] == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail(f"worker {pid} survived process-group cleanup")
+
+
+def test_measurement_child_failure_is_retained(tmp_path):
+    args = benchmark.parse_args(["--measure-process", "--backends", "pure_r",
+                                 "--rscript", str(tmp_path / "missing-Rscript"),
+                                 "--out-dir", str(tmp_path), "--cell-timeout", "10"])
+    record = benchmark.run_measured_cell(args, "pure_r", 0.1, 1.0)
+    assert record.status == "failed"
+    assert "missing-Rscript" in record.error
+    assert record.wall_seconds >= record.backend_wall_seconds
+    assert record.peak_rss_bytes > 0
+    assert "not cgroup peak" in record.memory_method
+    benchmark._save_timing(record, tmp_path)
+    assert benchmark._load_saved_timings(tmp_path) == [record]
+
+
+def test_measured_python_rejects_fallback(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "loveslide.knockoff.stats.glmnet",
+                        types.SimpleNamespace(HAS_GLMNET=False))
+    args = benchmark.parse_args(["--backends", "python", "--out-dir", str(tmp_path)])
+    config = tmp_path / "child.json"
+    result = tmp_path / "result.json"
+    config.write_text(json.dumps({"args": vars(args), "backend": "python", "delta": 0.1,
+                                  "lam": 1.0, "result_path": str(result)}, default=str))
+    assert benchmark._measurement_child(config) == 1
+    record = json.loads(result.read_text())
+    assert record["python_glmnet_available"] is False
+    assert "fallback is forbidden" in record["error"]
+
+
+@pytest.mark.parametrize("configuration", ["parity", "native"])
+def test_measured_parity_checks_dsdp_before_pipeline(monkeypatch, tmp_path, configuration):
+    calls = []
+
+    def missing_dsdp(solver):
+        calls.append(solver)
+        raise ImportError("DSDP unavailable")
+
+    monkeypatch.setitem(sys.modules, "loveslide.knockoff.stats.glmnet",
+                        types.SimpleNamespace(HAS_GLMNET=True))
+    monkeypatch.setitem(sys.modules, "loveslide.knockoff.solve",
+                        types.SimpleNamespace(_get_sdp_solver=missing_dsdp))
+    monkeypatch.setattr(benchmark, "_run_cell", lambda args, backend, delta, lam:
+                        benchmark.TimingRecord(backend, delta, lam, 0.01, "success"))
+    args = benchmark.parse_args(["--configuration", configuration, "--backends", "python",
+                                 "--out-dir", str(tmp_path)])
+    config = tmp_path / "child.json"
+    result = tmp_path / "result.json"
+    config.write_text(json.dumps({"args": vars(args), "backend": "python", "delta": 0.1,
+                                  "lam": 1.0, "result_path": str(result)}, default=str))
+    exit_code = benchmark._measurement_child(config)
+    record = json.loads(result.read_text())
+    assert record["python_glmnet_available"] is True
+    if configuration == "parity":
+        assert calls == ["dsdp"]
+        assert exit_code == 1 and record["status"] == "failed"
+        assert record["error"] == "DSDP unavailable"
+    else:
+        assert calls == []
+        assert exit_code == 0 and record["status"] == "success"
