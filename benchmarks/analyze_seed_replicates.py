@@ -21,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.linalg import orth, subspace_angles
+from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aggregate_seed_sweep import _jaccard, load_sweep  # noqa: E402
@@ -169,10 +171,13 @@ def compare(df, tests, n_perm, n_boot, rng):
                 between_lt_within_p=permutation_p(a.marginal, b.marginal, n_perm, rng),
                 right_core=" ".join(sorted(core, key=lambda f: int(f[1:]))),
                 left_core_recall=np.mean([len(s & core) / len(core) for s in a.marginal]) if core else np.nan,
-                left_extra_rate=np.mean([len(s - core) / len(s) for s in a.marginal if s]))
+                left_extra_rate=np.mean([len(s - core) / len(s) for s in a.marginal if s]) if any(a.marginal) else np.nan)
 
         cell_rows = []
-        for factor in sorted(set().union(*g.marginal), key=lambda f: int(f[1:])):
+        observed = set().union(*g.marginal)
+        if not observed:
+            observed = set(load_z(g.iloc[0])[0])
+        for factor in sorted(observed, key=lambda f: int(f[1:])):
             row = dict(cell=cell, factor=factor)
             for arm, h in g.groupby("arm", sort=False):
                 k = sum(factor in s for s in h.marginal)
@@ -196,6 +201,64 @@ def compare(df, tests, n_perm, n_boot, rng):
     counts = tests_df.kind.isin(["marginal", "interaction"])
     tests_df.loc[counts, "mannwhitney_bh_q"] = stats.false_discovery_control(tests_df.mannwhitney_p[counts])
     return tests_df, pd.concat(factors, ignore_index=True)
+
+
+def equivalence_intervals(df, tests, n_boot, rng):
+    """Independent-run pilot intervals; requires prior check_z, not paired datasets.
+
+    Exact binomial bounds are simultaneous across all marginal factors/cells/tests.
+    Bootstrap count/overlap intervals are exploratory, not equivalence decisions.
+    """
+    families = sum(int(g.k.iloc[0]) for _, g in df.groupby("cell")) * len(tests)
+    if families < 1 or n_boot < 1:
+        raise ValueError("Equivalence intervals require factors, comparisons and bootstrap draws")
+    tail = 0.05 / (4 * families)  # two tails for each of the two arm proportions
+    factors, summaries = [], []
+    for cell, g in df.groupby("cell", sort=False):
+        names, _ = load_z(g.iloc[0])
+        for left, right in tests:
+            a, b = g[g.arm == left], g[g.arm == right]
+            if min(len(a), len(b)) < 2:
+                raise ValueError("At least two independent runs per arm are required")
+            for factor in names:
+                kl, kr = sum(factor in s for s in a.marginal), sum(factor in s for s in b.marginal)
+                bounds = []
+                for k, n in ((kl, len(a)), (kr, len(b))):
+                    bounds.append((0.0 if k == 0 else stats.beta.ppf(tail, k, n-k+1),
+                                   1.0 if k == n else stats.beta.ppf(1-tail, k+1, n-k)))
+                lo, hi = bounds[0][0] - bounds[1][1], bounds[0][1] - bounds[1][0]
+                verdict = ("equivalent" if lo >= -0.05 and hi <= 0.05 else
+                           "different" if lo > 0.05 or hi < -0.05 else "inconclusive")
+                factors.append(dict(cell=cell, left=left, right=right, factor=factor,
+                                    left_n=len(a), right_n=len(b), left_selected=kl, right_selected=kr,
+                                    difference=kl/len(a)-kr/len(b), simultaneous_lo=lo,
+                                    simultaneous_hi=hi, margin=0.05, verdict=verdict))
+            for kind in ("marginal", "interaction"):
+                aa, bb = list(a[kind]), list(b[kind])
+                cross = np.array([[_jaccard(x, y) for y in bb] for x in aa])
+                within = np.array([[_jaccard(x, y) for y in bb] for x in bb])
+                iu = np.triu_indices(len(bb), 1)
+                counts_a, counts_b = np.array(list(map(len, aa))), np.array(list(map(len, bb)))
+                ia = rng.integers(len(aa), size=(n_boot, len(aa)))
+                ib = rng.integers(len(bb), size=(n_boot, len(bb)))
+                count_boot = counts_a[ia].mean(1) - counts_b[ib].mean(1)
+                # Resample runs, not correlated pairwise Jaccard values.
+                overlap_boot = np.array([within[y[:, None], y][iu].mean() -
+                                         cross[x[:, None], y].mean() for x, y in zip(ia, ib)])
+                clo, chi = np.percentile(count_boot, [2.5, 97.5])
+                olo, ohi = np.percentile(overlap_boot, [2.5, 97.5])
+                summaries.append(dict(cell=cell, left=left, right=right, kind=kind,
+                                      count_difference=counts_a.mean()-counts_b.mean(),
+                                      count_lo=clo, count_hi=chi, count_margin=1,
+                                      reference_within_jaccard=within[iu].mean(),
+                                      cross_jaccard=cross.mean(),
+                                      overlap_deficit=within[iu].mean()-cross.mean(),
+                                      overlap_lo=olo, overlap_hi=ohi, overlap_margin=0.05,
+                                      left_empty=int((counts_a == 0).sum()), right_empty=int((counts_b == 0).sum()),
+                                      both_empty_pairs=sum(not x and not y for x in aa for y in bb),
+                                      one_empty_pairs=sum(bool(x) != bool(y) for x in aa for y in bb),
+                                      interval_scope="exploratory independent-run bootstrap; not a verdict"))
+    return pd.DataFrame(factors), pd.DataFrame(summaries)
 
 
 def plot(df, factors, order, heatmap_cells, out):
@@ -235,6 +298,11 @@ def plot(df, factors, order, heatmap_cells, out):
         f = factors[factors.cell == cell].set_index("factor")[[f"{arm}_rate" for arm in order]]
         f = f[f.max(axis=1) >= 0.2]
         f.columns = order
+        if f.empty:
+            ax.text(0.5, 0.5, "No factor selected in >= 20% of runs", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(cell)
+            ax.set_axis_off()
+            continue
         sns.heatmap(f, ax=ax, vmin=0, vmax=1, cmap="viridis", annot=True, fmt=".1f", annot_kws={"size": 7},
                     cbar=ax is np.atleast_1d(axes)[-1], cbar_kws={"label": "Selection rate"})
         ax.set_title(cell)
@@ -245,12 +313,113 @@ def plot(df, factors, order, heatmap_cells, out):
     plt.close(fig)
 
 
+def match_truth(z, truth, threshold=0.95):
+    """Match centered scores without outcomes; dummy columns leave weak matches unassigned."""
+    if z.ndim != 2 or truth.ndim != 2 or z.shape[0] != truth.shape[0]:
+        raise ValueError("Estimated and truth scores must have the same ordered samples")
+    if not np.isfinite(z).all() or not np.isfinite(truth).all():
+        raise ValueError("Scores must be finite")
+    a, b = z - z.mean(axis=0), truth - truth.mean(axis=0)
+    denom = np.linalg.norm(a, axis=0)[:, None] * np.linalg.norm(b, axis=0)
+    corr = np.divide(a.T @ b, denom, out=np.zeros_like(denom), where=denom > 0)
+    weights = np.where(np.abs(corr) >= threshold, np.abs(corr), 0)
+    ii, jj = linear_sum_assignment(np.pad(weights, ((0, 0), (0, len(a.T)))), maximize=True)
+    mapping = {int(i): int(j) for i, j in zip(ii, jj) if j < truth.shape[1] and weights[i, j] > 0}
+    qa, qb = orth(a), orth(b)
+    angles = np.degrees(subspace_angles(qa, qb)).tolist() if qa.shape[1] and qb.shape[1] else []
+    rank_a, rank_b = qa.shape[1], qb.shape[1]
+    # ||Pa-Pb||_F / sqrt(max rank) detects extra dimensions that principal angles omit.
+    projector_distance = np.sqrt(max(0, rank_a + rank_b - 2 * np.sum((qa.T @ qb)**2))
+                                 / max(rank_a, rank_b, 1))
+    matched = [float(corr[i, j]) for i, j in mapping.items()]
+    return mapping, dict(unmatched_estimated=z.shape[1] - len(mapping),
+                        unmatched_truth=truth.shape[1] - len(mapping),
+                        unmatched_estimated_indices=json.dumps(sorted(set(range(z.shape[1])) - mapping.keys())),
+                        unmatched_truth_indices=json.dumps(sorted(set(range(truth.shape[1])) - set(mapping.values()))),
+                        matched_abs_corr_min=min(map(abs, matched), default=np.nan),
+                        matched_abs_corr_mean=np.mean(np.abs(matched)) if matched else np.nan,
+                        matches=json.dumps(mapping), signed_correlations=json.dumps(matched),
+                        estimated_rank=rank_a, truth_rank=rank_b,
+                        normalized_projector_frobenius=projector_distance,
+                        principal_angles_degrees=json.dumps(angles),
+                        max_principal_angle_degrees=max(angles, default=np.nan))
+
+
+def truth_bounds(selected, support, mapping, identifiable=True):
+    """Unmatched selections are unknown, not automatically false discoveries."""
+    known = [tuple(sorted(mapping[i] for i in item)) for item in selected if all(i in mapping for i in item)]
+    if not identifiable:
+        known = []
+    hits = len(set(known) & support)
+    false = sum(item not in support for item in known)
+    unknown = len(selected) - len(known)
+    size, signals = len(selected), len(support)
+    fdp_lo = (false / size if signals else 1.0) if size else 0.0
+    return dict(selected=size, unmatched_selected=unknown,
+                fdp_exact=fdp_lo if not unknown or not signals else np.nan,
+                fdp_lo=fdp_lo,
+                fdp_hi=(false + unknown) / size if size else 0.0,
+                power_lo=hits / signals if signals else np.nan,
+                power_hi=min(signals, hits + unknown) / signals if signals else np.nan,
+                classification="identified" if identifiable and not unknown else "inconclusive")
+
+
+def analyze_truth(arms, input_root):
+    rows = []
+    for name, backend, dirs in arms:
+        for directory in dirs:
+            regime = directory.parent.name
+            for row in load([(name, backend, [directory])]).itertuples():
+                source = input_root / regime / f"seed_{row.seed}"
+                metadata = json.loads((source / "truth.json").read_text())
+                with np.load(source / "truth.npz") as bundle:
+                    truth = bundle["Z"]
+                names, z = load_z(row)
+                mapping, diagnostics = match_truth(z, truth)
+                columns = {name: i for i, name in enumerate(names)}
+                if len(columns) != z.shape[1]:
+                    raise ValueError("Estimated factor names must be unique and match score columns")
+                for kind in ("marginal", "interaction"):
+                    selected = {tuple(columns[part] for part in value.replace(":", ".").split("."))
+                                for value in getattr(row, kind)}
+                    support = metadata[f"{kind}_support"]
+                    support = {(i,) for i in support} if kind == "marginal" else {tuple(sorted(x)) for x in support}
+                    rows.append(dict(arm=name, regime=regime, seed=row.seed, cell=row.cell, kind=kind,
+                                     near_degenerate=metadata["near_degenerate"], **diagnostics,
+                                     **truth_bounds(selected, support, mapping, not metadata["near_degenerate"])))
+    datasets = pd.DataFrame(rows)
+    if datasets.empty:
+        raise ValueError("No successful simulation datasets found; consult the run failure manifest")
+    keys = ["arm", "regime", "cell", "kind"]
+    if datasets.duplicated(keys + ["seed"]).any():
+        raise ValueError("Repeated dataset seeds cannot count as independent simulations")
+    groups = datasets.groupby(keys)
+    endpoints = ("fdp_lo", "fdp_hi", "power_lo", "power_hi")
+    comparisons = len(groups) * len(endpoints)
+    summary = []
+    for key, group in groups:
+        for endpoint in endpoints:
+            values = group[endpoint].dropna()
+            n = len(values)
+            radius = np.sqrt(np.log(2 * comparisons / 0.05) / (2 * n)) if n else np.nan
+            mean = values.mean()
+            summary.append(dict(zip(keys, key), endpoint=endpoint, datasets=n, mean=mean,
+                                simultaneous_lo=max(0, mean - radius) if n else np.nan,
+                                simultaneous_hi=min(1, mean + radius) if n else np.nan,
+                                interval="95% simultaneous Hoeffding over reported arms/regimes/kinds/endpoints",
+                                verdict="inconclusive pilot; inspect failures and matching coverage"))
+    return datasets, pd.DataFrame(summary)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("out", type=Path)
     p.add_argument("--arm", action="append", required=True, type=parse_arm, help="NAME=BACKEND:DIR[,DIR...]")
-    p.add_argument("--test", action="append", required=True, type=lambda s: tuple(s.split(":")), help="LEFT:RIGHT")
+    p.add_argument("--test", action="append", default=[], type=lambda s: tuple(s.split(":")), help="LEFT:RIGHT")
+    p.add_argument("--truth-input-root", type=Path, help="Truth mode: inputs/<regime>/seed_<seed>; arm dirs must end <regime>/<backend>")
     p.add_argument("--min-runs", type=int, default=10, help="Fail if an arm has fewer runs in any cell")
+    p.add_argument("--expected-cells", type=int, default=4)
+    p.add_argument("--equivalence", action="store_true", help="Pilot intervals; requires identical Z and independent runs")
     p.add_argument("--z-reference", help="Arm whose Z every run must match (also checks K)")
     p.add_argument("--z-tol", type=float, default=1e-8)
     p.add_argument("--heatmap-cell", action="append", default=[], help="Cell label, e.g. 'd=0.01 l=0.1'")
@@ -258,20 +427,39 @@ def main():
     p.add_argument("--bootstrap", type=int, default=10000)
     p.add_argument("--random-seed", type=int, default=0)
     args = p.parse_args()
+    if not args.truth_input_root and not args.test:
+        p.error("--test is required outside truth mode")
+    if args.truth_input_root and (args.equivalence or args.z_reference):
+        p.error("Truth mode cannot use cross-dataset factor-ID comparisons")
+    if args.equivalence and not args.z_reference:
+        p.error("--equivalence requires --z-reference; unaligned factor IDs cannot be compared")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     pd.set_option("display.width", 250)
     args.out.mkdir(parents=True, exist_ok=True)
+    if args.truth_input_root:
+        datasets, summary = analyze_truth(args.arm, args.truth_input_root)
+        datasets.to_csv(args.out / "truth_datasets.csv", index=False)
+        summary.to_csv(args.out / "truth_summary.csv", index=False)
+        logging.warning("Pilot only: 20 independent datasets cannot certify FDR. Intervals cover successful datasets; "
+                        "consult failure manifest. Near-degenerate factors have no individual-factor verdict; "
+                        "principal angles require rank/coverage checks.")
+        return
     rng = np.random.default_rng(args.random_seed)
     order = [name for name, _, _ in args.arm]
 
     df = load(args.arm)
     for arm in order:
         runs = df[df.arm == arm].groupby("cell").run.nunique()
-        assert len(runs) == 4 and (runs >= args.min_runs).all(), f"{arm}: incomplete replicates {runs.to_dict()}"
+        assert len(runs) == args.expected_cells and (runs >= args.min_runs).all(), f"{arm}: incomplete replicates {runs.to_dict()}"
     if args.z_reference:
         z = check_z(df, args.z_reference, args.z_tol)
         z.to_csv(args.out / "z_check.csv", index=False)
         logging.info("K and Z agree with %s within %g:\n%s", args.z_reference, args.z_tol, z.to_string(index=False))
+
+    if args.equivalence:
+        factor_ci, aggregate_ci = equivalence_intervals(df, args.test, args.bootstrap, rng)
+        factor_ci.to_csv(args.out / "equivalence_factors.csv", index=False)
+        aggregate_ci.to_csv(args.out / "equivalence_summary.csv", index=False)
 
     summary = summarize(df)
     tests, factors = compare(df, args.test, args.permutations, args.bootstrap, rng)

@@ -10,6 +10,52 @@
 
 set -euo pipefail
 
+# A frozen manifest reuses the harness for sequential, resource-isolated cells.
+if [[ ${1:-} == --manifest ]]; then
+    python - "${2:?manifest required}" "${3:-}" <<'PY'
+import json
+import logging
+import subprocess
+import sys
+from pathlib import Path
+
+manifest = Path(sys.argv[1]).resolve()
+tasks = json.loads(manifest.read_text())
+outputs = [task['out'] for task in tasks]
+assert len(outputs) == len(set(outputs)), 'Manifest must not overwrite an output bundle'
+assert all(task['backend'] in ('python', 'rust', 'pure_r') for task in tasks)
+assert all('--measure-process' in task['args'] for task in tasks)
+if sys.argv[2] == '--validate-only':
+    logging.warning('Validated %d bundles', len(tasks))
+    raise SystemExit(0)
+status_path = manifest.with_suffix('.status.jsonl')
+with status_path.open('x') as status:
+    stopped = set()
+    for task in tasks:
+        key = task.get('ladder')
+        if key and key in stopped:
+            status.write(json.dumps({**task, 'status': 'not_attempted_after_limit'}) + '\n')
+            status.flush()
+            continue
+        out = Path(task['out'])
+        out.mkdir(parents=True, exist_ok=False)
+        with (out / 'harness.log').open('w') as log:
+            result = subprocess.run([sys.executable, 'benchmarks/benchmark_backends.py', *task['args']],
+                                    stdout=log, stderr=subprocess.STDOUT)
+        timing_path = out / task['backend'] / 'timings.json'
+        timings = json.loads(timing_path.read_text()) if timing_path.exists() else []
+        outcome = 'success' if result.returncode == 0 and timings and all(
+            row['status'] == 'success' for row in timings) else 'failed'
+        status.write(json.dumps({**task, 'status': outcome, 'harness_exit': result.returncode,
+                                 'timings': timings}) + '\n')
+        status.flush()
+        # Stop a scaling arm conservatively on any failure, including OOM/timeout.
+        if key and outcome != 'success':
+            stopped.add(key)
+PY
+    exit "$?"
+fi
+
 BACKEND="${1:?Usage: run_backend.sh <python|r_knockoffs|rust>}"
 PROJECT_DIR="/ix/djishnu/Aaron/1_general_use/omni-SLIDE"
 OUT_DIR="${PROJECT_DIR}/benchmark_results/comprehensive"
