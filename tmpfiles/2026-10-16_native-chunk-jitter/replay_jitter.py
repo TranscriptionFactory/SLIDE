@@ -19,16 +19,19 @@ parser.add_argument("root", type=Path)
 parser.add_argument("binary", type=Path)
 parser.add_argument("output", type=Path)
 parser.add_argument("--r-s", action="store_true", help="Also fit R S on the exact native covariance")
+parser.add_argument("--construction-arms", type=Path,
+                    help="Add the four shared-S solver × postprocessor sampler arms")
 options = parser.parse_args()
 root, binary, output = options.root, options.binary, options.output
 output.mkdir(parents=True, exist_ok=True)
 args = SimpleNamespace(rust_bin=binary, tolerance=1e-7, max_iter=100000, nlambda=500)
 meta = {"shape": {"Z": [24, 22], "A": [1, 22]}, "rust_lambda_environment": "1",
         "rust_cached": True, "fdr": 0.1}
-summary, contrasts = {}, []
+summary, contrasts, per_draw_selections = {}, [], {}
 # shortcut: fixed saved 24x22 chunks and 500 draws; extend loaders for another study.
 for chunk in (1, 4):
     d = root / f"chunk_{chunk}"
+    names = [f"Z{j + (chunk - 1) * 22}" for j in range(22)]
     matrix = lambda name: np.fromfile(d / name, "<f8").reshape(22, 22)
     target, upper = matrix("rust_native_target.raw"), matrix("rust_native_factor.raw")
     s = np.diag(matrix("rust_native_s.raw"))
@@ -46,6 +49,7 @@ for chunk in (1, 4):
     jitter = float(np.median(np.diag(residual)))
     np.testing.assert_allclose(residual, jitter * np.eye(22), rtol=0, atol=1e-13)
     assert abs(jitter) < 1e-13 or np.isclose(jitter, epsilon, rtol=1e-4)
+    native_jitter = jitter
     try:
         np.linalg.cholesky(target)
         initial_cholesky = True
@@ -78,6 +82,37 @@ for chunk in (1, 4):
         r_s_geometry = {"same_covariance_bitwise": True, "r_s": r_s.tolist(),
                         "native_s": s.tolist(), "factor_covariance_residual": float(np.abs(r_residual).max())}
         arms["r_s"].tofile(d / "xt_r_s.raw")
+    construction_geometry = {}
+    if options.construction_arms:
+        sigma = matrix("rust_sigma.raw")
+        saved_noise = noise
+        for arm in ("clarabel_rustpost", "clarabel_rpost", "dsdp_rustpost", "dsdp_rpost"):
+            arm_dir = options.construction_arms / arm / f"chunk_{chunk}"
+            arm_noise = np.fromfile(arm_dir / "rust_noise_draws.raw", "<f8").reshape(500, 24, 22)
+            np.testing.assert_array_equal(arm_noise, saved_noise)
+            np.testing.assert_array_equal(
+                np.fromfile(arm_dir / "rust_sigma.raw", "<f8").reshape(22, 22), sigma)
+            s_value = np.loadtxt(arm_dir / "r_s.csv")
+            assert s_value.shape == (22,) and np.isfinite(s_value).all()
+            assert (s_value >= 0).all() and (s_value <= np.diag(sigma)).all()
+            mean_value = np.fromfile(arm_dir / "rust_shared_s_mean.raw", "<f8").reshape(24, 22)
+            factor = np.fromfile(arm_dir / "rust_shared_s_factor.raw", "<f8").reshape(22, 22)
+            draws = np.fromfile(arm_dir / "rust_shared_s_draws.raw", "<f8").reshape(500, 24, 22)
+            np.testing.assert_allclose(draws, mean_value + arm_noise @ factor, rtol=0, atol=1e-12)
+            diag_s = np.diag(s_value)
+            target_s = 2 * diag_s - diag_s @ np.linalg.solve(sigma, diag_s)
+            target_s = (target_s + target_s.T) / 2
+            factor_residual = factor.T @ factor - target_s
+            conditional_jitter = float(np.median(np.diag(factor_residual)))
+            np.testing.assert_allclose(factor_residual, conditional_jitter * np.eye(22), rtol=0, atol=1e-13)
+            construction_geometry[arm] = {
+                "s": s_value.tolist(), "zero_s": [names[j] for j in np.flatnonzero(s_value == 0)],
+                "minimum_target_eigenvalue": float(np.linalg.eigvalsh(target_s).min()),
+                "conditional_factor_jitter": conditional_jitter,
+                "max_factor_residual_offdiagonal": float(np.abs(factor_residual - np.diag(np.diag(factor_residual))).max()),
+                "same_noise_as_native": True, "draws_reconstruct_from_factor": True,
+            }
+            arms[arm] = draws
     swaps = np.fromfile(d / "swaps.raw", np.uint8).reshape(500, 22)
     selected = {arm: [] for arm in arms}
     ws = {arm: [] for arm in arms}
@@ -93,11 +128,19 @@ for chunk in (1, 4):
     assert selected["native"] == r_selected, "Native fitter no longer matches saved R"
     indicators = {arm: np.array([[j in row for j in range(22)] for row in rows])
                   for arm, rows in selected.items()}
-    names = [f"Z{j + (chunk - 1) * 22}" for j in range(22)]
     pairs = [("no_jitter", "native"), ("no_jitter", "rebuilt_jitter"),
              ("rebuilt_jitter", "native")]
     if options.r_s:
         pairs.append(("r_s", "native"))
+    if options.construction_arms:
+        pairs.extend((left, right) for left, right in (
+            ("clarabel_rustpost", "dsdp_rustpost"),
+            ("clarabel_rpost", "dsdp_rpost"),
+            ("clarabel_rustpost", "clarabel_rpost"),
+            ("dsdp_rustpost", "dsdp_rpost"),
+        ))
+        pairs.extend((arm, "native") for arm in (
+            "clarabel_rustpost", "clarabel_rpost", "dsdp_rustpost", "dsdp_rpost"))
     for left, right in pairs:
         table = paired_vote_summary(indicators[left], indicators[right], (left, right))
         table.insert(0, "factor", names)
@@ -107,9 +150,13 @@ for chunk in (1, 4):
     aggregates = {arm: aggregate_selection(rows, 22, 0.1) for arm, rows in selected.items()}
     for values in aggregates.values():
         values.pop("cumulative")
+    per_draw_selections[d.name] = {
+        arm: [[names[j] for j in sorted(draw)] for draw in rows]
+        for arm, rows in selected.items()
+    }
     summary[d.name] = {
         "initial_cholesky_succeeds": initial_cholesky,
-        "added_diagonal": jitter, "first_retry_epsilon": epsilon,
+        "added_diagonal": native_jitter, "first_retry_epsilon": epsilon,
         "zero_s_factors": [names[j] for j in np.flatnonzero(s == 0)],
         "max_offdiagonal_residual": float(np.abs(residual - np.diag(np.diag(residual))).max()),
         "native_matches_saved_draws_bitwise": True,
@@ -122,7 +169,10 @@ for chunk in (1, 4):
     }
     if options.r_s:
         summary[d.name]["r_s_geometry"] = r_s_geometry
+    if options.construction_arms:
+        summary[d.name]["construction_geometry"] = construction_geometry
     np.savez_compressed(output / f"{d.name}_scores.npz", **{arm: np.array(w) for arm, w in ws.items()})
     logging.info("%s: %s", d.name, json.dumps(summary[d.name]))
 pd.concat(contrasts, ignore_index=True).to_csv(output / "paired_votes.csv", index=False)
 (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+(output / "selected_draws.json").write_text(json.dumps(per_draw_selections) + "\n")

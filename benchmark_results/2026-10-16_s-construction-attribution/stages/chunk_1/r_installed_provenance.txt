@@ -1,0 +1,214 @@
+R 4.5.3
+knockoff 0.3.6 /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/R/library/knockoff
+Rdsdp 1.0.6 /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/R/library/Rdsdp
+
+--- knockoff:::create.solve_asdp ---
+function (Sigma, max.size = 500, gaptol = 1e-06, maxit = 1000, 
+    verbose = FALSE) 
+{
+    stopifnot(isSymmetric(Sigma))
+    if (ncol(Sigma) <= max.size) 
+        return(create.solve_sdp(Sigma, gaptol = gaptol, maxit = maxit, 
+            verbose = verbose))
+    if (verbose) 
+        cat(sprintf("Dividing the problem into subproblems of size <= %s ... ", 
+            max.size))
+    cluster_sol = divide.sdp(Sigma, max.size = max.size)
+    n.blocks = max(cluster_sol$clusters)
+    if (verbose) 
+        cat("done. \n")
+    if (verbose) 
+        cat(sprintf("Solving %s smaller SDPs ... \n", n.blocks))
+    s_asdp_list = list()
+    if (verbose) 
+        pb <- utils::txtProgressBar(min = 0, max = n.blocks, 
+            style = 3)
+    for (k in 1:n.blocks) {
+        s_asdp_list[[k]] = create.solve_sdp(as.matrix(cluster_sol$subSigma[[k]]), 
+            gaptol = gaptol, maxit = maxit)
+        if (verbose) 
+            utils::setTxtProgressBar(pb, k)
+    }
+    if (verbose) 
+        cat("\n")
+    p = dim(Sigma)[1]
+    idx_count = rep(1, n.blocks)
+    s_asdp = rep(0, p)
+    for (j in 1:p) {
+        cluster_j = cluster_sol$clusters[j]
+        s_asdp[j] = s_asdp_list[[cluster_j]][idx_count[cluster_j]]
+        idx_count[cluster_j] = idx_count[cluster_j] + 1
+    }
+    if (verbose) 
+        cat(sprintf("Combinining the solutions of the %s smaller SDPs ... ", 
+            n.blocks))
+    tol = 1e-12
+    maxitr = 1e+05
+    gamma_range = seq(0, 1, len = 1000)
+    options(warn = -1)
+    gamma_opt = gtools::binsearch(function(i) {
+        G = 2 * Sigma - gamma_range[i] * diag(s_asdp)
+        lambda_min = RSpectra::eigs(G, 1, which = "SR", opts = list(retvec = FALSE, 
+            maxitr = maxitr, tol = tol))$values
+        if (length(lambda_min) == 0) {
+            lambda_min = 1
+        }
+        lambda_min
+    }, range = c(1, length(gamma_range)))
+    s_asdp_scaled = gamma_range[min(gamma_opt$where)] * s_asdp
+    options(warn = 0)
+    if (verbose) 
+        cat("done. \n")
+    if (verbose) 
+        cat("Verifying that the solution is correct ... ")
+    if (!is_posdef(2 * Sigma - diag(s_asdp_scaled, length(s_asdp_scaled)))) {
+        warning("In creation of approximate SDP knockoffs, procedure failed. Knockoffs will have no power.", 
+            immediate. = T)
+        s_asdp_scaled = 0 * s_asdp_scaled
+    }
+    if (verbose) 
+        cat("done. \n")
+    s_asdp_scaled
+}
+--- knockoff:::create.solve_sdp ---
+function (Sigma, gaptol = 1e-06, maxit = 1000, verbose = FALSE) 
+{
+    stopifnot(isSymmetric(Sigma))
+    G = cov2cor(Sigma)
+    p = dim(G)[1]
+    if (!is_posdef(G)) {
+        warning("The covariance matrix is not positive-definite: knockoffs may not have power.", 
+            immediate. = T)
+    }
+    Cl1 = rep(0, p)
+    Al1 = -Matrix::Diagonal(p)
+    Cl2 = rep(1, p)
+    Al2 = Matrix::Diagonal(p)
+    d_As = c(diag(p))
+    As = Matrix::Diagonal(length(d_As), x = d_As)
+    As = As[which(Matrix::rowSums(As) > 0), ]
+    Cs = c(2 * G)
+    A = cbind(Al1, Al2, As)
+    C = matrix(c(Cl1, Cl2, Cs), 1)
+    K = NULL
+    K$s = p
+    K$l = 2 * p
+    b = rep(1, p)
+    OPTIONS = NULL
+    OPTIONS$gaptol = gaptol
+    OPTIONS$maxit = maxit
+    OPTIONS$logsummary = 0
+    OPTIONS$outputstats = 0
+    OPTIONS$print = 0
+    if (verbose) 
+        cat("Solving SDP ... ")
+    sol = Rdsdp::dsdp(A, b, C, K, OPTIONS)
+    if (verbose) 
+        cat("done. \n")
+    if (!identical(sol$STATS$stype, "PDFeasible")) {
+        warning("The SDP solver returned a non-feasible solution. Knockoffs may lose power.")
+    }
+    s = sol$y
+    s[s < 0] = 0
+    s[s > 1] = 1
+    if (verbose) 
+        cat("Verifying that the solution is correct ... ")
+    psd = 0
+    s_eps = 1e-08
+    while ((psd == 0) & (s_eps <= 0.1)) {
+        if (is_posdef(2 * G - diag(s * (1 - s_eps), length(s)), 
+            tol = 1e-09)) {
+            psd = 1
+        }
+        else {
+            s_eps = s_eps * 10
+        }
+    }
+    s = s * (1 - s_eps)
+    s[s < 0] = 0
+    if (verbose) 
+        cat("done. \n")
+    if (all(s == 0)) {
+        warning("In creation of SDP knockoffs, procedure failed. Knockoffs will have no power.", 
+            immediate. = T)
+    }
+    return(s * diag(Sigma))
+}
+--- Rdsdp::dsdp wrapper ---
+function (A, b, C, K, OPTIONS = NULL) 
+{
+    data_filename = tempfile(pattern = "inputdata", tmpdir = tempdir(), 
+        fileext = ".dat-s")
+    sedumi2sdpa(data_filename, A, b, C, K)
+    options_filename = ""
+    if (!is.null(OPTIONS)) {
+        options_filename = tempfile(pattern = "inputoptions", 
+            tmpdir = tempdir(), fileext = ".options")
+        write.options.file(options_filename, OPTIONS)
+    }
+    remove(A, b, C)
+    result = dsdp.readsdpa(data_filename, options_filename)
+    if (file.exists(data_filename)) 
+        file.remove(data_filename)
+    if (file.exists(options_filename)) 
+        file.remove(options_filename)
+    STATS = as.list(result[[3]])
+    solutiontype = NULL
+    if (STATS[[1]] == 1) 
+        solutiontype = "PDFeasible"
+    else if (STATS[[1]] == 3) 
+        solutiontype = "Unbounded"
+    else if (STATS[[1]] == 4) 
+        solutiontype = "Infeasible"
+    STATS[[1]] = solutiontype
+    if (length(STATS) > 3) 
+        names(STATS) = c("stype", "dobj", "pobj", "r", "mu", 
+            "pstep", "dstep", "pnorm")
+    else names(STATS) = c("stype", "dobj", "pobj")
+    list(X = result[[1]], y = result[[2]], STATS = STATS)
+}
+--- sessionInfo ---
+R version 4.5.3 (2026-03-11)
+Platform: x86_64-conda-linux-gnu
+Running under: Red Hat Enterprise Linux 9.6 (Plow)
+
+Matrix products: default
+BLAS/LAPACK: /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/libopenblasp-r0.3.32.so;  LAPACK version 3.12.0
+
+locale:
+ [1] LC_CTYPE=C.UTF-8       LC_NUMERIC=C           LC_TIME=C.UTF-8       
+ [4] LC_COLLATE=C.UTF-8     LC_MONETARY=C.UTF-8    LC_MESSAGES=C.UTF-8   
+ [7] LC_PAPER=C.UTF-8       LC_NAME=C              LC_ADDRESS=C          
+[10] LC_TELEPHONE=C         LC_MEASUREMENT=C.UTF-8 LC_IDENTIFICATION=C   
+
+time zone: America/New_York
+tzcode source: system (glibc)
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] Rdsdp_1.0.6    knockoff_0.3.6
+
+loaded via a namespace (and not attached):
+[1] compiler_4.5.3
+
+--- knockoff:::is_posdef ---
+function (A, tol = 1e-09) 
+{
+    p = nrow(matrix(A))
+    if (p < 500) {
+        lambda_min = min(eigen(A)$values)
+    }
+    else {
+        oldw <- getOption("warn")
+        options(warn = -1)
+        lambda_min = RSpectra::eigs(A, 1, which = "SM", opts = list(retvec = FALSE, 
+            maxitr = 100, tol))$values
+        options(warn = oldw)
+        if (length(lambda_min) == 0) {
+            lambda_min = min(eigen(A)$values)
+        }
+    }
+    return(lambda_min > tol * 10)
+}
