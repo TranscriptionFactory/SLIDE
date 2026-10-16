@@ -1,4 +1,5 @@
-"""Exact-cell jitter probe; reuse paired fit, vote, and aggregation helpers."""
+"""Exact-cell jitter/S probe; reuse paired fit, vote, and aggregation helpers."""
+import argparse
 import json
 import logging
 import sys
@@ -13,7 +14,13 @@ from replay_paired_xtilde import fit_draw, paired_vote_summary
 from analyze_paired_xtilde import aggregate_selection
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-root, binary, output = map(Path, sys.argv[1:])
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("root", type=Path)
+parser.add_argument("binary", type=Path)
+parser.add_argument("output", type=Path)
+parser.add_argument("--r-s", action="store_true", help="Also fit R S on the exact native covariance")
+options = parser.parse_args()
+root, binary, output = options.root, options.binary, options.output
 output.mkdir(parents=True, exist_ok=True)
 args = SimpleNamespace(rust_bin=binary, tolerance=1e-7, max_iter=100000, nlambda=500)
 meta = {"shape": {"Z": [24, 22], "A": [1, 22]}, "rust_lambda_environment": "1",
@@ -55,6 +62,22 @@ for chunk in (1, 4):
     arms["no_jitter"].tofile(d / "xt_no_jitter.raw")
     np.testing.assert_allclose(arms["rebuilt_jitter"], native, rtol=0, atol=1e-9)
     assert (arms["no_jitter"][:, :, s == 0] == z[:, s == 0]).all()
+    r_s_geometry = {}
+    if options.r_s:
+        sigma = matrix("rust_sigma.raw")
+        np.testing.assert_array_equal(np.loadtxt(d / "sigma.csv", delimiter=","), sigma)
+        r_s = np.loadtxt(d / "r_s.csv")
+        assert (r_s > 0).all()
+        r_mean = np.fromfile(d / "rust_shared_s_mean.raw", "<f8").reshape(24, 22)
+        r_upper = matrix("rust_shared_s_factor.raw")
+        arms["r_s"] = np.fromfile(d / "rust_shared_s_draws.raw", "<f8").reshape(500, 24, 22)
+        np.testing.assert_allclose(arms["r_s"], r_mean + noise @ r_upper, rtol=0, atol=1e-12)
+        r_target = 2 * np.diag(r_s) - np.diag(r_s) @ np.linalg.solve(sigma, np.diag(r_s))
+        r_residual = r_upper.T @ r_upper - (r_target + r_target.T) / 2
+        np.testing.assert_allclose(r_residual, 0, rtol=0, atol=1e-13)
+        r_s_geometry = {"same_covariance_bitwise": True, "r_s": r_s.tolist(),
+                        "native_s": s.tolist(), "factor_covariance_residual": float(np.abs(r_residual).max())}
+        arms["r_s"].tofile(d / "xt_r_s.raw")
     swaps = np.fromfile(d / "swaps.raw", np.uint8).reshape(500, 22)
     selected = {arm: [] for arm in arms}
     ws = {arm: [] for arm in arms}
@@ -71,8 +94,11 @@ for chunk in (1, 4):
     indicators = {arm: np.array([[j in row for j in range(22)] for row in rows])
                   for arm, rows in selected.items()}
     names = [f"Z{j + (chunk - 1) * 22}" for j in range(22)]
-    for left, right in (("no_jitter", "native"), ("no_jitter", "rebuilt_jitter"),
-                        ("rebuilt_jitter", "native")):
+    pairs = [("no_jitter", "native"), ("no_jitter", "rebuilt_jitter"),
+             ("rebuilt_jitter", "native")]
+    if options.r_s:
+        pairs.append(("r_s", "native"))
+    for left, right in pairs:
         table = paired_vote_summary(indicators[left], indicators[right], (left, right))
         table.insert(0, "factor", names)
         table.insert(0, "contrast", f"{left}-{right}")
@@ -94,6 +120,8 @@ for chunk in (1, 4):
                                   for arm, rows in selected.items()},
         "names": names, "aggregates": aggregates,
     }
+    if options.r_s:
+        summary[d.name]["r_s_geometry"] = r_s_geometry
     np.savez_compressed(output / f"{d.name}_scores.npz", **{arm: np.array(w) for arm, w in ws.items()})
     logging.info("%s: %s", d.name, json.dumps(summary[d.name]))
 pd.concat(contrasts, ignore_index=True).to_csv(output / "paired_votes.csv", index=False)
