@@ -1,0 +1,232 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.186
+   Compiling autocfg v1.5.0
+   Compiling libm v0.2.16
+   Compiling num-traits v0.2.19
+   Compiling zerocopy v0.8.48
+   Compiling cfg-if v1.0.4
+   Compiling syn v2.0.117
+   Compiling serde_core v1.0.228
+   Compiling getrandom v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling bytemuck v1.25.0
+   Compiling serde v1.0.228
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling crossbeam-utils v0.8.21
+   Compiling cc v1.2.62
+   Compiling ppv-lite86 v0.2.21
+   Compiling serde_derive v1.0.228
+   Compiling rand_chacha v0.3.1
+   Compiling nano-gemm-codegen v0.1.0
+   Compiling rand v0.8.6
+   Compiling zeroize v1.8.2
+   Compiling ring v0.17.14
+   Compiling rustls-pki-types v1.14.1
+   Compiling httparse v1.10.1
+   Compiling paste v1.0.15
+   Compiling rustix v1.1.4
+   Compiling untrusted v0.9.0
+   Compiling thiserror v2.0.18
+   Compiling crossbeam-epoch v0.9.18
+   Compiling linux-raw-sys v0.12.1
+   Compiling num-complex v0.4.6
+   Compiling rustls v0.23.40
+   Compiling itoa v1.0.18
+   Compiling crc32fast v1.5.0
+   Compiling bytes v1.11.1
+   Compiling bitflags v2.11.1
+   Compiling log v0.4.29
+   Compiling rayon-core v1.13.0
+   Compiling once_cell v1.21.4
+   Compiling http v1.4.0
+   Compiling crossbeam-deque v0.8.6
+   Compiling thiserror-impl v2.0.18
+   Compiling simd-adler32 v0.3.9
+   Compiling version_check v0.9.5
+   Compiling rustls-webpki v0.103.13
+   Compiling anyhow v1.0.102
+   Compiling base64 v0.22.1
+   Compiling adler2 v2.0.1
+   Compiling subtle v2.6.1
+   Compiling either v1.16.0
+   Compiling miniz_oxide v0.8.9
+   Compiling ureq-proto v0.6.0
+   Compiling pulp v0.21.5
+   Compiling xattr v1.6.1
+   Compiling webpki-roots v1.0.7
+   Compiling filetime v0.2.29
+   Compiling utf8-zero v0.8.1
+   Compiling option-ext v0.2.0
+   Compiling percent-encoding v2.3.2
+   Compiling dirs-sys v0.5.0
+   Compiling tar v0.4.46
+   Compiling rayon v1.12.0
+   Compiling flate2 v1.1.9
+   Compiling num-integer v0.1.46
+   Compiling ureq v3.3.0
+   Compiling reborrow v0.5.5
+   Compiling dyn-stack-macros v0.1.3
+   Compiling dyn-stack v0.13.2
+   Compiling openblas-build v0.10.16
+   Compiling dirs v6.0.0
+   Compiling pkg-config v0.3.33
+   Compiling syn v1.0.109
+   Compiling raw-cpuid v11.6.0
+   Compiling openblas-src v0.10.16
+   Compiling memchr v2.8.0
+   Compiling ucd-trie v0.1.7
+   Compiling seq-macro v0.3.6
+   Compiling pest v2.8.6
+   Compiling gemm-common v0.18.2
+   Compiling nano-gemm-core v0.1.0
+   Compiling strsim v0.10.0
+   Compiling fnv v1.0.7
+   Compiling ident_case v1.0.1
+   Compiling pest_meta v2.8.6
+   Compiling matrixmultiply v0.3.10
+   Compiling nano-gemm-f64 v0.1.0
+   Compiling darling_core v0.14.4
+   Compiling pest_generator v2.8.6
+   Compiling nano-gemm-c64 v0.1.0
+   Compiling nano-gemm-f32 v0.1.0
+   Compiling nano-gemm-c32 v0.1.0
+   Compiling safe_arch v0.7.4
+   Compiling rawpointer v0.2.1
+   Compiling darling_macro v0.14.4
+   Compiling wide v0.7.33
+   Compiling darling v0.14.4
+   Compiling pest_derive v2.8.6
+   Compiling num-bigint v0.4.6
+   Compiling equator-macro v0.2.1
+   Compiling approx v0.5.1
+   Compiling lapack-sys v0.14.0
+   Compiling zmij v1.0.21
+   Compiling lapack v0.19.0
+   Compiling simba v0.9.1
+   Compiling equator v0.2.2
+   Compiling py_literal v0.4.0
+   Compiling derive_builder_core v0.11.2
+   Compiling gemm-f64 v0.18.2
+   Compiling gemm-c64 v0.18.2
+   Compiling gemm-f32 v0.18.2
+   Compiling gemm-c32 v0.18.2
+   Compiling num-rational v0.4.2
+   Compiling nalgebra-macros v0.2.2
+   Compiling equator-macro v0.4.2
+   Compiling faer-macros v0.21.0
+   Compiling serde_json v1.0.149
+   Compiling thiserror v1.0.69
+   Compiling generativity v1.2.1
+   Compiling typenum v1.20.0
+   Compiling byteorder v1.5.0
+   Compiling faer-traits v0.21.5
+   Compiling npyz v0.8.4
+   Compiling nalgebra v0.33.3
+   Compiling equator v0.4.2
+   Compiling gemm v0.18.2
+   Compiling nano-gemm v0.1.3
+   Compiling derive_builder_macro v0.11.2
+   Compiling lapack-src v0.8.0
+   Compiling rand_distr v0.4.3
+   Compiling thiserror-impl v1.0.69
+   Compiling cblas-sys v0.1.4
+   Compiling blas-sys v0.7.1
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.2
+   Compiling clarabel v0.11.1
+   Compiling indexmap v2.14.0
+   Compiling faer v0.21.9
+   Compiling blas v0.22.0
+   Compiling ndarray v0.16.1
+   Compiling derive_builder v0.11.2
+   Compiling blas-src v0.11.1
+   Compiling lapack-src v0.11.0
+   Compiling itertools v0.11.0
+   Compiling nalgebra-lapack v0.25.0
+   Compiling enum_dispatch v0.3.13
+   Compiling serde-big-array v0.5.1
+   Compiling amd v0.2.2
+   Compiling lazy_static v1.5.0
+   Compiling slide-types v1.0.0 (/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/source/crates/slide-types)
+   Compiling slide-sdp v1.0.0 (/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/source/crates/slide-sdp)
+    Finished `release` profile [optimized] target(s) in 51.14s
+     Running unittests src/lib.rs (/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/build-target/release/deps/slide_sdp-a1482001354cc402)
+
+running 7 tests
+test tests::emit_sdp_stages ... ignored, diagnostic: set SDP_DIAG_DIR containing sigma.csv
+test tests::feasibility_experiment_changes_only_effective_tol_feas ... ok
+test tests::equi_solver_matches_closed_form_on_correlation_matrix ... ok
+test tests::clustering_splits_weakly_connected_blocks ... ok
+test tests::sdp_solver_respects_feasibility_invariants ... ok
+test tests::raw_solver_stages_match_public_solution_and_preserve_input_errors ... ok
+test tests::asdp_solver_produces_globally_feasible_solution ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+SKIP: optional vendor source is not installed
+[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE
+[pure_r] SLIDE_R_OPTIMIZE=0: unchanged R interaction implementation
+[pure_r] effective SLIDE workers: 1
+f_size is set as  2 
+PASS: installed, optimized=0, workers=1
+[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE
+[pure_r] SLIDE_R_OPTIMIZE=0: unchanged R interaction implementation
+[pure_r] effective SLIDE workers: 4
+f_size is set as  2 
+PASS: installed, optimized=0, workers=4
+[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE
+[pure_r] SLIDE_R_OPTIMIZE=0: unchanged R interaction implementation
+[pure_r] effective SLIDE workers: 10
+f_size is set as  2 
+PASS: installed, optimized=0, workers=10
+[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE
+[pure_r] SLIDE_R_OPTIMIZE=1: cached Gaussian preparation and sparse interaction statistics
+[pure_r] effective SLIDE workers: 1
+f_size is set as  2 
+PASS: installed, optimized=1, workers=1
+[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE
+[pure_r] SLIDE_R_OPTIMIZE=1: cached Gaussian preparation and sparse interaction statistics
+[pure_r] effective SLIDE workers: 4
+f_size is set as  2 
+PASS: installed, optimized=1, workers=4
+[pure_r] SLIDE_R_SOURCE=installed: using SLIDE::optimizeSLIDE
+[pure_r] SLIDE_R_OPTIMIZE=1: cached Gaussian preparation and sparse interaction statistics
+[pure_r] effective SLIDE workers: 10
+f_size is set as  2 
+PASS: installed, optimized=1, workers=10
+PASS: installed namespace unchanged
+PASS: Gaussian draws and RNG; vector/matrix s
+PASS: Gaussian draws and RNG; vector/matrix s
+PASS: zero covariance identity and RNG
+PASS: first-entry extraction; explicit zeros, NA, ties and never-entering rows
+PASS: Gaussian lambda entry values
+PASS: Gaussian lambda entry values
+PASS: binomial lambda entry values
+PASS: multinomial lambda entry values
+PASS: W statistics and swap RNG
+PASS: full-rank draw selections, counts and RNG
+PASS: data-frame draws, counts and RNG
+PASS: shrinkage draws, counts and RNG
+PASS: PSOCK draw selections, counts and master/worker RNG
+PASS: interaction method 2 integration and RNG
+PASS: interaction method 4 integration and RNG
+PASS: installed namespaces unchanged
+
+Attaching package: ‘SLIDE’
+
+The following object is masked from ‘package:base’:
+
+    merge
+
+Loading required package: Matrix
+
+Attaching package: ‘Matrix’
+
+The following object is masked from ‘package:SLIDE’:
+
+    signPerm
+
+Loaded glmnet 5.0
