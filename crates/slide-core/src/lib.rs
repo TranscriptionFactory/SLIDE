@@ -1097,13 +1097,27 @@ fn correct_y_for_marginal(
         });
     }
 
-    let denominator = z_m.as_ndarray().dot(z_m.as_ndarray());
-    if !denominator.is_finite() || denominator <= 0.0 {
+    let z_mean = z_m
+        .as_ndarray()
+        .mean()
+        .ok_or(SlideCoreError::DegenerateMarginal { marginal_lf })?;
+    let y_mean = y
+        .as_ndarray()
+        .mean()
+        .ok_or(SlideCoreError::DegenerateMarginal { marginal_lf })?;
+    let z_centered = z_m.as_ndarray().mapv(|v| v - z_mean);
+    let y_centered = y.as_ndarray().mapv(|v| v - y_mean);
+    let denominator = z_centered.dot(&z_centered);
+    if !denominator.is_finite() {
         return Err(SlideCoreError::DegenerateMarginal { marginal_lf });
     }
-
-    let coefficient = z_m.as_ndarray().dot(y.as_ndarray()) / denominator;
-    let residuals = y.as_ndarray() - &(z_m.as_ndarray() * coefficient);
+    // R correctIt uses lm(y ~ z); a constant marginal leaves the intercept-only fit.
+    let coefficient = if denominator == 0.0 {
+        0.0
+    } else {
+        z_centered.dot(&y_centered) / denominator
+    };
+    let residuals = y_centered - z_centered * coefficient;
     Ok(Vector::from_ndarray(residuals))
 }
 
@@ -1445,8 +1459,8 @@ mod tests {
     }
 
     #[test]
-    fn correct_y_returns_ols_residuals_without_intercept() {
-        let y = Vector::from_ndarray(arr1(&[1.0, 3.0, 2.0]));
+    fn correct_y_matches_r_ols_with_intercept() {
+        let y = Vector::from_ndarray(arr1(&[6.0, 8.0, 7.0]));
         let z_m = Vector::from_ndarray(arr1(&[1.0, 2.0, 1.0]));
 
         let corrected =
@@ -1458,6 +1472,11 @@ mod tests {
             .iter()
             .zip(expected.iter())
             .all(|(left, right)| (left - right).abs() <= 1.0e-12));
+        let constant = Vector::from_ndarray(arr1(&[2.0, 2.0, 2.0]));
+        assert_eq!(
+            correct_y(&y, &constant).unwrap().as_ndarray(),
+            &arr1(&[-1.0, 1.0, 0.0])
+        );
     }
 
     #[test]
@@ -1593,6 +1612,23 @@ mod tests {
             .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
 
         assert_eq!(result.sig_interacts.len(), 3);
+        let reference: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/slide_core/interaction_cap/r_reference.json"
+        ))
+        .unwrap();
+        let expected_counts: Vec<usize> =
+            serde_json::from_value(reference["counts"].clone()).unwrap();
+        let expected_pairs: Vec<String> =
+            serde_json::from_value(reference["selected"].clone()).unwrap();
+        assert_eq!(result.voting[0].voting.selection_counts, expected_counts);
+        assert_eq!(
+            result
+                .sig_interacts
+                .iter()
+                .map(|(i, j)| format!("Z{i}.Z{j}"))
+                .collect::<Vec<_>>(),
+            expected_pairs
+        );
         assert_eq!(result.sig_interacts.len(), result.interaction_terms.ncols());
         let threshold = result.voting[0].voting.threshold;
         assert!(

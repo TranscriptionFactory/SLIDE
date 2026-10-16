@@ -339,7 +339,11 @@ pub fn knockoff_filter_voting(
     let y_array = y.as_ndarray();
     let y_mean = y_array.iter().copied().sum::<Scalar>() / (n as Scalar);
     let y_centered = y_array.mapv(|value| value - y_mean);
-    let x_cache = HalfPreparedData::new(x, &y_centered, true);
+    let prepare_half = match config.family {
+        GlmnetFamily::Gaussian => HalfPreparedData::new_gaussian,
+        GlmnetFamily::Binomial => HalfPreparedData::new,
+    };
+    let x_cache = prepare_half(x, &y_centered, true);
 
     // Check if we can use the cached path (lambdasmax only for now)
     let use_cached_path = config.statistic == KnockoffStatistic::GlmnetLambdasMax;
@@ -366,7 +370,7 @@ pub fn knockoff_filter_voting(
 
         // Prepare X_tilde half (fresh each iteration)
         let stage_started = std::time::Instant::now();
-        let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
+        let tilde_cache = prepare_half(&x_tilde, &y_centered, true);
 
         // Generate swap mask
         let mut rng = StdRng::seed_from_u64(
@@ -1560,6 +1564,11 @@ mod tests {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(250);
+        let method = match std::env::var("SLIDE_ATTR_METHOD").as_deref() {
+            Ok("equi") => KnockoffMethod::Equi,
+            Ok("asdp") | Err(_) => KnockoffMethod::default(),
+            other => panic!("unsupported SLIDE_ATTR_METHOD: {other:?}"),
+        };
 
         let zrows = read_grid(&z_path);
         let n = zrows.len();
@@ -1583,8 +1592,7 @@ mod tests {
             Some(cov) if raw_covariance_is_usable(&cov) => cov,
             _ => estimate_covariance(&z).unwrap_or_else(|e| panic!("estimate_covariance: {e}")),
         };
-        let diag_s = solve_diag_s(&sigma, &KnockoffMethod::default())
-            .unwrap_or_else(|e| panic!("solve_diag_s: {e}"));
+        let diag_s = solve_diag_s(&sigma, &method).unwrap_or_else(|e| panic!("solve_diag_s: {e}"));
         let cache = build_knockoff_cache(&z, &mu, &sigma, &diag_s)
             .unwrap_or_else(|e| panic!("build_knockoff_cache: {e}"));
 
@@ -1607,7 +1615,7 @@ mod tests {
             fdr,
             spec,
             niter: ndraws,
-            knockoff_method: KnockoffMethod::default(),
+            knockoff_method: method,
             knockoff_backend: KnockoffBackend::default(),
             knockoff_offset: 0,
             statistic: KnockoffStatistic::GlmnetLambdasMax,
@@ -1670,12 +1678,16 @@ mod tests {
                         if j > 0 {
                             s.push(',');
                         }
-                        s.push_str(&format!("{:.12e}", xta[(i, j)]));
+                        s.push_str(&format!("{:.17e}", xta[(i, j)]));
                     }
                     s.push('\n');
                 }
                 std::fs::write(format!("{xt_dir}/xt_{k}.csv"), s)
                     .unwrap_or_else(|e| panic!("write xt_{k}: {e}"));
+                let mut rng = StdRng::seed_from_u64(seed + 1_000_000);
+                let swap: Vec<u8> = (0..p).map(|_| u8::from(rng.gen_bool(0.5))).collect();
+                std::fs::write(format!("{xt_dir}/swap_{k}.raw"), swap)
+                    .unwrap_or_else(|e| panic!("write swap_{k}: {e}"));
             }
 
             // (a') NO-swap per-draw selection, identical W path as R uses.
@@ -2098,8 +2110,8 @@ mod tests {
         let y_arr = y.as_ndarray();
         let y_mean = y_arr.iter().copied().sum::<f64>() / (n as f64);
         let y_centered = y_arr.mapv(|v| v - y_mean);
-        let x_cache = HalfPreparedData::new(&x, &y_centered, true);
-        let tilde_cache = HalfPreparedData::new(&x_tilde, &y_centered, true);
+        let x_cache = HalfPreparedData::new_gaussian(&x, &y_centered, true);
+        let tilde_cache = HalfPreparedData::new_gaussian(&x_tilde, &y_centered, true);
 
         let mut ws = slide_glmnet::GaussianCdWorkspace::new(n, 2 * p);
         let w_cached = stat_glmnet_lambdasmax_prebuilt_cached(

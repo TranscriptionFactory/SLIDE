@@ -1,4 +1,6 @@
 import importlib
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,6 +9,41 @@ import pytest
 
 from loveslide.knockoffs import Knockoffs
 from loveslide.slide import OptimizeSLIDE, _format_interaction_pairs
+
+
+def test_interaction_cap_matches_r_on_fixed_draws(monkeypatch):
+    from loveslide.knockoff.stats import glmnet
+    from loveslide.knockoff.filter import knockoff_threshold
+
+    if not glmnet.HAS_GLMNET:
+        pytest.skip("R parity requires the vendored glmnet extension")
+    fixture = Path(__file__).resolve().parents[1] / "fixtures/slide_core/interaction_cap"
+    reference = json.loads((fixture / "r_reference.json").read_text())
+    z = np.loadtxt(fixture / "z.csv", delimiter=",")
+    y = np.loadtxt(fixture / "y.csv")
+    specs = []
+
+    def fixed_draw_selection(*, z, y, spec, **kwargs):
+        specs.append(spec)
+        np.testing.assert_allclose(y, reference["corrected_y"], atol=1e-14, rtol=0)
+        counts = np.zeros(z.shape[1], dtype=int)
+        for draw in range(4):
+            xt = np.loadtxt(fixture / f"xtilde/xt_{draw}.csv", delimiter=",")
+            swap = np.fromfile(fixture / f"xtilde/swap_{draw}.raw", np.uint8).astype(bool)
+            w = glmnet.stat_glmnet_lambdasmax(z, xt, y, swap=swap, nlambda=30)
+            counts += w >= knockoff_threshold(w, fdr=kwargs["fdr"], offset=0)
+        np.testing.assert_array_equal(counts, reference["counts"])
+        return np.flatnonzero(counts >= kwargs["niter"] * spec)
+
+    monkeypatch.setattr(Knockoffs, "select_short_freq", staticmethod(fixed_draw_selection))
+    slide = OptimizeSLIDE.__new__(OptimizeSLIDE)
+    slide.latent_factors = pd.DataFrame(z)
+    slide.marginal_idxs = np.array([0])
+    slide.data = SimpleNamespace(Y=pd.Series(y))
+    slide.find_interaction_LFs(None, spec=0.1, fdr=0.9, niter=4, f_size=100,
+                              knockoff_backend="python", slide_selection=False)
+    assert specs == reference["spec_ladder"]
+    assert _format_interaction_pairs(slide.interaction_pairs) == reference["selected"]
 
 
 def test_interaction_pairs_are_serialized_with_both_latent_factors():

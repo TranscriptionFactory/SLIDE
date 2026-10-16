@@ -25,6 +25,57 @@ write_json_scalar <- function(value, path) {
   writeLines(as.character(value), path)
 }
 
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) > 0 && args[1] == "--interaction-cap") {
+  stopifnot(length(args) == 2)
+  capture <- normalizePath(args[2])
+  z <- as.matrix(read.csv(file.path(capture, "z.csv"), header = FALSE))
+  y <- scan(file.path(capture, "y.csv"), quiet = TRUE)
+  colnames(z) <- paste0("Z", 0:(ncol(z) - 1))
+  reference <- new.env(parent = globalenv())
+  for (name in c("correctIt", "interUnion", "interactionSLIDE", "selectShortFreq")) {
+    sys.source(file.path(repo_root, "vendor", "SLIDE-jishnu", "R", paste0(name, ".R")), reference)
+  }
+  corrected <- as.numeric(reference$correctIt(z[, 1], y))
+  x <- z[, 1] * z[, -1]
+  selected <- vector("list", 4)
+  statistics <- matrix(0, 4, ncol(x))
+  for (draw in 0:3) {
+    xt <- as.matrix(read.csv(file.path(capture, "xtilde", paste0("xt_", draw, ".csv")), header = FALSE))
+    swap <- as.integer(readBin(file.path(capture, "xtilde", paste0("swap_", draw, ".raw")), "raw", ncol(x)))
+    mask <- matrix(swap, nrow(x), ncol(x), byrow = TRUE)
+    augmented <- cbind(x * (1 - mask) + xt * mask, xt * (1 - mask) + x * mask)
+    entry <- knockoff:::lasso_max_lambda(augmented, corrected, nlambda = 30)
+    p <- ncol(x)
+    w <- pmax(entry[1:p], entry[p + 1:p]) * sign(entry[1:p] - entry[p + 1:p]) * (1 - 2 * swap)
+    statistics[draw + 1, ] <- w
+    selected[[draw + 1]] <- colnames(x)[which(w >= knockoff::knockoff.threshold(w, fdr = 0.9, offset = 0))]
+  }
+  counts <- vapply(colnames(x), function(name) sum(vapply(selected, function(s) name %in% s, logical(1))), integer(1))
+  # Replay the fitted draws through R's cap controller and frequency-selection mode.
+  Sys.setenv(SLIDE_OPT_ITER = "0")
+  ladder <- numeric()
+  reference$secondKO <- function(z, y, fdr, niter, parallel) {
+    stopifnot(niter == 4, isTRUE(all.equal(unname(z), unname(x))), max(abs(y - corrected)) < 1e-12)
+    tab <- matrix(counts[counts > 0], nrow = 1, dimnames = list(NULL, colnames(z)[counts > 0]))
+    list(tab_data = tab, selected_list = lapply(selected, function(s) colnames(z)[match(s, colnames(x))]))
+  }
+  select_reference <- reference$selectShortFreq
+  reference$selectShortFreq <- function(...) {
+    ladder <<- c(ladder, list(...)$spec)
+    select_reference(...)
+  }
+  result <- reference$interactionSLIDE(z, y, m = 3, marginals = "Z0", method = 3, spec = 0.1,
+                                       fdr = 0.9, niter = 4, parallel = FALSE)
+  jsonlite::write_json(list(corrected_y = corrected, counts = unname(counts),
+    selected = result$interaction_vars, spec_ladder = ladder,
+    r_version = R.version.string, glmnet_version = as.character(packageVersion("glmnet"))),
+    file.path(capture, "r_reference.json"), auto_unbox = TRUE, digits = 17, pretty = TRUE)
+  write.table(statistics, file.path(capture, "r_w.csv"), sep = ",", row.names = FALSE, col.names = FALSE)
+  print(list(counts = counts, selected = result$interaction_vars, spec_ladder = ladder))
+  quit(save = "no")
+}
+
 out_dir <- file.path(repo_root, "tests", "fixtures", "slide_core", "hiv_delta_0_10_lambda_0_50")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
