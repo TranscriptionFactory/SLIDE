@@ -7,6 +7,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+
+def test_comparison_mode_requires_test_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "argv", ["analyze", str(tmp_path / "out"), "--arm", "r=pure_r:missing"])
+    with pytest.raises(SystemExit) as error:
+        analysis.main()
+    assert error.value.code == 2
+
 PATH = Path(__file__).parents[2] / "benchmarks" / "analyze_seed_replicates.py"
 SPEC = importlib.util.spec_from_file_location("analyze_seed_replicates", PATH)
 analysis = importlib.util.module_from_spec(SPEC)
@@ -160,3 +167,19 @@ def test_uncertainty_plots_render_without_changing_tables(tmp_path, monkeypatch)
         with Image.open(path) as image:
             assert image.width > 500 and image.height > 300
             image.verify()
+
+
+
+def test_truth_differences_pair_dataset_seeds_and_report_missing_coverage():
+    data = pd.DataFrame([dict(arm=arm, seed=seed, regime="ordinary_sparse", cell="one", kind="marginal",
+                              power_lo=lo, power_hi=hi, fdp_lo=lo, fdp_hi=hi)
+                         for arm, seed, lo, hi in [("rust", 2, .6, .9), ("rust", 1, .1, .3),
+                                                  ("rust", 3, 0, 1), ("pure_r", 1, .2, .4),
+                                                  ("pure_r", 2, .3, .5), ("pure_r", 4, 0, 1)]])
+    result = analysis.truth_backend_differences(data).set_index("endpoint")
+    assert result.loc['power_difference_lo', 'mean'] == pytest.approx(-.1)
+    assert result.loc['power_difference_hi', 'mean'] == pytest.approx(.35)
+    assert (result.paired_datasets == 2).all() and (result.datasets == 2).all()
+    assert (result.backend_only_seeds == '[3]').all()
+    assert (result.reference_only_seeds == '[4]').all()
+    assert (result.simultaneous_lo == -1).all() and (result.simultaneous_hi == 1).all()
