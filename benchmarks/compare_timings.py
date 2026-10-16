@@ -149,7 +149,7 @@ def manifest_report(paths, out):
             continue
         fig, ax = plt.subplots(figsize=(12, max(4, available.configuration.nunique() * .55)))
         sns.boxplot(data=available, y="configuration", x=metric, hue="backend", ax=ax, fliersize=0)
-        sns.stripplot(data=available, y="configuration", x=metric, hue="backend", dodge=True, ax=ax, size=3, palette={b: "black" for b in available.backend.unique()})
+        sns.stripplot(data=available, y="configuration", x=metric, hue="backend", dodge=True, ax=ax, size=3)
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles[:available.backend.nunique()], labels[:available.backend.nunique()], title="Backend", loc="upper left", bbox_to_anchor=(1, 1))
         ax.set(xlabel=label, ylabel="", title="Successful cells only; see failures_pending.csv for all other planned cells")
