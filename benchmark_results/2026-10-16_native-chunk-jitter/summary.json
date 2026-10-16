@@ -1,0 +1,379 @@
+{
+  "chunk_1": {
+    "initial_cholesky_succeeds": false,
+    "added_diagonal": 1.0000000000000002e-10,
+    "first_retry_epsilon": 1e-10,
+    "zero_s_factors": [
+      "Z0",
+      "Z3",
+      "Z7",
+      "Z12",
+      "Z14",
+      "Z15",
+      "Z18",
+      "Z21"
+    ],
+    "max_offdiagonal_residual": 6.938893903907228e-18,
+    "native_matches_saved_draws_bitwise": true,
+    "native_matches_saved_r_selections": true,
+    "rebuilt_max_draw_difference": 0.0,
+    "no_jitter_max_draw_difference": 4.852429942658887e-05,
+    "changed_selected_draws": {
+      "native": 0,
+      "rebuilt_jitter": 0,
+      "no_jitter": 163
+    },
+    "names": [
+      "Z0",
+      "Z1",
+      "Z2",
+      "Z3",
+      "Z4",
+      "Z5",
+      "Z6",
+      "Z7",
+      "Z8",
+      "Z9",
+      "Z10",
+      "Z11",
+      "Z12",
+      "Z13",
+      "Z14",
+      "Z15",
+      "Z16",
+      "Z17",
+      "Z18",
+      "Z19",
+      "Z20",
+      "Z21"
+    ],
+    "aggregates": {
+      "native": {
+        "votes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          0,
+          2,
+          0,
+          26,
+          0,
+          0,
+          120,
+          0,
+          138,
+          134,
+          74,
+          0
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          16,
+          18,
+          19,
+          20
+        ],
+        "findOptIter": {
+          "selected": [
+            16,
+            18,
+            19,
+            20
+          ],
+          "optimal_iteration": 13
+        }
+      },
+      "rebuilt_jitter": {
+        "votes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          0,
+          2,
+          0,
+          26,
+          0,
+          0,
+          120,
+          0,
+          138,
+          134,
+          74,
+          0
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          16,
+          18,
+          19,
+          20
+        ],
+        "findOptIter": {
+          "selected": [
+            16,
+            18,
+            19,
+            20
+          ],
+          "optimal_iteration": 13
+        }
+      },
+      "no_jitter": {
+        "votes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          22,
+          0,
+          0,
+          101,
+          0,
+          250,
+          111,
+          64,
+          0
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          16,
+          18,
+          19,
+          20
+        ],
+        "findOptIter": {
+          "selected": [
+            16,
+            18,
+            19,
+            20
+          ],
+          "optimal_iteration": 13
+        }
+      }
+    },
+    "no_jitter_matches_r_selections": true
+  },
+  "chunk_4": {
+    "initial_cholesky_succeeds": false,
+    "added_diagonal": 1.0000000000000007e-10,
+    "first_retry_epsilon": 1e-10,
+    "zero_s_factors": [
+      "Z74",
+      "Z80",
+      "Z84"
+    ],
+    "max_offdiagonal_residual": 1.734723475976807e-18,
+    "native_matches_saved_draws_bitwise": true,
+    "native_matches_saved_r_selections": true,
+    "rebuilt_max_draw_difference": 2.220446049250313e-16,
+    "no_jitter_max_draw_difference": 4.432382383234845e-05,
+    "changed_selected_draws": {
+      "native": 0,
+      "rebuilt_jitter": 0,
+      "no_jitter": 80
+    },
+    "names": [
+      "Z66",
+      "Z67",
+      "Z68",
+      "Z69",
+      "Z70",
+      "Z71",
+      "Z72",
+      "Z73",
+      "Z74",
+      "Z75",
+      "Z76",
+      "Z77",
+      "Z78",
+      "Z79",
+      "Z80",
+      "Z81",
+      "Z82",
+      "Z83",
+      "Z84",
+      "Z85",
+      "Z86",
+      "Z87"
+    ],
+    "aggregates": {
+      "native": {
+        "votes": [
+          0,
+          18,
+          4,
+          1,
+          115,
+          37,
+          16,
+          232,
+          38,
+          113,
+          9,
+          15,
+          73,
+          77,
+          3,
+          75,
+          12,
+          116,
+          4,
+          2,
+          9,
+          275
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          4,
+          7,
+          9,
+          12,
+          13,
+          15,
+          17,
+          21
+        ],
+        "findOptIter": {
+          "selected": [
+            4,
+            7,
+            9,
+            12,
+            13,
+            15,
+            17,
+            21
+          ],
+          "optimal_iteration": 28
+        }
+      },
+      "rebuilt_jitter": {
+        "votes": [
+          0,
+          18,
+          4,
+          1,
+          115,
+          37,
+          16,
+          232,
+          38,
+          113,
+          9,
+          15,
+          73,
+          77,
+          3,
+          75,
+          12,
+          116,
+          4,
+          2,
+          9,
+          275
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          4,
+          7,
+          9,
+          12,
+          13,
+          15,
+          17,
+          21
+        ],
+        "findOptIter": {
+          "selected": [
+            4,
+            7,
+            9,
+            12,
+            13,
+            15,
+            17,
+            21
+          ],
+          "optimal_iteration": 28
+        }
+      },
+      "no_jitter": {
+        "votes": [
+          0,
+          16,
+          4,
+          1,
+          104,
+          33,
+          9,
+          208,
+          72,
+          103,
+          6,
+          12,
+          68,
+          73,
+          2,
+          70,
+          12,
+          105,
+          4,
+          2,
+          9,
+          275
+        ],
+        "minimum_votes": 50,
+        "frequent": [
+          4,
+          7,
+          8,
+          9,
+          12,
+          13,
+          15,
+          17,
+          21
+        ],
+        "findOptIter": {
+          "selected": [
+            4,
+            7,
+            8,
+            9,
+            12,
+            13,
+            15,
+            17,
+            21
+          ],
+          "optimal_iteration": 195
+        }
+      }
+    },
+    "no_jitter_matches_r_selections": true
+  }
+}

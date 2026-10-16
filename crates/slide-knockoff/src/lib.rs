@@ -1845,17 +1845,29 @@ mod tests {
                 std::fs::write(directory.join(name), bytes).unwrap();
             };
             write_matrix("rust_sigma.raw", &native_sigma);
+            let native_s = solve_diag_s(&native_sigma, &KnockoffMethod::default()).unwrap();
+            let native_inv_s = solve_sigma_inv_diag_s(&native_sigma, &native_s).unwrap();
+            let s_matrix = Array2::from_diag(native_s.as_ndarray());
+            let native_target = Matrix::from_ndarray(symmetrize(
+                2.0 * &s_matrix - s_matrix.dot(native_inv_s.as_ndarray()),
+            ));
+            write_matrix("rust_native_s.raw", &Matrix::from_ndarray(s_matrix));
+            write_matrix("rust_native_target.raw", &native_target);
+            eprintln!("native unregularized Cholesky succeeds: {}",
+                native_target.cholesky_unchecked("sigma_k").is_ok());
             for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s)] {
                 write_matrix(&format!("rust_{label}_mean.raw"), &cache.mu_k);
                 write_matrix(&format!("rust_{label}_factor.raw"), &cache.l_trans);
             }
             let draws: u64 = std::env::var("SLIDE_S_AUDIT_DRAWS").unwrap().parse().unwrap();
+            let base_seed: u64 = std::env::var("SLIDE_S_AUDIT_BASE_SEED")
+                .unwrap_or_else(|_| "42".into()).parse().unwrap();
             assert!(draws >= 2);
             for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s), ("noise", &noise)] {
                 let mut file = std::fs::File::create(directory.join(format!("rust_{label}_draws.raw"))).unwrap();
-                for seed in 42..42 + draws {
+                for seed in base_seed..base_seed + draws {
                     let draw = cache.sample(seed);
-                    if seed == 42 { assert_eq!(draw.as_ndarray(), cache.sample(seed).as_ndarray()); }
+                    if seed == base_seed { assert_eq!(draw.as_ndarray(), cache.sample(seed).as_ndarray()); }
                     for value in draw.as_ndarray() { file.write_all(&value.to_le_bytes()).unwrap(); }
                 }
             }
