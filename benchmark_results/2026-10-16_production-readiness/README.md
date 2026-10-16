@@ -109,6 +109,11 @@ startup, imports, input I/O and preprocessing. Build/setup are separate. The fir
 measured launch is distinct from later fresh-process launches. Filesystem/library
 caches are not flushed: this is not a certified cold-cache measurement, and later
 runs are not startup-free.
+All pilot cells enable `--profile`. Timings include profiling overhead, which
+has not been measured separately and can differ by backend. Python writes
+per-stage JSON records (`src/loveslide/knockoff/filter.py::_profile_stage`);
+these instrumented costs do not establish uninstrumented production speedups.
+An unprofiled timing confirmation would require a separately approved run.
 Process-group RSS is sampled every 50 ms: shared pages can be double-counted,
 short peaks can be missed, and it is not an exact cgroup peak. Keep scheduler
 accounting and every failed/timed-out cell alongside successful timings.
@@ -135,7 +140,7 @@ in this result directory.
 | 11962055 | Ordinary SDP tests, R worker/optimization tests, environment/input preflight | Completed, 61 seconds, 4 CPUs |
 | 11962071 | First SSc seed, three implementations × four cells | Completed, 391 seconds, 4 CPUs; 12/12 success |
 | 11962074 | Controlled native/R-S replay and fresh R fitter check | Completed, 212 seconds, 1 CPU |
-| 11962087 | Remaining 378 regular cells | Queued after first/replay |
+| 11962087 | Remaining 378 regular cells | Running; three bundles completed at this checkpoint |
 | 11962088 | Up to 15 scaling cells | Queued after regular cells |
 | 11962108 | Statistical/cost analysis | Queued after scaling |
 
