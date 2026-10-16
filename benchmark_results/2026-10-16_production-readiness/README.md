@@ -134,7 +134,7 @@ in this result directory.
 | 11961811 | Release build + copied optional diagnostic | Binary built; diagnostic lacked sigma.csv |
 | 11962055 | Ordinary SDP tests, R worker/optimization tests, environment/input preflight | Completed, 61 seconds, 4 CPUs |
 | 11962071 | First SSc seed, three implementations × four cells | Completed, 391 seconds, 4 CPUs; 12/12 success |
-| 11962074 | Controlled native/R-S replay and fresh R fitter check | Running |
+| 11962074 | Controlled native/R-S replay and fresh R fitter check | Completed, 212 seconds, 1 CPU |
 | 11962087 | Remaining 378 regular cells | Queued after first/replay |
 | 11962088 | Up to 15 scaling cells | Queued after regular cells |
 | 11962108 | Statistical/cost analysis | Queued after scaling |
@@ -186,3 +186,42 @@ replay 30 minutes at one CPU; analysis 15 minutes at one CPU.
 The nominal knockoff q=0.1 is not a demonstrated FDR guarantee for final
 findOptIter-selected sets. Simulation outputs evaluate final selections rather
 than assuming that per-draw guarantees survive aggregation.
+
+## Completed controlled replay
+
+Both current-candidate native samplers reproduce the saved native draws bitwise.
+Native fitter selections match the saved R controls. On the freshly generated
+R-S draws, fresh R and candidate Rust fitters agree on all 1,000 selected sets
+(500 per chunk). This is a fitter-only result conditional on supplied draws,
+not agreement of the native samplers or final full-pipeline selection.
+
+| Fixed native chunk | Native S votes | R S votes | R-S minus native, percentage points ± paired MC SE |
+| --- | ---: | ---: | ---: |
+| Z20 | 74/500 | 40/500 | −6.8 ± 1.29 |
+| Z74 | 38/500 | 55/500 | +3.4 ± 0.95 |
+
+Both cross the preliminary 50-vote threshold in the R-like direction. The
+intervention replaces all S entries and their downstream conditional mean/factor;
+it does not isolate one coordinate or prove a solver replacement fixes SLIDE.
+The fresh Z20 R-S count is 40, not the historical 43; historical and fresh
+numerical outputs are not pooled. All settings remain unchanged.
+
+`replay/vote_deltas.png` was rendered and inspected for labels, clipping and
+agreement with `paired_votes.csv`. Its error bars quantify Monte Carlo variation
+on two fixed designs, not uncertainty across biological datasets.
+
+Regenerate the figure with the existing plotting helper, from the project root:
+
+```python
+from pathlib import Path
+import sys
+import pandas as pd
+sys.path.insert(0, "benchmarks")
+from replay_paired_xtilde import plot_sampler_votes
+out = Path("benchmark_results/2026-10-16_production-readiness/replay")
+votes = pd.read_csv(out / "paired_votes.csv")
+votes = votes[votes.contrast == "r_s-native"].rename(columns={"factor": "feature"})
+votes["design"] = votes.chunk.map({1: "Native chunk 1 (Z20)", 4: "Native chunk 4 (Z74)"})
+plot_sampler_votes(out, votes, title="R-S minus native Rust-S votes on candidate fitter",
+                   note="Shared covariance, innovations and swaps; fixed designs only, not full-pipeline equivalence or FDR.")
+```
