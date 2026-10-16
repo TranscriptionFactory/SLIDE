@@ -1,7 +1,9 @@
 # Five-arm backend statistical repeats
 
-Status: build succeeded; benchmark array running; analysis queued.
-Final results and figures are not yet verified.
+Status: 40 runs / 160 cells completed; all ten Python-with-R-knockoffs runs
+timed out. The user excluded that arm. Final four-arm analysis completed in
+job 11958124; tables and figures verified. See
+[final results](../2026-10-16_backend-replicates-four-arms/README.md).
 Source: c4726e3 (Gaussian arithmetic and interaction-residual fixes).
 
 ## Design
@@ -31,14 +33,15 @@ under the repository root. This preserves all previous runs.
 - Build 11957812 uses PATH=$HOME/.cargo/bin:/usr/bin:/bin, system cc/c++/ar/ranlib,
   a new Cargo target directory, and the existing with-rust-blas-env.sh wrapper.
 - Benchmark array: 11957807, dependent on the successful build.
-- Analysis: 11957810, dependent on all benchmark tasks succeeding.
+- Original analysis: 11957810, cancelled after its dependency became unsatisfiable.
+- Final four-arm analysis: 11958124, completed successfully.
 
 Python DSDP, compiled glmnet and rpy2 import checks passed. R imports passed:
 SLIDE 0.1.1, glmnet 5.0, knockoff 0.3.6, Rdsdp 1.0.6.
 Each task checks the frozen input/extension manifest, all four cell statuses,
 and the presence of four selection outputs.
 
-The existing analyze_seed_replicates.py will compare all four non-reference
+The original plan was for analyze_seed_replicates.py to compare all four non-reference
 arms with fresh pure_r, plus rust:python, rust:rust_r_knockoffs and
 python:r_knockoffs. It requires ten runs per arm/cell and K/Z agreement
 with R within 1e-8. It writes count tests, factor frequencies and Wilson
