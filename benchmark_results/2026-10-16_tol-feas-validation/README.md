@@ -47,8 +47,10 @@ source snapshot before reuse. Do not rerun the excluded Python/R hybrid.
 
 ## Status
 
-Bounded validation completed. Production remains at tol_feas=1e-6.
-The runtime decision precedes any full-benchmark launch; details follow.
+Bounded validation completed. The user accepted its measured runtime cost
+and authorized continuation to the established full benchmark. Production
+remains at tol_feas=1e-6. The completed full benchmark rejected the candidate
+after ten new NumericalError failures; see the linked full report below.
 
 ## Bounded results
 
@@ -109,7 +111,7 @@ These sub-millisecond fixture measurements do not establish end-to-end cost.
 
 All min/max ranges overlap. cov4 requires one extra iteration and its median
 increases about 0.015 ms (9%). No runtime acceptance threshold has been invented.
-The user has been asked whether this measured cost is acceptable for the
+The user accepted this measured cost and confirmed proceeding to the
 conditional full benchmark.
 
 ### Sampler and selection controls
@@ -143,14 +145,15 @@ draw seeds (42–541 and 1542–2041).
 
 ### Interpretation and current recommendation
 
-**Retain the production baseline for now.** The candidate passes bounded
+**Retain the production baseline.** The candidate passes bounded
 numerical and downstream checks and improves the two small fixtures, but does
 not improve the two diagnostic chunks or near-singular heldout. This supports
-a full-benchmark evaluation if the measured runtime tradeoff is acceptable;
-it does not yet justify changing the production default.
+the full-benchmark evaluation, but did not justify changing the production
+default. The subsequent full run failed ten cells that the baseline completes.
 
-The full benchmark has not started. Runtime acceptance remains the pending
-product decision after the user's request to test first. No R-agreement
+The user accepted the bounded runtime cost after reviewing these results.
+The [full benchmark](../2026-10-16_tol-feas-benchmark/README.md) completed
+and rejected the candidate for ten new NumericalError failures. No R-agreement
 criterion or statistical-equivalence claim was used. Existing benchmark
 statistics measure selection variability and agreement, not ground-truth
 power or FDR control.

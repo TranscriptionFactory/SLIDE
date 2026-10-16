@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-10-16T14:42:57.783041+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 35.9665149031207,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 29.36649846471846,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 14.906740413047373,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 10.671113999560475,
+      "status": "failed",
+      "error": "exit code 1"
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z20",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z45:Z91"
+      ],
+      "score": 0.9707722011403415
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z45:Z91"
+      ],
+      "score": 0.9678132350858628
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44",
+        "Z53"
+      ],
+      "n_sig_interacts": 5,
+      "sig_interacts": [
+        "Z33:Z57",
+        "Z33:Z67",
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z53:Z68"
+      ],
+      "score": 0.9172995195204574
+    }
+  }
+}

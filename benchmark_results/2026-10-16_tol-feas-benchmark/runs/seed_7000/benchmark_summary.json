@@ -1,0 +1,108 @@
+{
+  "timestamp": "2026-10-16T14:42:57.139789+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 38.00595376268029,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 28.516700657084584,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 13.70930041000247,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 10.016252444125712,
+      "status": "failed",
+      "error": "exit code 1"
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 6,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z20",
+        "Z27",
+        "Z45",
+        "Z73"
+      ],
+      "n_sig_interacts": 14,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z45:Z91",
+        "Z73:Z109",
+        "Z73:Z143",
+        "Z73:Z169",
+        "Z73:Z2",
+        "Z73:Z86",
+        "Z73:Z92"
+      ],
+      "score": 0.9920053402014705
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z45:Z91"
+      ],
+      "score": 0.9662959942403405
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z44",
+        "Z5",
+        "Z53"
+      ],
+      "n_sig_interacts": 3,
+      "sig_interacts": [
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z53:Z68"
+      ],
+      "score": 0.9422402047918476
+    }
+  }
+}

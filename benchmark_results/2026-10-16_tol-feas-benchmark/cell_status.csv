@@ -1,0 +1,81 @@
+arm,seed,delta,lam,status,wall_seconds,error,solver_error,log
+baseline,42,0.01,0.1,success,34.44807253032923,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_42/rust/0.01_0.1_out/rust.log
+baseline,42,0.01,1.0,success,15.194754379801452,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_42/rust/0.01_1.0_out/rust.log
+baseline,42,0.1,0.1,success,13.228768569417298,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_42/rust/0.1_0.1_out/rust.log
+baseline,42,0.1,1.0,success,10.959203897975385,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_42/rust/0.1_1.0_out/rust.log
+baseline,1000,0.01,0.1,success,34.349786914885044,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_1000/rust/0.01_0.1_out/rust.log
+baseline,1000,0.01,1.0,success,32.49923692177981,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_1000/rust/0.01_1.0_out/rust.log
+baseline,1000,0.1,0.1,success,18.0924262534827,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_1000/rust/0.1_0.1_out/rust.log
+baseline,1000,0.1,1.0,success,12.37573696859181,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_1000/rust/0.1_1.0_out/rust.log
+baseline,2000,0.01,0.1,success,40.74667661450803,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_2000/rust/0.01_0.1_out/rust.log
+baseline,2000,0.01,1.0,success,29.49092253111303,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_2000/rust/0.01_1.0_out/rust.log
+baseline,2000,0.1,0.1,success,15.758400078862906,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_2000/rust/0.1_0.1_out/rust.log
+baseline,2000,0.1,1.0,success,20.74159978609532,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_2000/rust/0.1_1.0_out/rust.log
+baseline,3000,0.01,0.1,success,36.70491527672857,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_3000/rust/0.01_0.1_out/rust.log
+baseline,3000,0.01,1.0,success,34.785867327824235,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_3000/rust/0.01_1.0_out/rust.log
+baseline,3000,0.1,0.1,success,27.23746412806213,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_3000/rust/0.1_0.1_out/rust.log
+baseline,3000,0.1,1.0,success,15.242468888871372,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_3000/rust/0.1_1.0_out/rust.log
+baseline,4000,0.01,0.1,success,34.44576169364154,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_4000/rust/0.01_0.1_out/rust.log
+baseline,4000,0.01,1.0,success,28.571719822473824,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_4000/rust/0.01_1.0_out/rust.log
+baseline,4000,0.1,0.1,success,21.68532141763717,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_4000/rust/0.1_0.1_out/rust.log
+baseline,4000,0.1,1.0,success,10.83290789835155,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_4000/rust/0.1_1.0_out/rust.log
+baseline,5000,0.01,0.1,success,36.67896298225969,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_5000/rust/0.01_0.1_out/rust.log
+baseline,5000,0.01,1.0,success,38.843962812796235,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_5000/rust/0.01_1.0_out/rust.log
+baseline,5000,0.1,0.1,success,8.858698278665543,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_5000/rust/0.1_0.1_out/rust.log
+baseline,5000,0.1,1.0,success,16.328451172448695,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_5000/rust/0.1_1.0_out/rust.log
+baseline,6000,0.01,0.1,success,34.63187840860337,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_6000/rust/0.01_0.1_out/rust.log
+baseline,6000,0.01,1.0,success,28.74142926838249,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_6000/rust/0.01_1.0_out/rust.log
+baseline,6000,0.1,0.1,success,12.727602241560817,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_6000/rust/0.1_0.1_out/rust.log
+baseline,6000,0.1,1.0,success,13.209024009294808,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_6000/rust/0.1_1.0_out/rust.log
+baseline,7000,0.01,0.1,success,41.02727939002216,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_7000/rust/0.01_0.1_out/rust.log
+baseline,7000,0.01,1.0,success,29.72457975614816,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_7000/rust/0.01_1.0_out/rust.log
+baseline,7000,0.1,0.1,success,11.651421475224197,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_7000/rust/0.1_0.1_out/rust.log
+baseline,7000,0.1,1.0,success,11.430713307112455,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_7000/rust/0.1_1.0_out/rust.log
+baseline,8000,0.01,0.1,success,34.51964999176562,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_8000/rust/0.01_0.1_out/rust.log
+baseline,8000,0.01,1.0,success,28.44419103860855,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_8000/rust/0.01_1.0_out/rust.log
+baseline,8000,0.1,0.1,success,13.151363865472376,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_8000/rust/0.1_0.1_out/rust.log
+baseline,8000,0.1,1.0,success,20.60499172564596,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_8000/rust/0.1_1.0_out/rust.log
+baseline,9000,0.01,0.1,success,37.49169547110796,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_9000/rust/0.01_0.1_out/rust.log
+baseline,9000,0.01,1.0,success,38.04279324412346,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_9000/rust/0.01_1.0_out/rust.log
+baseline,9000,0.1,0.1,success,21.24249028414488,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_9000/rust/0.1_0.1_out/rust.log
+baseline,9000,0.1,1.0,success,16.554977763444185,,,.tmpfiles/2026-10-16_backend-replicates-all-arms/results/rust/seed_9000/rust/0.1_1.0_out/rust.log
+candidate,42,0.01,0.1,success,32.04222875740379,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_42/rust/0.01_0.1_out/rust.log
+candidate,42,0.01,1.0,success,14.331854513846338,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_42/rust/0.01_1.0_out/rust.log
+candidate,42,0.1,0.1,success,12.949460878968239,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_42/rust/0.1_0.1_out/rust.log
+candidate,42,0.1,1.0,failed,9.518597115762532,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_42/rust/0.1_1.0_out/rust.log
+candidate,1000,0.01,0.1,success,30.206698200665414,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_1000/rust/0.01_0.1_out/rust.log
+candidate,1000,0.01,1.0,success,29.340859065763652,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_1000/rust/0.01_1.0_out/rust.log
+candidate,1000,0.1,0.1,success,17.73715526610613,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_1000/rust/0.1_0.1_out/rust.log
+candidate,1000,0.1,1.0,failed,8.938956760801375,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_1000/rust/0.1_1.0_out/rust.log
+candidate,2000,0.01,0.1,success,38.198535409756005,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_2000/rust/0.01_0.1_out/rust.log
+candidate,2000,0.01,1.0,success,28.888476947322488,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_2000/rust/0.01_1.0_out/rust.log
+candidate,2000,0.1,0.1,success,18.245883191004395,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_2000/rust/0.1_0.1_out/rust.log
+candidate,2000,0.1,1.0,failed,7.636247466318309,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_2000/rust/0.1_1.0_out/rust.log
+candidate,3000,0.01,0.1,success,32.24718872178346,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_3000/rust/0.01_0.1_out/rust.log
+candidate,3000,0.01,1.0,success,30.813253336586058,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_3000/rust/0.01_1.0_out/rust.log
+candidate,3000,0.1,0.1,success,24.701895576901734,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_3000/rust/0.1_0.1_out/rust.log
+candidate,3000,0.1,1.0,failed,7.395484265871346,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_3000/rust/0.1_1.0_out/rust.log
+candidate,4000,0.01,0.1,success,36.14716629497707,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_4000/rust/0.01_0.1_out/rust.log
+candidate,4000,0.01,1.0,success,30.328905329108238,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_4000/rust/0.01_1.0_out/rust.log
+candidate,4000,0.1,0.1,success,21.72308214288205,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_4000/rust/0.1_0.1_out/rust.log
+candidate,4000,0.1,1.0,failed,7.914157394319773,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_4000/rust/0.1_1.0_out/rust.log
+candidate,5000,0.01,0.1,success,36.11723778862506,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_5000/rust/0.01_0.1_out/rust.log
+candidate,5000,0.01,1.0,success,38.98749402165413,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_5000/rust/0.01_1.0_out/rust.log
+candidate,5000,0.1,0.1,success,9.369070392102003,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_5000/rust/0.1_0.1_out/rust.log
+candidate,5000,0.1,1.0,failed,8.050866373814642,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_5000/rust/0.1_1.0_out/rust.log
+candidate,6000,0.01,0.1,success,35.9665149031207,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_6000/rust/0.01_0.1_out/rust.log
+candidate,6000,0.01,1.0,success,29.36649846471846,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_6000/rust/0.01_1.0_out/rust.log
+candidate,6000,0.1,0.1,success,14.906740413047373,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_6000/rust/0.1_0.1_out/rust.log
+candidate,6000,0.1,1.0,failed,10.671113999560475,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_6000/rust/0.1_1.0_out/rust.log
+candidate,7000,0.01,0.1,success,38.00595376268029,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_7000/rust/0.01_0.1_out/rust.log
+candidate,7000,0.01,1.0,success,28.516700657084584,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_7000/rust/0.01_1.0_out/rust.log
+candidate,7000,0.1,0.1,success,13.70930041000247,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_7000/rust/0.1_0.1_out/rust.log
+candidate,7000,0.1,1.0,failed,10.016252444125712,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_7000/rust/0.1_1.0_out/rust.log
+candidate,8000,0.01,0.1,success,35.463124081492424,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_8000/rust/0.01_0.1_out/rust.log
+candidate,8000,0.01,1.0,success,29.93725596088916,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_8000/rust/0.01_1.0_out/rust.log
+candidate,8000,0.1,0.1,success,14.190983813256025,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_8000/rust/0.1_0.1_out/rust.log
+candidate,8000,0.1,1.0,failed,7.844917239621282,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_8000/rust/0.1_1.0_out/rust.log
+candidate,9000,0.01,0.1,success,33.745032431557775,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_9000/rust/0.01_0.1_out/rust.log
+candidate,9000,0.01,1.0,success,37.01232583168894,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_9000/rust/0.01_1.0_out/rust.log
+candidate,9000,0.1,0.1,success,13.532890339381993,,,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_9000/rust/0.1_0.1_out/rust.log
+candidate,9000,0.1,1.0,failed,7.961027718149126,exit code 1,Error: SLIDE optimization failed; SDP solver failed with status NumericalError; consider falling back to equi-correlated,.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_9000/rust/0.1_1.0_out/rust.log

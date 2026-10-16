@@ -1,0 +1,18 @@
+environment overrides change knockoff results: SLIDE_KNOCKOFF_MATCH_R_COV=1, SLIDE_KNOCKOFF_MATCH_R_LAMBDA=1, SLIDE_KNOCKOFF_MAX_ITER=100000, SLIDE_KNOCKOFF_TOL=1e-7; recorded as config.env_overrides in the checkpoint
+Loading feature matrix from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/X.csv
+Loading response vector from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/Y.csv
+Starting SLIDE optimization: 1 delta(s) x 1 lambda(s) = 1 evaluations
+Checkpoint: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_5000/rust/0.1_0.1_out/checkpoint.json
+SDP_BENCH status=Solved iterations=20 r_prim=5.34372217720856241e-9 r_dual=2.05659630026671143e-10 gap=4.90066589753368476e-7 solve_seconds=4.56111299999999997e-2
+SDP_BENCH status=Solved iterations=17 r_prim=6.85819318237172283e-9 r_dual=9.90652658761171660e-10 gap=6.69031203992531687e-7 solve_seconds=2.05655460000000005e-2
+SDP_BENCH status=Solved iterations=17 r_prim=6.81107669322231884e-9 r_dual=8.10064756219940111e-10 gap=6.67558613942631496e-7 solve_seconds=2.21524189999999996e-2
+SDP_BENCH status=Solved iterations=20 r_prim=5.76721298128691604e-9 r_dual=1.53948274600514275e-10 gap=5.35511436583480105e-7 solve_seconds=2.96055139999999994e-2
+SDP_BENCH status=Solved iterations=11 r_prim=1.39842356413323763e-9 r_dual=5.23899017867953343e-10 gap=7.63034808670681741e-8 solve_seconds=2.05194399999999999e-3
+SDP_BENCH status=Solved iterations=6 r_prim=6.10416917833880202e-11 r_dual=1.00628375462299578e-10 gap=5.53231274125209893e-8 solve_seconds=2.29511455399999997e0
+SDP_BENCH status=Solved iterations=6 r_prim=1.14099920771305239e-10 r_dual=1.76939067914753600e-10 gap=9.61815800337717519e-8 solve_seconds=2.35760873899999979e0
+=== SLIDE Optimization Complete ===
+Best score:  0.824815
+Best delta:  0.1
+Best lambda: 0.1
+Selected LFs: 2 marginal, 2 interactions
+Checkpoint written to: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_5000/rust/0.1_0.1_out/checkpoint.json
