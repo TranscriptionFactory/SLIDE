@@ -4,8 +4,8 @@
 use clarabel::{
     algebra::CscMatrix,
     solver::{
-        DefaultSettings, DefaultSolver, IPSolver, NonnegativeConeT, PSDTriangleConeT, SolverStatus,
-        SupportedConeT,
+        DefaultSettings, DefaultSolution, DefaultSolver, IPSolver, NonnegativeConeT,
+        PSDTriangleConeT, SolverStatus, SupportedConeT,
     },
 };
 use ndarray::Array1;
@@ -165,6 +165,22 @@ fn solve_correlation_sdp_raw(
     correlation: &Matrix,
     settings: &SdpSettings,
 ) -> Result<(Vec<Scalar>, SolverStatus), SdpError> {
+    let solution = solve_correlation_sdp_effective(correlation, clarabel_settings(settings))?;
+    if !matches!(
+        solution.status,
+        SolverStatus::Solved | SolverStatus::AlmostSolved
+    ) {
+        return Err(SdpError::SolverFailed {
+            status: solution.status.to_string(),
+        });
+    }
+    Ok((solution.x, solution.status))
+}
+
+fn solve_correlation_sdp_effective(
+    correlation: &Matrix,
+    settings: DefaultSettings<Scalar>,
+) -> Result<DefaultSolution<Scalar>, SdpError> {
     let dimension = correlation.nrows();
     let objective = vec![-1.0; dimension];
     let quadratic = CscMatrix::<Scalar>::zeros((dimension, dimension));
@@ -179,23 +195,14 @@ fn solve_correlation_sdp_raw(
         &constraint_matrix,
         &rhs,
         &cones,
-        clarabel_settings(settings),
+        settings,
     )
     .map_err(|error| SdpError::SolverInitialization {
         message: error.to_string(),
     })?;
     solver.solve();
 
-    if !matches!(
-        solver.solution.status,
-        SolverStatus::Solved | SolverStatus::AlmostSolved
-    ) {
-        return Err(SdpError::SolverFailed {
-            status: solver.solution.status.to_string(),
-        });
-    }
-
-    Ok((solver.solution.x, solver.solution.status))
+    Ok(solver.solution)
 }
 
 fn clarabel_settings(settings: &SdpSettings) -> DefaultSettings<Scalar> {
@@ -555,6 +562,30 @@ mod tests {
         ));
     }
 
+    fn diagnostic_settings(tighten_feasibility: bool) -> super::DefaultSettings<f64> {
+        let mut settings = super::clarabel_settings(&super::default_solver_settings());
+        if tighten_feasibility {
+            // Keep all derived fallback tolerances at their baseline effective values.
+            settings.tol_feas = 1.0e-8;
+        }
+        settings
+    }
+
+    #[test]
+    fn feasibility_experiment_changes_only_effective_tol_feas() {
+        let baseline = diagnostic_settings(false);
+        let mut candidate = diagnostic_settings(true);
+        assert_eq!(super::default_solver_settings().tol_feas, 1.0e-6);
+        assert_eq!(baseline.tol_feas, 1.0e-6);
+        assert_eq!(candidate.tol_feas, 1.0e-8);
+        assert_eq!(
+            candidate.reduced_tol_feas.to_bits(),
+            (1.0e-6_f64 * 0.1).to_bits()
+        );
+        candidate.tol_feas = baseline.tol_feas;
+        assert_eq!(format!("{candidate:#?}"), format!("{baseline:#?}"));
+    }
+
     /// Read headerless CSV inputs and expose the exact production solver/postprocessing.
     #[test]
     #[ignore = "diagnostic: set SDP_DIAG_DIR containing sigma.csv"]
@@ -623,8 +654,38 @@ mod tests {
         validate_square_and_symmetric(&correlation, "diagnostic correlation")?;
         assert_eq!(correlation.nrows(), normalized.dimension);
         write_matrix(&directory.join("solver_correlation.csv"), &correlation)?;
-        let settings = default_solver_settings();
-        let (raw, status) = solve_correlation_sdp_raw(&correlation, &settings)?;
+        let tighten_feasibility = match std::env::var("SDP_DIAG_TOL_FEAS") {
+            Err(std::env::VarError::NotPresent) => false,
+            Ok(value) if value == "1e-6" => false,
+            Ok(value) if value == "1e-8" => true,
+            _ => return Err("SDP_DIAG_TOL_FEAS must be 1e-6 or 1e-8".into()),
+        };
+        let settings = diagnostic_settings(tighten_feasibility);
+        let mut comparison = settings.clone();
+        comparison.tol_feas = 1.0e-6;
+        assert_eq!(
+            format!("{comparison:#?}"),
+            format!("{:#?}", diagnostic_settings(false))
+        );
+        fs::write(
+            directory.join("effective_settings.txt"),
+            format!("{settings:#?}\n"),
+        )?;
+        let started = std::time::Instant::now();
+        let result = solve_correlation_sdp_effective(&correlation, settings.clone());
+        let elapsed = started.elapsed().as_secs_f64();
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                fs::write(
+                    directory.join("solver.txt"),
+                    format!("error={error}\nwall_seconds={elapsed:.17e}\n"),
+                )?;
+                return Err(error.into());
+            }
+        };
+        let status = result.status;
+        let raw = result.x;
         write(&directory.join("clarabel_raw.csv"), raw.iter().copied())?;
         write(
             &directory.join("objective.csv"),
@@ -646,8 +707,16 @@ mod tests {
         }
         fs::write(directory.join("constraints.csv"), entries)?;
         fs::write(directory.join("solver.txt"), format!(
-            "status={status:?}\nobjective_minimize=-sum(s)\nobjective_value={:.17e}\ncones=Nonnegative({}),PSDTriangle({})\nsettings={:#?}\n",
-            -raw.iter().sum::<f64>(), 2 * normalized.dimension, normalized.dimension, clarabel_settings(&settings)))?;
+            "status={status:?}\niterations={}\nprimal_residual={:.17e}\ndual_residual={:.17e}\nprimal_objective={:.17e}\ndual_objective={:.17e}\nobjective_gap_abs={:.17e}\nsolve_seconds={:.17e}\nwall_seconds={elapsed:.17e}\nobjective_minimize=-sum(s)\nobjective_value={:.17e}\ncones=Nonnegative({}),PSDTriangle({})\nsettings={settings:#?}\n",
+            result.iterations, result.r_prim, result.r_dual, result.obj_val, result.obj_val_dual,
+            (result.obj_val - result.obj_val_dual).abs(), result.solve_time,
+            -raw.iter().sum::<f64>(), 2 * normalized.dimension, normalized.dimension))?;
+        if !matches!(status, SolverStatus::Solved | SolverStatus::AlmostSolved) {
+            return Err(SdpError::SolverFailed {
+                status: status.to_string(),
+            }
+            .into());
+        }
         let supplied = directory.join("raw_s.csv");
         let input = if supplied.exists() {
             read(&supplied)?.into_raw_vec_and_offset().0
@@ -671,7 +740,7 @@ mod tests {
             &directory.join("covariance_repaired.csv"),
             final_s.iter().copied(),
         )?;
-        if !supplied.exists() && !correlation_path.exists() {
+        if !tighten_feasibility && !supplied.exists() && !correlation_path.exists() {
             let production = create_solve_sdp(&sigma)?;
             assert_eq!(
                 final_s.as_slice(),
