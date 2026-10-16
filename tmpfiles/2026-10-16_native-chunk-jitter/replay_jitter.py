@@ -1,0 +1,100 @@
+"""Exact-cell jitter probe; reuse paired fit, vote, and aggregation helpers."""
+import json
+import logging
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
+
+sys.path[:0] = [str(Path.cwd() / "benchmarks"), str(Path.cwd() / "src")]
+from replay_paired_xtilde import fit_draw, paired_vote_summary
+from analyze_paired_xtilde import aggregate_selection
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+root, binary, output = map(Path, sys.argv[1:])
+output.mkdir(parents=True, exist_ok=True)
+args = SimpleNamespace(rust_bin=binary, tolerance=1e-7, max_iter=100000, nlambda=500)
+meta = {"shape": {"Z": [24, 22], "A": [1, 22]}, "rust_lambda_environment": "1",
+        "rust_cached": True, "fdr": 0.1}
+summary, contrasts = {}, []
+# shortcut: fixed saved 24x22 chunks and 500 draws; extend loaders for another study.
+for chunk in (1, 4):
+    d = root / f"chunk_{chunk}"
+    matrix = lambda name: np.fromfile(d / name, "<f8").reshape(22, 22)
+    target, upper = matrix("rust_native_target.raw"), matrix("rust_native_factor.raw")
+    s = np.diag(matrix("rust_native_s.raw"))
+    mean = np.fromfile(d / "rust_native_mean.raw", "<f8").reshape(24, 22)
+    z = np.fromfile(d / "z.raw", "<f8").reshape(24, 22)
+    noise = np.fromfile(d / "rust_noise_draws.raw", "<f8").reshape(500, 24, 22)
+    native = np.fromfile(d / "rust_native_draws.raw", "<f8").reshape(500, 24, 22)
+    saved_dir = Path(".tmpfiles/2026-10-13_preliminary-selection-diagnosis/numerical") / d.name
+    saved = np.fromfile(saved_dir / "xt_native.raw", "<f8").reshape(native.shape)
+    np.testing.assert_array_equal(native, saved)
+    np.testing.assert_allclose(native, mean + noise @ upper, rtol=0, atol=1e-12)
+    residual = upper.T @ upper - target
+    epsilon = 1e-10 * max(np.diag(target).max(), 1.0)
+    # Measure the actual added covariance, not an assumed jitter amount.
+    jitter = float(np.median(np.diag(residual)))
+    np.testing.assert_allclose(residual, jitter * np.eye(22), rtol=0, atol=1e-13)
+    assert abs(jitter) < 1e-13 or np.isclose(jitter, epsilon, rtol=1e-4)
+    try:
+        np.linalg.cholesky(target)
+        initial_cholesky = True
+    except np.linalg.LinAlgError:
+        initial_cholesky = False
+    positive = np.flatnonzero(s > 0)
+    assert not target[s == 0].any()
+    exact = np.zeros_like(target)
+    exact[np.ix_(positive, positive)] = np.linalg.cholesky(target[np.ix_(positive, positive)]).T
+    np.testing.assert_allclose(exact.T @ exact, target, rtol=0, atol=1e-13)
+    rebuilt = np.linalg.cholesky(target + jitter * np.eye(22)).T
+    arms = {"native": native, "rebuilt_jitter": mean + noise @ rebuilt,
+            "no_jitter": mean + noise @ exact}
+    arms["no_jitter"].tofile(d / "xt_no_jitter.raw")
+    np.testing.assert_allclose(arms["rebuilt_jitter"], native, rtol=0, atol=1e-9)
+    assert (arms["no_jitter"][:, :, s == 0] == z[:, s == 0]).all()
+    swaps = np.fromfile(d / "swaps.raw", np.uint8).reshape(500, 22)
+    selected = {arm: [] for arm in arms}
+    ws = {arm: [] for arm in arms}
+    for i in range(500):
+        swaps[i].tofile(d / "swap.raw")
+        for arm, draws in arms.items():
+            draws[i].tofile(d / "draw.raw")
+            fit = fit_draw(args, meta, d, d / "draw.raw", d / "swap.raw", d / "last_fit.json")
+            selected[arm].append(set(fit["selected"]))
+            ws[arm].append(fit["w"])
+    r = pd.read_csv(saved_dir / "w_r_native.csv").to_numpy()
+    r_selected = [set(np.flatnonzero(row[:22] >= row[22])) for row in r]
+    assert selected["native"] == r_selected, "Native fitter no longer matches saved R"
+    indicators = {arm: np.array([[j in row for j in range(22)] for row in rows])
+                  for arm, rows in selected.items()}
+    names = [f"Z{j + (chunk - 1) * 22}" for j in range(22)]
+    for left, right in (("no_jitter", "native"), ("no_jitter", "rebuilt_jitter"),
+                        ("rebuilt_jitter", "native")):
+        table = paired_vote_summary(indicators[left], indicators[right], (left, right))
+        table.insert(0, "factor", names)
+        table.insert(0, "contrast", f"{left}-{right}")
+        table.insert(0, "chunk", chunk)
+        contrasts.append(table)
+    aggregates = {arm: aggregate_selection(rows, 22, 0.1) for arm, rows in selected.items()}
+    for values in aggregates.values():
+        values.pop("cumulative")
+    summary[d.name] = {
+        "initial_cholesky_succeeds": initial_cholesky,
+        "added_diagonal": jitter, "first_retry_epsilon": epsilon,
+        "zero_s_factors": [names[j] for j in np.flatnonzero(s == 0)],
+        "max_offdiagonal_residual": float(np.abs(residual - np.diag(np.diag(residual))).max()),
+        "native_matches_saved_draws_bitwise": True,
+        "native_matches_saved_r_selections": True,
+        "rebuilt_max_draw_difference": float(np.abs(arms["rebuilt_jitter"] - native).max()),
+        "no_jitter_max_draw_difference": float(np.abs(arms["no_jitter"] - native).max()),
+        "changed_selected_draws": {arm: sum(a != b for a, b in zip(rows, selected["native"]))
+                                  for arm, rows in selected.items()},
+        "names": names, "aggregates": aggregates,
+    }
+    np.savez_compressed(output / f"{d.name}_scores.npz", **{arm: np.array(w) for arm, w in ws.items()})
+    logging.info("%s: %s", d.name, json.dumps(summary[d.name]))
+pd.concat(contrasts, ignore_index=True).to_csv(output / "paired_votes.csv", index=False)
+(output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
