@@ -411,6 +411,33 @@ def analyze_truth(arms, input_root):
     return datasets, pd.DataFrame(summary)
 
 
+def truth_backend_differences(datasets, reference="pure_r"):
+    """Pair independent backend runs by shared simulated dataset, never by factor IDs."""
+    keys = ["regime", "cell", "kind"]
+    groups = datasets[datasets.arm != reference].groupby(["arm"] + keys)
+    comparisons = len(groups) * 4
+    rows = []
+    for (arm, *key), group in groups:
+        ref = datasets[(datasets.arm == reference) & (datasets[keys] == key).all(axis=1)]
+        paired = group.merge(ref, on="seed", suffixes=("_arm", "_ref"), validate="one_to_one")
+        coverage = dict(backend_datasets=len(group), reference_datasets=len(ref), paired_datasets=len(paired),
+                        backend_only_seeds=json.dumps(sorted(set(group.seed) - set(ref.seed))),
+                        reference_only_seeds=json.dumps(sorted(set(ref.seed) - set(group.seed))))
+        for metric in ("fdp", "power"):
+            for end, other in (("lo", "hi"), ("hi", "lo")):
+                values = (paired[f"{metric}_{end}_arm"] - paired[f"{metric}_{other}_ref"]).dropna()
+                n, mean = len(values), values.mean()
+                radius = np.sqrt(2 * np.log(2 * comparisons / 0.05) / n) if n else np.nan
+                rows.append(dict(zip(keys, key), arm=arm, reference=reference, **coverage,
+                                 endpoint=f"{metric}_difference_{end}", datasets=n, mean=mean,
+                                 simultaneous_lo=max(-1, mean - radius) if n else np.nan,
+                                 simultaneous_hi=min(1, mean + radius) if n else np.nan,
+                                 equivalence_margin=0.05 if metric == "power" else np.nan,
+                                 interval="95% simultaneous Hoeffding; paired successful datasets only",
+                                 verdict="inconclusive pilot; inspect missing seeds and matching coverage"))
+    return pd.DataFrame(rows)
+
+
 def plot_equivalence(factors, out):
     """Plot a declared display subset; simultaneous intervals still cover the full table."""
     import matplotlib
@@ -494,6 +521,8 @@ def main():
     args = p.parse_args()
     if not args.truth_input_root and not args.test:
         p.error("--test is required outside truth mode")
+    if not args.truth_input_root and not args.test:
+        p.error("--test is required outside truth mode")
     if args.truth_input_root and (args.equivalence or args.z_reference):
         p.error("Truth mode cannot use cross-dataset factor-ID comparisons")
     if args.equivalence and not args.z_reference:
@@ -505,6 +534,7 @@ def main():
         datasets, summary = analyze_truth(args.arm, args.truth_input_root)
         datasets.to_csv(args.out / "truth_datasets.csv", index=False)
         summary.to_csv(args.out / "truth_summary.csv", index=False)
+        truth_backend_differences(datasets).to_csv(args.out / "truth_backend_differences.csv", index=False)
         plot_truth(summary, args.out)
         logging.warning("Pilot only: 20 independent datasets cannot certify FDR. Intervals cover successful datasets; "
                         "consult failure manifest. Near-degenerate factors have no individual-factor verdict; "
