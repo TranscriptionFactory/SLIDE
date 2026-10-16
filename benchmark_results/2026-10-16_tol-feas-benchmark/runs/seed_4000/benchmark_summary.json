@@ -1,0 +1,109 @@
+{
+  "timestamp": "2026-10-16T14:43:02.998108+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 36.14716629497707,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 30.328905329108238,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 21.72308214288205,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 7.914157394319773,
+      "status": "failed",
+      "error": "exit code 1"
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z20",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129"
+      ],
+      "score": 0.9452093778671158
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z45:Z91"
+      ],
+      "score": 0.9662959942403405
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 7,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z38",
+        "Z44",
+        "Z53",
+        "Z61",
+        "Z62"
+      ],
+      "n_sig_interacts": 9,
+      "sig_interacts": [
+        "Z33:Z57",
+        "Z33:Z67",
+        "Z38:Z37",
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z53:Z68",
+        "Z61:Z50",
+        "Z62:Z20",
+        "Z62:Z37"
+      ],
+      "score": 0.9835302265343967
+    }
+  }
+}
