@@ -134,3 +134,29 @@ def test_projector_distance_detects_extra_dimensions_despite_zero_angles():
     assert diag['estimated_rank'] == 3 and diag['truth_rank'] == 1
     assert diag['max_principal_angle_degrees'] < 1e-10
     assert diag['normalized_projector_frobenius'] == pytest.approx(np.sqrt(2 / 3))
+
+
+def test_uncertainty_plots_render_without_changing_tables(tmp_path, monkeypatch):
+    from PIL import Image
+    monkeypatch.setattr(analysis, 'load_z', lambda _: (['Z1', 'Z2'], np.ones((3, 2))))
+    factors, _ = analysis.equivalence_intervals(
+        runs([{'Z1'}] * 10, [set()] * 10), [('a', 'r')], 20, np.random.default_rng(9))
+    factors = pd.concat([factors, factors.assign(cell='empty', left_selected=0, difference=0,
+                                               simultaneous_lo=-1, simultaneous_hi=1)], ignore_index=True)
+    before = factors.copy(deep=True)
+    analysis.plot_equivalence(factors, tmp_path)
+    pd.testing.assert_frame_equal(before, factors)
+    summary = pd.DataFrame([dict(cell='one', arm=arm, regime=regime, kind='marginal', endpoint=endpoint,
+                                mean=mean, simultaneous_lo=0, simultaneous_hi=1)
+                            for arm, regime in [('rust', 'ordinary_null'), ('python', 'near_sparse')]
+                            for endpoint, mean in [('fdp_lo', 0), ('fdp_hi', 1),
+                                                   ('power_lo', np.nan), ('power_hi', np.nan)]])
+    before = summary.copy(deep=True)
+    analysis.plot_truth(summary, tmp_path)
+    pd.testing.assert_frame_equal(before, summary)
+    images = list(tmp_path.glob('*_intervals_*.png'))
+    assert len(images) == 3
+    for path in images:
+        with Image.open(path) as image:
+            assert image.width > 500 and image.height > 300
+            image.verify()
