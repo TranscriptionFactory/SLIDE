@@ -411,6 +411,71 @@ def analyze_truth(arms, input_root):
     return datasets, pd.DataFrame(summary)
 
 
+def plot_equivalence(factors, out):
+    """Plot a declared display subset; simultaneous intervals still cover the full table."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    sns.set_theme(style="whitegrid", font_scale=0.9)
+    rates = np.maximum(factors.left_selected / factors.left_n, factors.right_selected / factors.right_n)
+    focus = factors.assign(rate=rates).groupby(["cell", "factor"]).rate.max()
+    for index, (cell, group) in enumerate(factors.groupby("cell", sort=False)):
+        shown = group[group.factor.isin(focus.loc[cell][lambda x: x >= 0.2].index)]
+        fig, ax = plt.subplots(figsize=(10, max(3, 0.28 * len(shown) + 2)))
+        ax.axvspan(-0.05, 0.05, color="green", alpha=0.12, label="Equivalence band ±0.05")
+        ax.axvline(0, color="grey", lw=1)
+        if shown.empty:
+            ax.text(0.5, 0.5, "No factor meets the display filter; see full CSV", ha="center", transform=ax.transAxes)
+            ax.set_yticks([])
+        else:
+            y = np.arange(len(shown))
+            ax.errorbar(shown.difference, y, xerr=[shown.difference - shown.simultaneous_lo,
+                        shown.simultaneous_hi - shown.difference], fmt="o", capsize=2)
+            ax.set_yticks(y, shown.factor + " | " + shown.left + " − " + shown.right)
+            ax.invert_yaxis()
+        ax.set(xlim=(-1.02, 1.02), xlabel="Selection-probability difference (95% simultaneous intervals)",
+               title=f"{cell}: marginal factors\nDisplay: rate ≥0.20 in any compared arm; full K retained in CSV")
+        ax.legend(loc="lower right")
+        fig.tight_layout()
+        fig.savefig(out / f"equivalence_intervals_{index}.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+
+def plot_truth(summary, out):
+    """Show identification bounds separately from uncertainty about their population means."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    sns.set_theme(style="whitegrid", font_scale=0.9)
+    for index, (cell, group) in enumerate(summary.groupby("cell", sort=False)):
+        labels = group.arm + " | " + group.regime + " | " + group.kind
+        order = list(dict.fromkeys(labels))
+        fig, axes = plt.subplots(1, 2, figsize=(16, max(4, 0.42 * len(order) + 2)), sharey=True)
+        for ax, metric in zip(axes, ("fdp", "power")):
+            for suffix, offset, color in (("lo", -0.12, "C0"), ("hi", 0.12, "C1")):
+                rows = group[group.endpoint == f"{metric}_{suffix}"]
+                y = [order.index(label) + offset for label in labels.loc[rows.index]]
+                valid = rows["mean"].notna()
+                ax.errorbar(rows.loc[valid, "mean"], np.asarray(y)[valid],
+                            xerr=[rows.loc[valid, "mean"] - rows.loc[valid, "simultaneous_lo"],
+                                  rows.loc[valid, "simultaneous_hi"] - rows.loc[valid, "mean"]],
+                            fmt="o", color=color, capsize=2, label=f"Mean {'lower' if suffix == 'lo' else 'upper'} bound")
+                for yy in np.asarray(y)[~valid]:
+                    ax.text(0.5, yy, "undefined (no true support)", ha="center", fontsize=7)
+            ax.set(xlim=(-0.03, 1.03), xlabel=f"Mean {'FDP' if metric == 'fdp' else 'power'}", title=metric.upper())
+            ax.set_yticks(range(len(order)), order)
+            ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=2)
+        axes[0].invert_yaxis()
+        fig.suptitle(f"{cell}: conservative 95% simultaneous Hoeffding intervals\n"
+                     "20-dataset pilot is not certification; successful datasets only (see CSV n).\n"
+                     "Near-degenerate regime: individual-factor claims withheld; bounds retain matching uncertainty.")
+        fig.tight_layout()
+        fig.savefig(out / f"truth_intervals_{index}.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("out", type=Path)
@@ -440,6 +505,7 @@ def main():
         datasets, summary = analyze_truth(args.arm, args.truth_input_root)
         datasets.to_csv(args.out / "truth_datasets.csv", index=False)
         summary.to_csv(args.out / "truth_summary.csv", index=False)
+        plot_truth(summary, args.out)
         logging.warning("Pilot only: 20 independent datasets cannot certify FDR. Intervals cover successful datasets; "
                         "consult failure manifest. Near-degenerate factors have no individual-factor verdict; "
                         "principal angles require rank/coverage checks.")
@@ -460,6 +526,7 @@ def main():
         factor_ci, aggregate_ci = equivalence_intervals(df, args.test, args.bootstrap, rng)
         factor_ci.to_csv(args.out / "equivalence_factors.csv", index=False)
         aggregate_ci.to_csv(args.out / "equivalence_summary.csv", index=False)
+        plot_equivalence(factor_ci, args.out)
 
     summary = summarize(df)
     tests, factors = compare(df, args.test, args.permutations, args.bootstrap, rng)
