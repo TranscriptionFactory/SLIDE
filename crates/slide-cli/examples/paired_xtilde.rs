@@ -179,9 +179,12 @@ fn main() -> Result<()> {
     let y = Vector::from_ndarray(Array1::from_vec(y_values));
     let path = if cached {
         let y_centered = y.as_ndarray().mapv(|value| value - response_mean);
-        let x_cache =
-            HalfPreparedData::new(&Matrix::from_ndarray(z), &y_centered, config.standardize);
-        let tilde_cache = HalfPreparedData::new(
+        let x_cache = HalfPreparedData::new_gaussian(
+            &Matrix::from_ndarray(z),
+            &y_centered,
+            config.standardize,
+        );
+        let tilde_cache = HalfPreparedData::new_gaussian(
             &Matrix::from_ndarray(xtilde),
             &y_centered,
             config.standardize,
@@ -355,8 +358,8 @@ mod tests {
         let n = y.as_ndarray().len();
         let y_mean = y.as_ndarray().mean().unwrap_or(0.0);
         let y_centered = y.as_ndarray().mapv(|value| value - y_mean);
-        let x_cache = HalfPreparedData::new(original, &y_centered, true);
-        let tilde_cache = HalfPreparedData::new(knockoff, &y_centered, true);
+        let x_cache = HalfPreparedData::new_gaussian(original, &y_centered, true);
+        let tilde_cache = HalfPreparedData::new_gaussian(knockoff, &y_centered, true);
         let mut workspace = GaussianCdWorkspace::new(n, 2 * swap.len());
         stat_glmnet_lambdasmax_prebuilt_cached(
             &x_cache,

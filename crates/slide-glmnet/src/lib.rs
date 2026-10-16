@@ -136,12 +136,16 @@ fn gaussian_lasso_path_with_grid_endpoint(
 ) -> Result<GaussianLassoPathResult, GlmnetError> {
     validate_inputs(x, y, config)?;
 
-    let prepared = PreparedData::from_inputs(x, y, config.standardize, config.scale_ddof);
+    let prepared = PreparedData::from_gaussian_inputs(x, y, config);
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
         None => build_gaussian_lambda_grid(
             &prepared.x_scaled,
-            &prepared.y_centered,
+            if include_lambda_min {
+                &prepared.y_centered
+            } else {
+                &prepared.y_raw
+            },
             config.nlambda,
             config.alpha,
             include_lambda_min,
@@ -190,27 +194,15 @@ pub fn gaussian_lasso_path_with_left_cache(
 
     let prepared = PreparedData::from_halves_swapped(x_cache, tilde_cache, swap, y, y_mean, y_centered);
 
-    // Build lambda grid: compute max |col · y_centered| / n across all 2p columns
     let lambda = match &config.lambda {
         Some(lambda) => validate_lambda_grid(lambda)?,
-        None => {
-            let x_array = prepared.x_scaled.as_ndarray();
-            let y_array = prepared.y_centered.as_ndarray();
-            let n_f = n as Scalar;
-            let lambda_max_raw = x_array
-                .axis_iter(Axis(1))
-                .map(|column| column.dot(y_array).abs() / n_f)
-                .fold(0.0, Scalar::max);
-            build_geometric_lambda_grid(
-                lambda_max_raw,
-                n,
-                2 * p,
-                config.nlambda,
-                config.alpha,
-                false,
-                knockoff_match_r_lambda(),
-            )?
-        }
+        None => build_gaussian_lambda_grid(
+            &prepared.x_scaled,
+            &prepared.y_raw,
+            config.nlambda,
+            config.alpha,
+            false,
+        )?,
     };
 
     Ok(run_gaussian_cd(&prepared, &lambda, config, ws, false))
@@ -384,7 +376,14 @@ fn build_gaussian_lambda_grid(
     let p = x_array.ncols();
     let lambda_max_raw = x_array
         .axis_iter(Axis(1))
-        .map(|column| column.dot(y_array).abs() / (n as Scalar))
+        .map(|column| {
+            let dot = if include_lambda_min {
+                column.dot(y_array)
+            } else {
+                knockoff_grid_dot(column, y_array.view())
+            };
+            dot.abs() / n as Scalar
+        })
         .fold(0.0, Scalar::max);
 
     build_geometric_lambda_grid(
@@ -870,11 +869,10 @@ fn build_geometric_lambda_grid(
     }
 
     if !include_lambda_min {
-        return Ok(Vector::from_ndarray(Array1::from_iter(
-            (0..nlambda).map(|index| {
-                lambda_max * lambda_min_ratio.powf((index as Scalar) / (nlambda as Scalar))
-            }),
-        )));
+        let ratio = (lambda_max / (1.0 / lambda_min_ratio)) / lambda_max;
+        return Ok(Vector::from_ndarray(Array1::from_iter((0..nlambda).map(
+            |index| lambda_max * ratio.powf((index as Scalar) / (nlambda as Scalar)),
+        ))));
     }
 
     let log_max = lambda_max.ln();
@@ -1018,12 +1016,69 @@ fn validation_losses(
     losses
 }
 
+// Keep reduction order explicit: near-copy entry ties can change at one ULP.
+fn eigen_sum(n: usize, value: impl Fn(usize) -> Scalar) -> Scalar {
+    if n < 4 {
+        return (0..n).map(value).sum();
+    }
+    let mut sums = [value(0), value(1), value(2), value(3)];
+    let end = n / 4 * 4;
+    for i in (4..end).step_by(4) {
+        for (k, sum) in sums.iter_mut().enumerate() {
+            *sum += value(i + k);
+        }
+    }
+    let mut left = sums[0] + sums[2];
+    let mut right = sums[1] + sums[3];
+    if n - end >= 2 {
+        left += value(end);
+        right += value(end + 1);
+    }
+    let mut sum = left + right;
+    if n % 2 == 1 {
+        sum += value(n - 1);
+    }
+    sum
+}
+
+fn knockoff_grid_dot(x: ndarray::ArrayView1<Scalar>, y: ndarray::ArrayView1<Scalar>) -> Scalar {
+    // shortcut: reference OpenBLAS four-term kernel; recheck parity for other BLAS builds.
+    let end = x.len() / 4 * 4;
+    let mut sum = 0.0;
+    for i in (0..end).step_by(4) {
+        let block = x[i].mul_add(y[i], x[i + 1] * y[i + 1]);
+        let block = x[i + 2].mul_add(y[i + 2], block);
+        sum += x[i + 3].mul_add(y[i + 3], block);
+    }
+    for i in end..x.len() {
+        sum += x[i] * y[i];
+    }
+    sum
+}
+
+fn compensated_average(values: impl Iterator<Item = Scalar>, divisor: Scalar) -> Scalar {
+    // Retain the summation residual when approximating R's extended-precision scaling.
+    let mut sum: Scalar = 0.0;
+    let mut error = 0.0;
+    for value in values {
+        let next = sum + value;
+        error += if sum.abs() >= value.abs() {
+            (sum - next) + value
+        } else {
+            (value - next) + sum
+        };
+        sum = next;
+    }
+    let average = sum / divisor;
+    average + ((-average).mul_add(divisor, sum) + error) / divisor
+}
+
 /// Precomputed statistics for one half (p columns) of an augmented matrix.
 /// Caching this for the X half avoids recomputing centering, scaling, and
 /// column norms on every knockoff voting iteration.
 #[derive(Clone, Debug)]
 pub struct HalfPreparedData {
-    /// n×p, column-major, centered and (optionally) standardized.
+    /// n×p, column-major prepared design. Unscaled Gaussian inputs are centered at fit time.
     pub x_scaled: Array2<Scalar>,
     /// Column means before centering (length p).
     pub x_mean: Array1<Scalar>,
@@ -1036,6 +1091,46 @@ pub struct HalfPreparedData {
 }
 
 impl HalfPreparedData {
+    /// Gaussian knockoffs use external sample scaling before glmnet normalization.
+    /// Binomial callers retain [`Self::new`].
+    pub fn new_gaussian(x: &Matrix, y_centered: &Array1<Scalar>, standardize: bool) -> Self {
+        let (n, p) = x.shape();
+        let mut scaled = Array2::zeros((n, p).f());
+        let mut means = Array1::zeros(p);
+        let mut scales = Array1::ones(p);
+        for j in 0..p {
+            let column = x.as_ndarray().column(j);
+            if standardize {
+                means[j] = compensated_average(column.iter().copied(), n as Scalar);
+                let squares =
+                    compensated_average(column.iter().map(|v| (v - means[j]).powi(2)), 1.0);
+                let scale = (squares / n.saturating_sub(1).max(1) as Scalar).sqrt();
+                if scale > 0.0 {
+                    scales[j] = scale;
+                }
+            }
+            for i in 0..n {
+                scaled[[i, j]] = (column[i] - means[j]) / scales[j];
+            }
+        }
+        let norms = Array1::from_iter(
+            scaled
+                .axis_iter(Axis(1))
+                .map(|col| col.dot(&col) / n as Scalar),
+        );
+        let lambda_max_contrib = scaled
+            .axis_iter(Axis(1))
+            .map(|col| col.dot(y_centered).abs() / n as Scalar)
+            .fold(0.0, Scalar::max);
+        Self {
+            x_scaled: scaled,
+            x_mean: means,
+            column_scale: scales,
+            column_sq_norm: norms,
+            lambda_max_contrib,
+        }
+    }
+
     /// Prepare one half of an augmented matrix: center, scale, convert to
     /// column-major, compute column norms and lambda_max contribution.
     pub fn new(x: &Matrix, y_centered: &Array1<Scalar>, standardize: bool) -> Self {
@@ -1120,6 +1215,24 @@ struct PreparedData {
 }
 
 impl PreparedData {
+    fn from_gaussian_inputs(x: &Matrix, y: &Vector, config: &GaussianLassoPathConfig) -> Self {
+        if config.standardize && config.scale_ddof != 1 {
+            return Self::from_inputs(x, y, config.standardize, config.scale_ddof);
+        }
+        let y_mean = y.as_ndarray().sum() / y.len() as Scalar;
+        let y_centered = y.as_ndarray().mapv(|v| v - y_mean);
+        let half = HalfPreparedData::new_gaussian(x, &y_centered, config.standardize);
+        Self {
+            x_scaled: Matrix::from_ndarray(half.x_scaled),
+            y_raw: y.clone(),
+            y_centered: Vector::from_ndarray(y_centered),
+            x_mean: half.x_mean,
+            y_mean,
+            column_scale: half.column_scale,
+            column_sq_norm: half.column_sq_norm,
+        }
+    }
+
     fn from_inputs(x: &Matrix, y: &Vector, standardize: bool, scale_ddof: usize) -> Self {
         let x_array = x.as_ndarray();
         let y_array = y.as_ndarray();
@@ -1281,6 +1394,9 @@ impl GaussianCdWorkspace {
 struct GaussianCovarianceState {
     gram: Array2<Scalar>,
     gradient: Array1<Scalar>,
+    x_mean: Array1<Scalar>,
+    y_mean: Scalar,
+    y_scale: Scalar,
 }
 
 impl GaussianCovarianceState {
@@ -1290,20 +1406,34 @@ impl GaussianCovarianceState {
         if p >= 500 {
             return None;
         }
-        let n = x.nrows() as Scalar;
+        let n = x.nrows();
+        let weight = 1.0 / n as Scalar;
+        let root_weight = weight.sqrt();
+        let x_mean = Array1::from_iter((0..p).map(|j| eigen_sum(n, |i| x[[i, j]] * weight)));
+        let x = Array2::from_shape_fn((n, p).f(), |(i, j)| root_weight * (x[[i, j]] - x_mean[j]));
+        let raw_y = prepared.y_raw.as_ndarray();
+        let y_mean = eigen_sum(n, |i| raw_y[i] * weight);
+        let mut y = raw_y.mapv(|v| root_weight * (v - y_mean));
+        let y_scale = eigen_sum(n, |i| y[i] * y[i]).sqrt();
+        let y_scale = if y_scale > 0.0 { y_scale } else { 1.0 };
+        y.mapv_inplace(|v| v / y_scale);
         let mut gram = Array2::zeros((p, p));
         for k in 0..p {
-            gram[[k, k]] = prepared.column_sq_norm[k];
+            gram[[k, k]] = eigen_sum(n, |i| x[[i, k]] * x[[i, k]]);
             for j in 0..k {
-                let product = x.column(j).dot(&x.column(k)) / n;
+                let product = eigen_sum(n, |i| x[[i, j]] * x[[i, k]]);
                 gram[[j, k]] = product;
                 gram[[k, j]] = product;
             }
         }
-        let gradient = Array1::from_iter(
-            (0..p).map(|j| x.column(j).dot(prepared.y_centered.as_ndarray()) / n),
-        );
-        Some(Self { gram, gradient })
+        let gradient = Array1::from_iter((0..p).map(|j| eigen_sum(n, |i| x[[i, j]] * y[i])));
+        Some(Self {
+            gram,
+            gradient,
+            x_mean,
+            y_mean,
+            y_scale,
+        })
     }
 
     fn sweep(
@@ -1405,6 +1535,16 @@ fn run_gaussian_cd(
     ws: &mut GaussianCdWorkspace,
     early_stop_path: bool,
 ) -> GaussianLassoPathResult {
+    // The residual solver needs centered columns; covariance centers internally.
+    let residual_prepared = if prepared.x_scaled.ncols() >= 500 {
+        let mut centered = PreparedData::from_inputs(&prepared.x_scaled, &prepared.y_raw, false, 0);
+        centered.x_mean = &prepared.x_mean + &centered.x_mean * &prepared.column_scale;
+        centered.column_scale = prepared.column_scale.clone();
+        Some(centered)
+    } else {
+        None
+    };
+    let prepared = residual_prepared.as_ref().unwrap_or(prepared);
     let x_array = prepared.x_scaled.as_ndarray();
     let y_array = prepared.y_centered.as_ndarray();
     let n = x_array.nrows();
@@ -1428,9 +1568,9 @@ fn run_gaussian_cd(
         if let Some(state) = covariance.as_mut() {
             total_cd_iters += state.fit(
                 ws,
-                lambda_value,
+                lambda_value / state.y_scale,
                 config,
-                convergence_threshold,
+                config.tolerance,
                 &mut warm_ever,
             );
             if early_stop_path {
@@ -1438,7 +1578,7 @@ fn run_gaussian_cd(
                 ws.residual.assign(y_array);
                 for &j in &ws.active_indices {
                     ws.residual
-                        .scaled_add(-ws.beta_scaled[j], &x_array.column(j));
+                        .scaled_add(-ws.beta_scaled[j] * state.y_scale, &x_array.column(j));
                 }
             }
         } else {
@@ -1498,15 +1638,22 @@ fn run_gaussian_cd(
             }
         }
 
-        let beta_original = &ws.beta_scaled / &prepared.column_scale;
-        let intercept_value = prepared.y_mean - prepared.x_mean.dot(&beta_original);
+        let scale = covariance.as_ref().map_or(1.0, |state| state.y_scale);
+        let beta_original = ws.beta_scaled.mapv(|v| v * scale) / &prepared.column_scale;
+        let intercept_value = if let Some(state) = &covariance {
+            state.y_mean
+                - state.x_mean.dot(&ws.beta_scaled) * scale
+                - prepared.x_mean.dot(&beta_original)
+        } else {
+            prepared.y_mean - prepared.x_mean.dot(&beta_original)
+        };
         beta_path.column_mut(lambda_index).assign(&beta_original);
         intercept[lambda_index] = intercept_value;
         n_computed = lambda_index + 1;
 
         if config.early_stop_all_entered {
             for (j, &b) in ws.beta_scaled.iter().enumerate() {
-                if !ws.ever_nonzero[j] && b.abs() > 1e-10 {
+                if !ws.ever_nonzero[j] && (b * scale).abs() > 1e-10 {
                     ws.ever_nonzero[j] = true;
                     n_ever_nonzero += 1;
                 }
@@ -1517,7 +1664,11 @@ fn run_gaussian_cd(
         }
 
         if early_stop_path {
-            let nnz = ws.beta_scaled.iter().filter(|b| b.abs() > 1e-10).count();
+            let nnz = ws
+                .beta_scaled
+                .iter()
+                .filter(|b| (**b * scale).abs() > 1e-10)
+                .count();
             if nnz >= n {
                 break;
             }
@@ -1896,7 +2047,7 @@ mod tests {
         BinomialLassoPathConfig,
         GaussianLassoPathConfig, GlmnetError, GlmnetFamily,
     };
-    use ndarray::{arr1, arr2, Axis};
+    use ndarray::{arr1, arr2, Array1, Array2, Axis};
     use slide_types::{Matrix, Vector};
 
     const TOL: f64 = 1.0e-8;
@@ -1944,7 +2095,7 @@ mod tests {
             let y = Vector::from_ndarray(ndarray::Array1::from_iter((0..n).map(|i| i as f64)));
             let y_mean = (n - 1) as f64 / 2.0;
             let y_centered = y.as_ndarray().mapv(|v| v - y_mean);
-            let cache = super::HalfPreparedData::new(&x, &y_centered, true);
+            let cache = super::HalfPreparedData::new_gaussian(&x, &y_centered, true);
             let augmented = super::augment_features(&x, &x);
             let config = super::knockoff_path_config(&GaussianLassoPathConfig {
                 nlambda: 20,
@@ -2022,8 +2173,8 @@ mod tests {
         let y_mean = y_values.mean().unwrap_or(0.0);
         let y_centered = y_values.mapv(|v| v - y_mean);
         let y = Vector::from_ndarray(y_values);
-        let x_cache = super::HalfPreparedData::new(&x, &y_centered, true);
-        let tilde_cache = super::HalfPreparedData::new(&x_tilde, &y_centered, true);
+        let x_cache = super::HalfPreparedData::new_gaussian(&x, &y_centered, true);
+        let tilde_cache = super::HalfPreparedData::new_gaussian(&x_tilde, &y_centered, true);
         let config = GaussianLassoPathConfig {
             nlambda: 100,
             ..GaussianLassoPathConfig::default()
@@ -2143,8 +2294,8 @@ mod tests {
             }));
             let y = Vector::from_ndarray(arr1(&[0.0, 2.0, 4.0, 6.0]));
             let centered = y.as_ndarray().mapv(|v| v - 3.0);
-            let left = super::HalfPreparedData::new(&x, &centered, true);
-            let right = super::HalfPreparedData::new(&tilde, &centered, true);
+            let left = super::HalfPreparedData::new_gaussian(&x, &centered, true);
+            let right = super::HalfPreparedData::new_gaussian(&tilde, &centered, true);
             let config = GaussianLassoPathConfig {
                 alpha: 0.4,
                 scale_ddof: 1,
@@ -2204,7 +2355,8 @@ mod tests {
                 };
                 let fit = gaussian_lasso_path(&x, &y, &config).expect("valid elastic net path");
                 for (index, &lambda) in fit.lambda.as_ndarray().iter().enumerate() {
-                    let denom = 1.0 + lambda * (1.0 - alpha);
+                    // glmnet divides supplied lambda by the response SD before fitting.
+                    let denom = 1.0 + lambda * (1.0 - alpha) / 5.0_f64.sqrt();
                     assert!(
                         (fit.beta.as_ndarray()[[0, index]]
                             - super::soft_threshold(2.0, lambda * alpha) / denom)
@@ -2221,6 +2373,47 @@ mod tests {
                     assert_eq!(fit.intercept.as_ndarray()[index], 3.0);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn gaussian_reductions_handle_short_vectors_and_tails() {
+        for n in 1..34 {
+            let x = Array1::from_iter((0..n).map(|i| i as f64 - 10.0));
+            let y = Array1::from_iter((0..n).map(|i| i as f64 + 1.0));
+            let expected: f64 = x.iter().zip(&y).map(|(a, b)| a * b).sum();
+            assert_eq!(super::eigen_sum(n, |i| x[i] * y[i]), expected);
+            assert_eq!(super::knockoff_grid_dot(x.view(), y.view()), expected);
+        }
+        assert_eq!(
+            super::compensated_average([1e16, 1.0, -1e16].into_iter(), 3.0),
+            1.0 / 3.0
+        );
+    }
+
+    #[test]
+    fn gaussian_unscaled_fit_is_invariant_to_column_translation() {
+        for p in [1, 500] {
+            let x = Array2::from_shape_fn((5, p), |(i, j)| if j == 0 { i as f64 } else { 2.0 });
+            let shifted = &x + 8.0;
+            let y = Vector::from_ndarray(arr1(&[0.0, 1.0, 4.0, 3.0, 5.0]));
+            let config = GaussianLassoPathConfig {
+                standardize: false,
+                lambda: Some(Vector::from_ndarray(arr1(&[0.5]))),
+                ..GaussianLassoPathConfig::default()
+            };
+            let a = gaussian_lasso_path(&Matrix::from_ndarray(x), &y, &config).unwrap();
+            let b = gaussian_lasso_path(&Matrix::from_ndarray(shifted), &y, &config).unwrap();
+            for (left, right) in a.beta.as_ndarray().iter().zip(b.beta.as_ndarray()) {
+                assert!((left - right).abs() < 1e-12);
+            }
+            assert!(
+                (a.intercept.as_ndarray()[0]
+                    - b.intercept.as_ndarray()[0]
+                    - 8.0 * a.beta.as_ndarray().column(0).sum())
+                .abs()
+                    < 1e-12
+            );
         }
     }
 
@@ -2242,7 +2435,7 @@ mod tests {
         let mut ws = super::GaussianCdWorkspace::new(4, 3);
         ws.reset(prepared.y_centered.as_ndarray());
         let mut warm = false;
-        state.fit(&mut ws, 1.0, &config, 1.0e-12, &mut warm);
+        state.fit(&mut ws, 1.0 / state.y_scale, &config, 1.0e-12, &mut warm);
         assert!(warm);
         assert!(ws.in_active.iter().any(|&active| !active));
         for j in 0..3 {
@@ -2250,20 +2443,20 @@ mod tests {
                 .y_centered
                 .as_ndarray()
                 .dot(&prepared.x_scaled.as_ndarray().column(j))
-                / 4.0
+                / (4.0 * state.y_scale)
                 - state.gram.row(j).dot(&ws.beta_scaled);
             assert!((state.gradient[j] - expected).abs() < 1.0e-12);
         }
         assert!(ws.active_indices.len() > 1);
         // Re-enter via the warm partial-fit path at the next lambda.
-        state.fit(&mut ws, 0.9, &config, 1.0e-12, &mut warm);
+        state.fit(&mut ws, 0.9 / state.y_scale, &config, 1.0e-12, &mut warm);
         for j in 0..3 {
             let expected = prepared
                 .x_scaled
                 .as_ndarray()
                 .column(j)
                 .dot(prepared.y_centered.as_ndarray())
-                / 4.0
+                / (4.0 * state.y_scale)
                 - state.gram.row(j).dot(&ws.beta_scaled);
             assert!((state.gradient[j] - expected).abs() < 1.0e-12);
         }

@@ -17,6 +17,63 @@ const GRID_REL_TOL: f64 = 1.0e-2;
 const CORRELATION_FLOOR: f64 = 0.97;
 
 #[test]
+fn gaussian_arithmetic_preserves_first_entry_and_downstream_ties() {
+    let fixture = fixture_dir("gaussian_arithmetic");
+    let x = read_matrix(fixture.join("input_x.csv"));
+    let xtilde = read_matrix(fixture.join("input_xtilde.csv"));
+    let y = read_vector(fixture.join("input_y.csv"));
+    let expected = read_vector(fixture.join("expected_entry.csv"));
+    let swap = read_vector(fixture.join("swap.csv"));
+    let swap: Vec<_> = swap.as_ndarray().iter().map(|&v| v != 0.0).collect();
+    let mut augmented = augment_features(&x, &xtilde).into_ndarray();
+    for (j, &swapped) in swap.iter().enumerate() {
+        if swapped {
+            for i in 0..x.nrows() {
+                augmented.swap([i, j], [i, j + x.ncols()]);
+            }
+        }
+    }
+    let config = GaussianLassoPathConfig {
+        nlambda: 500,
+        max_iter: 100000,
+        scale_ddof: 1,
+        ..GaussianLassoPathConfig::default()
+    };
+    let uncached = slide_glmnet::stat_glmnet_lambdasmax_prebuilt_diagnostics(
+        &Matrix::from_ndarray(augmented),
+        x.ncols(),
+        &y,
+        GlmnetFamily::Gaussian,
+        &config,
+    )
+    .unwrap()
+    .path;
+    let y_mean = y.as_ndarray().mean().unwrap();
+    let centered = y.as_ndarray().mapv(|v| v - y_mean);
+    let left = HalfPreparedData::new_gaussian(&x, &centered, true);
+    let right = HalfPreparedData::new_gaussian(&xtilde, &centered, true);
+    let mut ws = GaussianCdWorkspace::new(x.nrows(), 2 * x.ncols());
+    let cached = gaussian_lasso_path_with_left_cache(
+        &left, &right, &swap, &y, y_mean, &centered, &config, &mut ws,
+    )
+    .unwrap();
+    for path in [&uncached, &cached] {
+        let entries = path
+            .beta
+            .as_ndarray()
+            .axis_iter(Axis(0))
+            .map(|row| {
+                row.iter()
+                    .position(|&v| v != 0.0)
+                    .map_or(-1.0, |i| i as f64)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entries, expected.as_ndarray().to_vec());
+    }
+    assert_eq!(uncached.lambda, cached.lambda);
+}
+
+#[test]
 fn gaussian_schedule_matches_saved_r_signs_with_fixed_preparation() {
     let fixture = fixture_dir("gaussian_schedule");
     let x = read_matrix(fixture.join("input_x.csv"));
@@ -53,8 +110,8 @@ fn gaussian_covariance_matches_r_entry_for_collinear_saved_draw() {
         .collect::<Vec<_>>();
     let y_mean = y.as_ndarray().mean().unwrap();
     let y_centered = y.as_ndarray().mapv(|value| value - y_mean);
-    let x_cache = HalfPreparedData::new(&x, &y_centered, true);
-    let xtilde_cache = HalfPreparedData::new(&xtilde, &y_centered, true);
+    let x_cache = HalfPreparedData::new_gaussian(&x, &y_centered, true);
+    let xtilde_cache = HalfPreparedData::new_gaussian(&xtilde, &y_centered, true);
     let config = GaussianLassoPathConfig {
         nlambda: 500,
         standardize: true,
