@@ -16,6 +16,7 @@ unsafe_code = "forbid"
 path = "src/lib.rs"
 
 [dependencies]
+rand.workspace = true
 ndarray.workspace = true
 serde.workspace = true
 thiserror.workspace = true

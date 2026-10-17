@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+mod output;
+mod plotting;
 mod run;
 mod tui;
 

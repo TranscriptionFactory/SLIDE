@@ -11,6 +11,9 @@ const LOGISTIC_WEIGHT_EPSILON: Scalar = 1.0e-8;
 const LOGISTIC_CONVERGENCE_TOLERANCE: Scalar = 1.0e-8;
 const LOGISTIC_MAX_ITERATIONS: usize = 50;
 
+mod control;
+pub use control::{control_performance, ControlPerformance};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ResponseType {
     Binary,
@@ -25,6 +28,18 @@ pub enum ScoreMetric {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ScoreError {
+    #[error("control scoring requires finite inputs, features, predictions, and scores")]
+    NonFiniteControlScore,
+    #[error("control scoring requires at least one marginal latent factor")]
+    EmptyControlMarginals,
+    #[error("control scoring requires at least one random iteration")]
+    EmptyControlIterations,
+    #[error("cannot sample {requested} {kind} without replacement from {available} candidates")]
+    InvalidControlSampleSize {
+        kind: &'static str,
+        requested: usize,
+        available: usize,
+    },
     #[error("response length {actual} must match feature-matrix row count {expected}")]
     FeatureResponseLengthMismatch { expected: usize, actual: usize },
     #[error("selected latent factor index {index} is out of bounds for {ncols} columns")]
