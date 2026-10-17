@@ -6,11 +6,11 @@ current checkout. No benchmarks were rerun for the 2026-10-17 cleanup.
 
 | Run | Evidence retained |
 | --- | --- |
-| [Production-readiness pilot](2026-10-16_production-readiness/README.md) | Latest repeated SSc/CD4 runtime, memory, significant-LF comparisons, partial truth results and paired solver replay |
+| [Production-readiness pilot](2026-10-16_production-readiness/README.md) | Latest repeated SSc/CD4 runtime, memory, [full selected-LF counts and pairwise overlap](2026-10-16_production-readiness/README.md#backend-selection-details), partial truth results and paired solver replay |
 | [Large-feature scaling](2026-10-16_large-feature-scaling/README.md) | Runtime and memory at 10,000–20,000 features, including R timeouts |
 | [Torok binary](2026-10-17_torok-all-binary/README.md) | Real-data binary capacity, selected factors and interactions, runtime and memory |
 | [Four-arm comparison](2026-10-16_backend-replicates-four-arms/README.md) | Significant-LF frequencies and set agreement, including Rust with R knockoffs; not replaced by the three-backend pilot |
-| [Four-arm setup](2026-10-16_backend-replicates-all-arms/README.md) | Frozen configuration and provenance for the four-arm comparison, including the excluded timed-out arm |
+| [Four-arm setup](2026-10-16_backend-replicates-all-arms/README.md) | Frozen configuration and provenance; Rust-with-R results and completed Python-with-R cells from the timed-out tasks, with incomplete coverage explicit |
 
 Keep tables, figures, job records and reproduction commands together within each
 run. Raw patient-level inputs and some large intermediate outputs remain on the

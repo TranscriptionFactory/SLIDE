@@ -11,6 +11,14 @@ YAML keys and path rules; their configuration files are not interchangeable.
 We plan separate distributions (`slide-py` and `slide-rs`) from this repository.
 Use the source installs below until publication; no `loveslide` import alias remains.
 
+**Navigate:** [R install and usage](#r-install-and-usage) ·
+[Rust install and build](#rust-install-and-build) · [Rust usage](#rust-usage) ·
+[Python install](#python-install) · [Python usage](#python-usage) ·
+[outputs](#result-files-and-plots) ·
+[runtime comparison](#measured-backend-comparisons) · [latent-factor comparison](#latent-factor-agreement-and-remaining-differences) ·
+[R-knockoff hybrid comparison](#r-knockoff-hybrid-benchmarks) ·
+[publication caveats](#before-publication) · [development](#development) · [license](#license-and-citation)
+
 | Component | What it is | Entry point |
 | --- | --- | --- |
 | `SLIDE` (R, `R/`) | Original R package; root package layout retained. | `library(SLIDE)` |
@@ -25,6 +33,8 @@ backend. See [result files and plots](#result-files-and-plots) for the shared
 outputs and remaining backend-specific artifacts.
 
 ## R package
+
+### R install and usage
 
 Requires R ≥ 4.2. Install this integrated fork with:
 
@@ -43,7 +53,7 @@ and output differences remain explicit; integration does not certify equivalence
 
 ## Rust CLI and TUI
 
-### Build
+### Rust install and build
 
 Requirements: a current stable Rust toolchain, a C toolchain, CMake, libclang,
 system OpenBLAS/LAPACK with gfortran, and Cairo for native PNG/PDF output.
@@ -60,7 +70,7 @@ On an HPC cluster, load the OpenBLAS, GCC, CMake and LLVM modules first.
 `scripts/cargo-rust-blas` wraps `cargo` with the environment used on the
 Pitt CRC cluster; adapt `scripts/with-rust-blas-env.sh` for other sites.
 
-### Run
+### Rust usage
 
 From the repository root, save this small smoke-test config as `rust-quick.yaml`:
 
@@ -138,7 +148,7 @@ experiments. When any is set, `slide` warns and stores it under
 
 ## Python package
 
-### Install
+### Python install
 
 ```bash
 sudo apt-get install build-essential gfortran python3-dev python3-venv libopenblas-dev liblapack-dev
@@ -157,7 +167,7 @@ build; it does not silently install a different fitting backend. Local artifact
 checks cover Linux and Python 3.11; portable wheels and the other CI interpreter
 still need release verification.
 
-### Run
+### Python usage
 
 Save this as `python-quick.yaml` in the repository root:
 
@@ -299,12 +309,85 @@ runs; R selected it in all ten and one extra marginal in one run. Median selecte
 interaction count was two for each backend; equal counts do not prove equal sets.
 
 For SSc (n=24, p=804), score matrices agree within 4.7×10⁻¹¹ across the four
-parameter cells, but selection differs. At delta=0.01/lambda=0.1, K=172:
+parameter cells, but selected marginal identities differ. The table gives
+selection counts across ten runs per backend in the frozen 4b32111 pilot:
 
-| Marginal factor | Rust selections / 10 runs | Python selections / 10 runs | R selections / 10 runs |
+| Dataset, delta/lambda | Factor | Rust | Python | R |
+| --- | --- | ---: | ---: | ---: |
+| SSc, 0.01/0.1 | Z18, Z27, Z45, Z136 (each) | 10 | 10 | 10 |
+| SSc, 0.01/0.1 | Z20 | 10 | 0 | 2 |
+| SSc, 0.01/0.1 | Z73 | 2 | 0 | 0 |
+| SSc, 0.01/0.1 | Z74 | 0 | 8 | 8 |
+| CD4, 0.1/0.1 | Z7 | 10 | 10 | 10 |
+| CD4, 0.1/0.1 | Z26 | 0 | 0 | 1 |
+| SSc, 0.1/0.1 | Z25 | 10 | 4 | 10 |
+| SSc, 0.1/0.1 | Z53 | 8 | 3 | 8 |
+| SSc, 0.1/0.1 | Z61 | 4 | 8 | 2 |
+
+These are observed differences, not all statistically significant. Marginal
+mean cross-run Jaccard scores are descriptive summaries:
+
+| Dataset, delta/lambda | Rust/Python | Rust/R | Python/R |
 | --- | ---: | ---: | ---: |
-| Z20 | 10 | 0 | 2 |
-| Z74 | 0 | 8 | 8 |
+| SSc, 0.01/0.1 | 0.673 | 0.705 | 0.904 |
+| SSc, 0.01/1 | 0.788 | 0.750 | 0.819 |
+| SSc, 0.1/0.1 | 0.322 | 0.523 | 0.310 |
+| SSc, 0.1/1 | 0.533 | 0.589 | 0.533 |
+| CD4, 0.1/0.1 | 1.000 | 0.950 | 0.950 |
+
+Jaccard is shared selected factors divided by the union. Each mean averages all
+100 combinations of runs from two independently sampled arms. Pairs reuse runs,
+so these are not 100 independent observations or paired-seed comparisons. These summaries do not establish equivalence. See
+the [pilot backend-selection details](benchmark_results/2026-10-16_production-readiness/README.md#backend-selection-details),
+[SSc factor rates](benchmark_results/2026-10-16_production-readiness/ssc/factor_rates.csv)
+and [CD4 factor rates](benchmark_results/2026-10-16_production-readiness/cd4/factor_rates.csv).
+
+![SSc marginal selection rates](benchmark_results/2026-10-16_production-readiness/ssc/factor_rates.png)
+
+*Ten runs; factors shown were selected in at least 20% of runs in any arm. The
+figure encodes no uncertainty; the full CSV reports pointwise Wilson intervals.
+Factor identities compare only within a dataset/parameter cell.*
+
+### R-knockoff hybrid benchmarks
+
+`rust_r_knockoffs` uses Rust LOVE and downstream selection with R-generated
+knockoffs (including R SDP and Gaussian draws). `r_knockoffs` uses Python LOVE
+and the Python pipeline with R knockoffs through `rpy2`; neither is the pure-R
+SLIDE pipeline.
+
+The separate [four-arm replicate analysis](benchmark_results/2026-10-16_backend-replicates-four-arms/README.md)
+uses source `c4726e3`, not the latest pilot source `4b32111`; do not pool the
+results. The completed low-delta Python-with-R-knockoffs cells from that same
+run are also retained in the [five-arm status and partial results](benchmark_results/2026-10-16_backend-replicates-all-arms/README.md).
+At SSc delta=0.01/lambda=0.1, all five arms completed ten cells:
+
+| Marginal factor | Rust | Python | R | Rust with R knockoffs | Python with R knockoffs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Z18, Z27, Z45, Z136 (each) | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
+| Z20 | 10/10 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z74 | 0/10 | 8/10 | 9/10 | 6/10 | 8/10 |
+
+All ten Python-with-R-knockoffs **tasks** timed out at the 20-minute budget
+spanning four cells per task. However, 17 of its 40 planned **cells** finished:
+10 at delta/lambda=0.01/0.1 and 7 at 0.01/1. No high-delta cells completed.
+The seven-run cell has timeout-related selection bias; neither its frequencies
+nor its successful-only runtime estimates represent the full ten-run plan.
+A timeout does not mean zero selected factors or a 1,200-second per-cell runtime.
+The 17 completed Python-hybrid score matrices match the corresponding R
+reference within 1.12×10⁻¹¹, with matching sample and factor order.
+
+Median wall seconds per completed cell (ten repeats unless noted):
+
+| Delta | Lambda | Rust | Python | R | Rust with R knockoffs | Python with R knockoffs |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 0.01 | 0.1 | 35.66 | 27.64 | 61.43 | 43.53 | 581.0 (10 completed) |
+| 0.01 | 1.0 | 29.61 | 24.13 | 58.36 | 45.86 | 521.7 (7 completed) |
+| 0.1 | 0.1 | 14.49 | 12.35 | 25.49 | 15.85 | No completed cells |
+| 0.1 | 1.0 | 14.23 | 12.40 | 23.76 | 14.28 | Not started |
+
+These timing boundaries differ from the latest pilot's fresh-process timings;
+see the [four-arm report](benchmark_results/2026-10-16_backend-replicates-four-arms/README.md)
+for details.
 
 See the [saved SSc analysis summary](benchmark_results/2026-10-16_production-readiness/README.md).
 SSc input/response identifiers differ; the benchmark preserves historical positional

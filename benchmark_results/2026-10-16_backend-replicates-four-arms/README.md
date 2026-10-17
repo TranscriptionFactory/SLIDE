@@ -11,7 +11,12 @@ this analysis reuses the existing script without code changes.
 
 ## Design and scope
 
-Arms: Rust, Python (DSDP), pure R, Rust-with-R-knockoffs.
+Arms: Rust, Python (DSDP), pure R, Rust-with-R-knockoffs. In the harness,
+`rust_r_knockoffs` means the Rust CLI with R-generated knockoffs (R SDP and Gaussian draws);
+`r_knockoffs` means `slide-py` with Python LOVE and R knockoffs via `rpy2`.
+These are distinct arms, as defined in
+[`benchmarks/benchmark_backends.py`](../../benchmarks/benchmark_backends.py).
+The latter arm had no completed statistical analysis and remains excluded.
 Delta 0.01/0.1 × lambda 0.1/1.0; 500 iterations, specificity 0.1,
 SLIDE selection, parity settings, four workers and one BLAS thread.
 Seed labels: 42, 1000 through 9000 by 1000. Fresh pure R is the reference.
@@ -48,7 +53,8 @@ At delta 0.01, lambda 0.1, median marginal/interaction counts are
 
 ### Runtime
 
-Median wall seconds per cell (ten repeats):
+Median wall seconds per cell (ten repeats; per-run values are in
+[`timings.csv`](timings.csv)):
 
 | Delta | Lambda | Rust | Python | R | Rust with R knockoffs |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -61,6 +67,48 @@ Median runtime ratios to R range from 0.51–0.60 for Rust, 0.41–0.52 for
 Python, and 0.60–0.79 for the Rust hybrid. All corresponding bootstrap
 95% intervals lie below 1; full intervals are in tests.csv.
 These are the harness's wall times, not equal-work solver timings.
+
+### Complete Rust-with-R-knockoffs marginal selections
+
+Each entry is the number of the ten runs selecting that marginal factor.
+A zero means an estimated factor was never selected; a dash means that index
+was not estimated (K=172 at delta=0.01, K=88 at delta=0.1). Factor labels
+are local to each delta/lambda cell, not matched identities across deltas. The
+CSV contains the full rates, Wilson intervals and adjusted tests.
+
+| Factor | 0.01 / 0.1 | 0.01 / 1.0 | 0.1 / 0.1 | 0.1 / 1.0 |
+|---|---:|---:|---:|---:|
+| Z5 | 0/10 | 0/10 | 4/10 | 0/10 |
+| Z10 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z18 | 10/10 | 9/10 | 0/10 | 0/10 |
+| Z20 | 1/10 | 0/10 | 0/10 | 0/10 |
+| Z22 | 0/10 | 1/10 | 0/10 | 0/10 |
+| Z25 | 0/10 | 0/10 | 8/10 | 4/10 |
+| Z26 | 0/10 | 1/10 | 0/10 | 0/10 |
+| Z27 | 10/10 | 10/10 | 0/10 | 0/10 |
+| Z32 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z33 | 0/10 | 0/10 | 5/10 | 6/10 |
+| Z38 | 0/10 | 0/10 | 3/10 | 0/10 |
+| Z44 | 0/10 | 0/10 | 10/10 | 10/10 |
+| Z45 | 10/10 | 10/10 | 0/10 | 0/10 |
+| Z53 | 0/10 | 0/10 | 6/10 | 0/10 |
+| Z54 | 0/10 | 1/10 | 0/10 | 0/10 |
+| Z57 | 0/10 | 5/10 | 0/10 | 0/10 |
+| Z61 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z66 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z69 | 0/10 | 0/10 | 0/10 | 2/10 |
+| Z73 | 1/10 | 7/10 | 0/10 | 0/10 |
+| Z74 | 6/10 | 0/10 | 0/10 | 0/10 |
+| Z76 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z78 | 0/10 | 0/10 | 2/10 | 0/10 |
+| Z84 | 0/10 | 0/10 | 1/10 | 0/10 |
+| Z98 | 0/10 | 2/10 | — | — |
+| Z136 | 10/10 | 9/10 | — | — |
+| Z141 | 0/10 | 1/10 | — | — |
+| Z163 | 0/10 | 2/10 | — | — |
+
+The ten Rust-hybrid summaries retained in the all-arms run directory match
+these frequencies and the per-run values in `timings.csv`.
 
 ## Outputs
 

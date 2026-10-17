@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-10-16T21:40:41.296825+00:00",
+  "timings": [
+    {
+      "backend": "pure_r",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 93.49951775185764,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 1729712128,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 93.36044460814446,
+      "python_glmnet_available": null
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "pure_r_0.1_0.1": {
+      "k": 39,
+      "n_sig_lfs": 1,
+      "sig_lfs": [
+        "Z7"
+      ],
+      "n_sig_interacts": 3,
+      "sig_interacts": [
+        "Z7.Z26",
+        "Z7.Z36",
+        "Z7.Z37"
+      ],
+      "score": null
+    }
+  }
+}

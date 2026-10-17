@@ -1,0 +1,3 @@
+cell,factor,rust_runs,rust_n,rust_rate,rust_lo,rust_hi,python_runs,python_n,python_rate,python_lo,python_hi,pure_r_runs,pure_r_n,pure_r_rate,pure_r_lo,pure_r_hi,rust_vs_pure_r_p,rust_vs_pure_r_delta,python_vs_pure_r_p,python_vs_pure_r_delta,rust_vs_pure_r_q,rust_vs_pure_r_flag,python_vs_pure_r_q,python_vs_pure_r_flag
+d=0.1 l=0.1,Z7,10,10,1.0,0.7224672001371109,1.0,10,10,1.0,0.7224672001371109,1.0,10,10,1.0,0.7224672001371109,1.0,1.0,0.0,1.0,0.0,1.0,False,1.0,False
+d=0.1 l=0.1,Z26,0,10,0.0,0.0,0.2775327998628892,0,10,0.0,0.0,0.2775327998628892,1,10,0.1,0.017876213095072896,0.4041500267952385,1.0,-0.1,1.0,-0.1,1.0,False,1.0,False

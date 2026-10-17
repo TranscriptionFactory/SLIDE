@@ -266,3 +266,145 @@ of ten runs and Z74 in 0/8/8. Biological sample identity remains unverified as
 noted above. Agreement in LOVE output does not establish knockoff-selection
 agreement. See `costs/summary.csv` for attempted, successful and unrun counts;
 completed analysis files do not imply that cancelled simulations completed.
+
+## Backend selection details
+
+### Recovered analysis provenance
+
+The analysis artifacts under `ssc/` and `cd4/`, together with
+`ssc-analysis.log` and `cd4-analysis.log`, were recovered on 2026-10-17 from the
+sibling `../omni-SLIDE/benchmark_results/2026-10-16_production-readiness/`.
+They are byte-identical copies of outputs from the original frozen
+`4b321116fde6b92d5eb7bd771e0357cfb8dd72c4` run, not a rerun. The 60 raw
+`benchmark_summary.json` files in `results/` were restored from that run's
+sibling `.tmpfiles/2026-10-16_production-readiness/results/`. These are copies,
+not regenerated artifacts. `analysis-source-revision.txt` records the analysis
+code revision; `analysis-command.sh` records the command used to create the
+saved plots and CSVs. The raw patient inputs and large Z matrices were not
+copied. Raw JSON alone cannot reproduce the saved Z checks; those checks are
+reported in the retained analysis logs and `z_check.csv` files.
+
+### Marginal selection counts
+
+Counts are runs with each factor selected, out of ten per backend and cell.
+These list every factor selected at least once in that cell, not every factor
+estimated. Full rates, uncertainty intervals, and inferential columns are in
+[`ssc/factor_rates.csv`](ssc/factor_rates.csv) and
+[`cd4/factor_rates.csv`](cd4/factor_rates.csv); the existing
+[`ssc/factor_rates.png`](ssc/factor_rates.png) and
+[`cd4/factor_rates.png`](cd4/factor_rates.png) show factors with rate at least
+0.2, so they omit rarer selections. Existing saved uncertainty files include
+[`ssc/equivalence_factors.csv`](ssc/equivalence_factors.csv),
+[`ssc/equivalence_summary.csv`](ssc/equivalence_summary.csv),
+[`cd4/equivalence_factors.csv`](cd4/equivalence_factors.csv), and
+[`cd4/equivalence_summary.csv`](cd4/equivalence_summary.csv).
+
+| SSc cell | Factor | Rust / 10 | Python / 10 | R / 10 |
+|---|---:|---:|---:|---:|
+| d=0.01 l=0.1 | Z18 | 10 | 10 | 10 |
+| d=0.01 l=0.1 | Z20 | 10 | 0 | 2 |
+| d=0.01 l=0.1 | Z27 | 10 | 10 | 10 |
+| d=0.01 l=0.1 | Z45 | 10 | 10 | 10 |
+| d=0.01 l=0.1 | Z73 | 2 | 0 | 0 |
+| d=0.01 l=0.1 | Z74 | 0 | 8 | 8 |
+| d=0.01 l=0.1 | Z136 | 10 | 10 | 10 |
+| d=0.01 l=1.0 | Z18 | 9 | 10 | 10 |
+| d=0.01 l=1.0 | Z27 | 10 | 10 | 10 |
+| d=0.01 l=1.0 | Z45 | 9 | 10 | 10 |
+| d=0.01 l=1.0 | Z57 | 2 | 2 | 4 |
+| d=0.01 l=1.0 | Z73 | 4 | 5 | 8 |
+| d=0.01 l=1.0 | Z74 | 0 | 0 | 1 |
+| d=0.01 l=1.0 | Z136 | 9 | 10 | 10 |
+| d=0.1 l=0.1 | Z5 | 4 | 4 | 6 |
+| d=0.1 l=0.1 | Z10 | 3 | 1 | 2 |
+| d=0.1 l=0.1 | Z25 | 10 | 4 | 10 |
+| d=0.1 l=0.1 | Z32 | 1 | 0 | 2 |
+| d=0.1 l=0.1 | Z33 | 6 | 3 | 6 |
+| d=0.1 l=0.1 | Z38 | 4 | 3 | 4 |
+| d=0.1 l=0.1 | Z44 | 10 | 7 | 10 |
+| d=0.1 l=0.1 | Z53 | 8 | 3 | 8 |
+| d=0.1 l=0.1 | Z55 | 0 | 1 | 0 |
+| d=0.1 l=0.1 | Z61 | 4 | 8 | 2 |
+| d=0.1 l=0.1 | Z62 | 3 | 2 | 1 |
+| d=0.1 l=0.1 | Z66 | 1 | 1 | 1 |
+| d=0.1 l=0.1 | Z78 | 2 | 1 | 2 |
+| d=0.1 l=0.1 | Z84 | 1 | 0 | 0 |
+| d=0.1 l=1.0 | Z0 | 0 | 1 | 0 |
+| d=0.1 l=1.0 | Z25 | 5 | 3 | 4 |
+| d=0.1 l=1.0 | Z33 | 9 | 5 | 7 |
+| d=0.1 l=1.0 | Z38 | 2 | 1 | 0 |
+| d=0.1 l=1.0 | Z44 | 10 | 10 | 10 |
+| d=0.1 l=1.0 | Z55 | 0 | 1 | 0 |
+| d=0.1 l=1.0 | Z66 | 2 | 1 | 0 |
+| d=0.1 l=1.0 | Z69 | 8 | 7 | 5 |
+| d=0.1 l=1.0 | Z78 | 0 | 1 | 0 |
+| d=0.1 l=1.0 | Z86 | 0 | 1 | 0 |
+
+| CD4 cell | Factor | Rust / 10 | Python / 10 | R / 10 |
+|---|---:|---:|---:|---:|
+| d=0.1 l=0.1 | Z7 | 10 | 10 | 10 |
+| d=0.1 l=0.1 | Z26 | 0 | 0 | 1 |
+
+For SSc, only Z20 and Z74 in the d=0.01/l=0.1 cell have Benjamini–Hochberg
+q < 0.05 for Rust versus R in the saved factor table; both q values are
+0.005001. The correction covers observed factors and both R-reference
+comparisons within each cell, not all estimated factors or all cells together. The `*_flag`
+columns mark an absolute estimated effect of at least 0.5, not statistical
+significance. At this cell, Rust/Python/R select Z20 10/0/2 times and Z74
+0/8/8 times. In CD4, Z7 is selected in all ten runs for each backend; R selects
+Z26 once, versus zero for Rust and Python.
+
+### Cross-run overlap
+
+Each entry is the mean Jaccard similarity for each pairing of independent
+ten-run arms. We average the full cross-product of ten runs versus ten runs
+(100 combinations per cell, not 100 independent observations). Jaccard is
+0 for no overlap and 1 for identical sets; empty/empty is defined as 1. These
+are not paired-seed comparisons and do not establish equivalent backends.
+
+| Dataset/cell | Pair | Marginal mean Jaccard | Interaction mean Jaccard |
+|---|---|---:|---:|
+| SSc d=0.01 l=0.1 | Rust–Python | 0.673 | 0.545 |
+| SSc d=0.01 l=0.1 | Rust–R | 0.705 | 0.532 |
+| SSc d=0.01 l=0.1 | Python–R | 0.904 | 0.801 |
+| SSc d=0.01 l=1.0 | Rust–Python | 0.788 | 0.719 |
+| SSc d=0.01 l=1.0 | Rust–R | 0.750 | 0.667 |
+| SSc d=0.01 l=1.0 | Python–R | 0.819 | 0.719 |
+| SSc d=0.1 l=0.1 | Rust–Python | 0.322 | 0.352 |
+| SSc d=0.1 l=0.1 | Rust–R | 0.523 | 0.418 |
+| SSc d=0.1 l=0.1 | Python–R | 0.310 | 0.286 |
+| SSc d=0.1 l=1.0 | Rust–Python | 0.533 | 0.589 |
+| SSc d=0.1 l=1.0 | Rust–R | 0.589 | 0.648 |
+| SSc d=0.1 l=1.0 | Python–R | 0.533 | 0.623 |
+| CD4 d=0.1 l=0.1 | Rust–Python | 1.000 | 0.723 |
+| CD4 d=0.1 l=0.1 | Rust–R | 0.950 | 0.717 |
+| CD4 d=0.1 l=0.1 | Python–R | 0.950 | 0.751 |
+
+The identities in these tables compare only within the same dataset and
+parameter cell, where Z agreement was checked. SSc sample biological pairing
+is still unverified, so this is not a biological identity claim. The saved
+R-reference cross-run marginal means in [`ssc/tests.csv`](ssc/tests.csv) and
+[`cd4/tests.csv`](cd4/tests.csv) match the raw-summary recomputation within
+floating-point precision.
+
+Reproduce the overlap calculation from the project root with the existing
+loader and Jaccard helper (the raw results are required):
+
+```python
+from pathlib import Path
+import sys
+sys.path.insert(0, "benchmarks")
+from aggregate_seed_sweep import load_sweep, _jaccard
+
+for dataset in ("ssc", "cd4"):
+    root = Path("benchmark_results/2026-10-16_production-readiness/results") / dataset
+    arms = {name: load_sweep(root / name)["selections"] for name in ("rust", "python", "pure_r")}
+    cells = sorted({(delta, lam) for arm in arms.values() for _, delta, lam in arm})
+    for delta, lam in cells:
+        for left, right in (("rust", "python"), ("rust", "pure_r"), ("python", "pure_r")):
+            for kind in ("marginal", "interaction"):
+                a = arms[left][(left, delta, lam)][kind]
+                b = arms[right][(right, delta, lam)][kind]
+                mean = sum(_jaccard(x, y) for _, x in a for _, y in b) / (len(a) * len(b))
+                print(dataset, delta, lam, left, right, kind, mean)
+```
