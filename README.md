@@ -271,7 +271,7 @@ outputs differ between backends.
 These are profiled measurements of frozen source `4b32111`, not benchmarks of
 every subsequent change. All rows use 500 knockoff draws, four workers, one BLAS
 thread and homogeneous LOVE; final predictive CV is excluded. CD4 and synthetic
-capacity runs use Gaussian parity settings. Torok uses native binary-response
+capacity runs use Gaussian parity settings. The localized scleroderma (LS) dataset uses native binary-response
 settings, whose solver/grid differences are intentional. Delta/lambda are 0.1/0.1.
 
 | Dataset (samples n × features p) | Runs per backend | Estimated factors K (Rust / Python / R) | Rust wall seconds | Python wall seconds | R wall seconds |
@@ -280,12 +280,19 @@ settings, whose solver/grid differences are intentional. Delta/lambda are 0.1/0.
 | Synthetic (50 × 10,000) | 1 | 178 / 178 / unavailable | 115.93 | 111.85 | timeout at 7,200 |
 | Synthetic (50 × 15,000) | 1 | 136 / 136 / unavailable | 76.86 | 114.00 | timeout at 7,200 |
 | Synthetic (50 × 20,000) | 1 | 109 / 109 / unavailable | 90.69 | 137.00 | timeout at 7,200 |
-| Torok All binary (44 × 15,496) | 1 | 434 / 434 / unavailable | 1,305.27 | 4,817.10 | timeout at 7,200 |
+| LS skin transcriptomics (44 × 15,496) | 1 | 434 / 434 / unavailable | 1,305.27 | 4,817.10 | timeout at 7,200 |
+
+The LS benchmark uses processed, cluster-specific expression summaries from
+skin single-cell RNA sequencing: 44 samples and 15,496 features, with a binary
+LS/control response. The study includes adult and pediatric participants;
+see [Rosen et al., *JCI Insight* (2025), DOI: 10.1172/jci.insight.185758](https://doi.org/10.1172/jci.insight.185758).
+The benchmark uses the full cohort, rather than an age subgroup; it does not
+rerun the paper's predictive cross-validation.
 
 CD4 entries are median [25th–75th percentile], not confidence intervals. Sources:
 [CD4 analysis and provenance](benchmarks/results/2026-10-16_production-readiness/README.md),
 [capacity results](benchmarks/results/2026-10-16_large-feature-scaling/README.md)
-and [Torok results and provenance](benchmarks/results/2026-10-17_torok-all-binary/README.md).
+and [LS skin transcriptomics results and provenance](benchmarks/results/2026-10-17_torok-all-binary/README.md).
 For original-to-rewritten source revisions, see the
 [revision mapping](benchmarks/README.md#source-revisions-after-history-cleanup).
 Capacity factor counts come from the corresponding per-backend
@@ -296,7 +303,7 @@ Different p values use nonnested datasets, so runtime need not increase with p.
 
 Peak sampled process-group RSS for Rust/Python was 2.30/4.73 GiB at p=10,000,
 5.02/10.31 GiB at p=15,000, 8.97/18.13 GiB at p=20,000, and 3.79/9.43 GiB for
-Torok (bytes divided by 2³⁰). Sampling every 50 ms can miss peaks and double-count
+LS skin transcriptomics (bytes divided by 2³⁰). Sampling every 50 ms can miss peaks and double-count
 shared pages; these are not exact cgroup peaks. Timings include fresh-process
 startup, imports, input I/O and preprocessing. Profiling overhead is unmeasured;
 caches were not flushed. Shared AMD EPYC 9575F nodes can experience interference.

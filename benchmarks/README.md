@@ -77,8 +77,8 @@ R 9/10, Rust hybrid 6/10 and Python hybrid 8/10.
 ### Interpretation limits
 
 SSc input/response identifiers differ; the benchmark preserves historical positional
-pairing, without verifying biological sample identity. Torok's Rust and Python
-runs both report marginal Z294, but Rust reports six interactions and Python five.
+pairing, without verifying biological sample identity. For [LS skin transcriptomics](results/2026-10-17_torok-all-binary/README.md),
+Rust and Python both report marginal Z294, but Rust reports six interactions and Python five.
 Matching K or a factor label alone does not establish aligned factor scores.
 
 Compare factor labels within an aligned dataset/parameter cell. Equal
@@ -186,7 +186,7 @@ inspecting the corresponding source in this checkout:
 
 | Recorded revision | Filtered revision | Evidence |
 | --- | --- | --- |
-| `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4` | `bdc1054b3c175937f5dd8741a6dc840579da29ad` | Readiness pilot, scaling and Torok production source |
+| `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4` | `bdc1054b3c175937f5dd8741a6dc840579da29ad` | Readiness pilot, scaling and LS skin transcriptomics production source |
 | `c4726e34fde91e59429f88d2fd228f785ce845dc` | `f241643ae63cf8a2b592eeeb3ed5042f85bc9881` | Five-arm replicate campaign source |
 | `5bcde18f9bef1290239b2d8b429abc50cec34dfc` | `836b0f8774e0ca864b95e503a89a8c0c08b59294` | Readiness analysis source |
 

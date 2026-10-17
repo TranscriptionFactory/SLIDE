@@ -8,7 +8,7 @@ current checkout. See the [original-to-rewritten revision mapping](../README.md#
 | --- | --- |
 | [Production-readiness pilot](2026-10-16_production-readiness/README.md) | Repeated SSc/CD4 runtime, memory, [full selected-LF counts and pairwise overlap](2026-10-16_production-readiness/README.md#backend-selection-details), partial truth results and paired solver replay |
 | [Large-feature scaling](2026-10-16_large-feature-scaling/README.md) | Runtime and memory at 10,000–20,000 features, including R timeouts |
-| [Torok binary](2026-10-17_torok-all-binary/README.md) | Real-data binary capacity, selected factors and interactions, runtime and memory |
+| [LS skin transcriptomics](2026-10-17_torok-all-binary/README.md) | Localized scleroderma/control binary capacity, selected factors and interactions, runtime and memory |
 | [Backend replicate campaign](2026-10-16_backend-replicates/README.md) and [five-arm setup](2026-10-16_backend-replicates/SETUP.md) | Significant-LF frequencies and set agreement, including Rust with R knockoffs; frozen configuration and provenance, with partial Python-with-R coverage explicit |
 
 Raw patient-level inputs and some large intermediate outputs remain on the
