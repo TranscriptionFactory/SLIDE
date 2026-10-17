@@ -1,5 +1,5 @@
 """
-Test coverage for loveslide.plotting visualization functionality.
+Test coverage for slide_py.plotting visualization functionality.
 
 Major gaps:
 - Plot generation and output validation
@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 import matplotlib.pyplot as plt
 
-from loveslide.plotting import Plotter
+from slide_py.plotting import Plotter
 
 
 class TestPlotterInit:

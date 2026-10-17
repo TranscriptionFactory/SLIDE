@@ -159,7 +159,7 @@ class Plotter:
         if sns is None:
             raise ImportError(
                 "seaborn is required for plot_controlplot. "
-                "Install it with: pip install loveslide[viz]"
+                "Install it with: pip install slide_py[viz]"
             )
         # Create figure with white background
         sns.set_style('whitegrid')

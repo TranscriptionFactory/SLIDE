@@ -18,11 +18,11 @@ import numpy as np
 import pandas as pd
 from unittest.mock import Mock, patch
 
-from loveslide import Knockoffs, VotingResult
-from loveslide.knockoff.create import create_fixed, create_gaussian, create_second_order
-from loveslide.knockoff.filter import knockoff_filter, knockoff_threshold, knockoff_filter_voting
-from loveslide.knockoff.solve import create_solve_equi, create_solve_sdp, create_solve_asdp
-from loveslide.knockoff.utils import is_posdef, canonical_svd, normc, cov2cor
+from slide_py import Knockoffs, VotingResult
+from slide_py.knockoff.create import create_fixed, create_gaussian, create_second_order
+from slide_py.knockoff.filter import knockoff_filter, knockoff_threshold, knockoff_filter_voting
+from slide_py.knockoff.solve import create_solve_equi, create_solve_sdp, create_solve_asdp
+from slide_py.knockoff.utils import is_posdef, canonical_svd, normc, cov2cor
 
 
 class TestKnockoffCreation:
@@ -50,12 +50,12 @@ class TestSDPSolvers:
     @staticmethod
     def _hide_dsdp(monkeypatch):
         # A None entry in sys.modules makes `from .pydsdp import dsdp` raise ImportError.
-        monkeypatch.setitem(sys.modules, "loveslide.knockoff.pydsdp", None)
+        monkeypatch.setitem(sys.modules, "slide_py.knockoff.pydsdp", None)
 
     def test_default_solver_is_dsdp(self):
-        from loveslide.knockoff.solve import _get_sdp_solver
+        from slide_py.knockoff.solve import _get_sdp_solver
 
-        pytest.importorskip("loveslide.dsdp_solver.pydsdp5")
+        pytest.importorskip("slide_py.dsdp_solver.pydsdp5")
         assert _get_sdp_solver() == "dsdp"
 
     def test_unknown_solver_rejected(self):
@@ -79,8 +79,8 @@ class TestSDPSolvers:
         assert is_posdef(2 * Sigma - np.diag(s))
 
     def test_dsdp_failure_raises(self, monkeypatch):
-        pytest.importorskip("loveslide.dsdp_solver.pydsdp5")
-        import loveslide.knockoff.pydsdp as pydsdp
+        pytest.importorskip("slide_py.dsdp_solver.pydsdp5")
+        import slide_py.knockoff.pydsdp as pydsdp
 
         def failing_dsdp(*args, **kwargs):
             raise RuntimeError("solver blew up")
@@ -236,7 +236,7 @@ class TestKnockoffPerformance:
 
     def test_knockoff_integration_with_slide(self):
         """Test integration with SLIDE pipeline."""
-        from loveslide import SLIDE
+        from slide_py import SLIDE
 
         X = np.random.randn(100, 20)
         y = np.random.randn(100)

@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch, MagicMock
 import tempfile
 import os
 
-from loveslide import call_love
+from slide_py import call_love
 
 
 class TestLOVECrossLanguageCompatibility:

@@ -1,5 +1,5 @@
 """
-Test coverage for loveslide.tools utility functions.
+Test coverage for slide_py.tools utility functions.
 
 Major gaps:
 - init_data parameter parsing and validation
@@ -15,7 +15,7 @@ import tempfile
 import os
 from unittest.mock import patch, mock_open
 
-from loveslide.tools import init_data, show_params, check_params, calc_default_fsize
+from slide_py.tools import init_data, show_params, check_params, calc_default_fsize
 
 
 class TestInitData:

@@ -129,7 +129,7 @@ def test_python_runner_passes_base_seed_into_pipeline(monkeypatch, tmp_path):
             assert verbose is True
 
     monkeypatch.setitem(
-        sys.modules, "loveslide",
+        sys.modules, "slide_py",
         types.SimpleNamespace(OptimizeSLIDE=FakeOptimizeSLIDE),
     )
     monkeypatch.setattr(benchmark, "np", __import__("numpy"))
@@ -203,7 +203,7 @@ def test_measurement_child_failure_is_retained(tmp_path):
 
 
 def test_measured_python_rejects_fallback(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "loveslide.knockoff.stats.glmnet",
+    monkeypatch.setitem(sys.modules, "slide_py.knockoff.stats.glmnet",
                         types.SimpleNamespace(HAS_GLMNET=False))
     args = benchmark.parse_args(["--backends", "python", "--out-dir", str(tmp_path)])
     config = tmp_path / "child.json"
@@ -224,9 +224,9 @@ def test_measured_parity_checks_dsdp_before_pipeline(monkeypatch, tmp_path, conf
         calls.append(solver)
         raise ImportError("DSDP unavailable")
 
-    monkeypatch.setitem(sys.modules, "loveslide.knockoff.stats.glmnet",
+    monkeypatch.setitem(sys.modules, "slide_py.knockoff.stats.glmnet",
                         types.SimpleNamespace(HAS_GLMNET=True))
-    monkeypatch.setitem(sys.modules, "loveslide.knockoff.solve",
+    monkeypatch.setitem(sys.modules, "slide_py.knockoff.solve",
                         types.SimpleNamespace(_get_sdp_solver=missing_dsdp))
     monkeypatch.setattr(benchmark, "_run_cell", lambda args, backend, delta, lam:
                         benchmark.TimingRecord(backend, delta, lam, 0.01, "success"))

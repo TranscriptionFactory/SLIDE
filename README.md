@@ -11,7 +11,7 @@ This repository holds two implementations that share one config format:
 | Component | What it is | Entry point |
 | --- | --- | --- |
 | `slide` (Rust, `crates/`) | Native pipeline with a terminal dashboard (TUI) and SLURM helpers. Recommended for production runs. | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
-| `loveslide` (Python, `src/loveslide`) | Python library with the same pipeline, plotting, and optional R backends via `rpy2`. | `loveslide run`, `loveslide.OptimizeSLIDE` |
+| `slide-py` (Python, `src/slide_py`) | Python library with the same pipeline, plotting, and optional R backends via `rpy2`. | `slide-py run`, `slide_py.OptimizeSLIDE` |
 
 The original R package is at <https://github.com/jishnu-lab/SLIDE>. Both
 implementations are tested against R reference outputs (`tests/fixtures/`).
@@ -104,16 +104,16 @@ R-faithful cvxpy solver instead.
 ### Run
 
 ```bash
-loveslide run --config config.yaml --out-path results/
+slide-py run --config config.yaml --out-path results/
 ```
 
 The YAML is a flat mapping of the keys in the parameter table below.
-Unlike `slide`, `loveslide run` resolves relative paths against the config
+Unlike `slide`, `slide-py run` resolves relative paths against the config
 file's directory. `--x-path`, `--y-path` and `--out-path` override the
 config. From Python:
 
 ```python
-from loveslide import OptimizeSLIDE
+from slide_py import OptimizeSLIDE
 
 params = {
     "x_path": "example/HIV+cytokines_X.csv",
@@ -152,7 +152,7 @@ OptimizeSLIDE(params).run_pipeline(verbose=True, n_workers=1)
 
 ```
 crates/            Rust workspace (slide-cli = `slide` binary; slide-core, -love, -knockoff, -glmnet, -sdp, ...)
-src/loveslide/     Python package
+src/slide_py/     Python package
 tests/             Python tests, shared R-reference fixtures, quick-start config
 example/           HIV + cytokines example dataset and notebook
 benchmarks/        R/Rust/Python comparison and timing scripts

@@ -112,12 +112,12 @@ if (identical(slide_source, "vendor")) {
 
 # Preserve a stock comparison route without editing installed package files.
 # Opt in with SLIDE_R_OPTIMIZE=1; copied runners then also need
-# src/loveslide/slide_r/knockoffPerformance.R alongside benchmarks/.
+# src/slide_py/slide_r/knockoffPerformance.R alongside benchmarks/.
 optimize_interactions <- Sys.getenv("SLIDE_R_OPTIMIZE", unset = "0")
 if (!optimize_interactions %in% c("0", "1")) stop("SLIDE_R_OPTIMIZE must be 0 or 1")
 if (identical(optimize_interactions, "1")) {
   performance_env <- new.env(parent = globalenv())
-  sys.source(file.path(dirname(script_dir), "src", "loveslide", "slide_r",
+  sys.source(file.path(dirname(script_dir), "src", "slide_py", "slide_r",
                        "knockoffPerformance.R"), envir = performance_env)
   optimized_env <- performance_env$withPreparedInteractionKnockoffs(slide_env)
   optimize_slide <- optimized_env$optimizeSLIDE

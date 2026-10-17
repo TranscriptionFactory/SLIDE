@@ -180,8 +180,8 @@ def _single_knockoff_iteration_python(
     This function is designed to be called in parallel via joblib.
     """
     # Import inside function for parallel execution (pickle serialization)
-    from loveslide.knockoff.filter import knockoff_threshold
-    from loveslide.knockoff.create import create_gaussian
+    from slide_py.knockoff.filter import knockoff_threshold
+    from slide_py.knockoff.create import create_gaussian
 
     # Generate knockoffs using cached SDP solution
     Xk = create_gaussian(z, mu, Sigma, method=method, diag_s=diag_s)
@@ -908,7 +908,7 @@ class Knockoffs:
 
         Examples
         --------
-        >>> from loveslide import Knockoffs
+        >>> from slide_py import Knockoffs
         >>> import numpy as np
         >>> Z = np.random.randn(100, 500)
         >>> y = np.random.randn(100)

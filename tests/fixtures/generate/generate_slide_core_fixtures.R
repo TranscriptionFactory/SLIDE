@@ -8,7 +8,7 @@ suppressPackageStartupMessages({
 script_arg <- commandArgs(trailingOnly = FALSE)
 script_path <- sub("^--file=", "", script_arg[grep("^--file=", script_arg)])
 repo_root <- dirname(dirname(dirname(dirname(normalizePath(script_path)))))
-slide_r_dir <- file.path(repo_root, "src", "loveslide", "slide_r")
+slide_r_dir <- file.path(repo_root, "src", "slide_py", "slide_r")
 for (path in list.files(slide_r_dir, pattern = "\\.[Rr]$", full.names = TRUE)) {
   source(path)
 }

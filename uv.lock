@@ -3637,7 +3637,7 @@ wheels = [
 ]
 
 [[package]]
-name = "loveslide"
+name = "slide-py"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
@@ -3794,7 +3794,7 @@ requires-dist = [
     { name = "h5py", marker = "extra == 'genomics'", specifier = ">=3.8.0" },
     { name = "ipykernel", marker = "extra == 'web'" },
     { name = "joblib", specifier = ">=0.14.1" },
-    { name = "loveslide", extras = ["viz", "single-cell", "deep-learning", "genomics", "spatial", "graph-extended", "optimization", "web", "progress-extended", "r"], marker = "extra == 'full'" },
+    { name = "slide-py", extras = ["viz", "single-cell", "deep-learning", "genomics", "spatial", "graph-extended", "optimization", "web", "progress-extended", "r"], marker = "extra == 'full'" },
     { name = "magic-impute", marker = "extra == 'single-cell'" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "networkx", specifier = ">=3.0.0" },

@@ -18,7 +18,7 @@ The Fortran extension requires:
 module load gcc/12.2.0
 
 # Activate conda environment with meson/ninja
-conda activate loveslide_env  # or any env with meson, ninja, numpy
+conda activate slide-py_env  # or any env with meson, ninja, numpy
 
 # Build the extension
 cd knockoff/_vendor/glmnet

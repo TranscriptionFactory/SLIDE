@@ -1,7 +1,7 @@
 import numpy as np
 
-from loveslide.knockoff._vendor.glmnet import linear
-from loveslide.knockoff.stats.glmnet import (
+from slide_py.knockoff._vendor.glmnet import linear
+from slide_py.knockoff.stats.glmnet import (
     _lasso_max_lambda_glmnet, _r_scale, stat_glmnet_lambdasmax,
 )
 

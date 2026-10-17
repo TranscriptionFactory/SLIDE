@@ -1,10 +1,10 @@
-"""Command-line entry point: ``loveslide run --config params.yaml``.
+"""Command-line entry point: ``slide-py run --config params.yaml``.
 
 The YAML file is a flat mapping of the ``input_params`` keys that
-:class:`loveslide.OptimizeSLIDE` accepts (``x_path``, ``y_path``, ``out_path``,
+:class:`slide_py.OptimizeSLIDE` accepts (``x_path``, ``y_path``, ``out_path``,
 ``delta``, ``lambda``, ``spec``, ``fdr``, ``niter``, ``knockoff_backend``,
 ``sdp_solver``, ...). Keys left out take the defaults set by
-:func:`loveslide.tools.init_data`.
+:func:`slide_py.tools.init_data`.
 """
 
 import argparse
@@ -75,7 +75,7 @@ def run(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="loveslide",
+        prog="slide-py",
         description="Run SLIDE (LOVE latent factors + knockoff selection).",
     )
     parser.add_argument(

@@ -13,7 +13,7 @@ omni-SLIDE is a Rust rewrite of the SLIDE (Statistical Latent Inference for Disc
 3. **Interaction detection** — tests pairs of selected factors for multiplicative interactions
 4. **Scoring** — reports AUC (binary y) or Pearson correlation (continuous y)
 
-The Python package (`src/loveslide/`) implements the same pipeline in Python, with optional R backends via rpy2. The Rust code in `crates/` is the primary implementation.
+The Python package (`src/slide_py/`) implements the same pipeline in Python, with optional R backends via rpy2. The Rust code in `crates/` is the primary implementation.
 
 ---
 
@@ -32,7 +32,7 @@ crates/                        # Rust workspace — the real implementation
 ├── slide-cv/                  #   Final-model cross-validation
 └── slide-score/               #   AUC / correlation scoring
 
-src/loveslide/                 # Python package (`loveslide run`, OptimizeSLIDE)
+src/slide_py/                  # Python package (`slide-py run`, OptimizeSLIDE)
 ├── plotting.py                #   Visualization (matplotlib, networkx)
 ├── slide.py                   #   SLIDE/OptimizeSLIDE classes
 ├── love.py                    #   LOVE via rpy2
@@ -70,8 +70,8 @@ target/release/slide
 pixi install -e dev
 
 # Option B — conda:
-conda create -n loveslide_env python=3.11 r-base
-conda activate loveslide_env
+conda create -n slide-py_env python=3.11 r-base
+conda activate slide-py_env
 pip install -e ".[dev,r,viz]"
 ```
 
@@ -156,7 +156,7 @@ Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` for runs, `PgDn`/`PgUp` for factors,
 
 ### Visualizations that need work
 
-The TUI has solid coverage, but the Python plotting layer (`src/loveslide/plotting.py`) is thin and some TUI views could be improved. Here's what exists and what's missing:
+The TUI has solid coverage, but the Python plotting layer (`src/slide_py/plotting.py`) is thin and some TUI views could be improved. Here's what exists and what's missing:
 
 **TUI visualizations (Rust, in `tui.rs`):**
 

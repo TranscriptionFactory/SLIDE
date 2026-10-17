@@ -1,6 +1,6 @@
 # Run from the repository root with TMPDIR pointing into project .tmpfiles/.
 stopifnot(nzchar(Sys.getenv("TMPDIR")), !startsWith(normalizePath(tempdir()), "/tmp/"))
-source("src/loveslide/slide_r/knockoffPerformance.R")
+source("src/slide_py/slide_r/knockoffPerformance.R")
 library(foreach)
 sparse_path <- sparseLambdaPath()
 
@@ -102,7 +102,7 @@ tryCatch({
 })
 
 helper_env <- new.env(parent = globalenv())
-sys.source("src/loveslide/slide_r/knockoffPerformance.R", envir = helper_env)
+sys.source("src/slide_py/slide_r/knockoffPerformance.R", envir = helper_env)
 runner <- helper_env$withPreparedInteractionKnockoffs()
 interaction_y <- 10 * X[, 1] * X[, 2] + 8 * X[, 1] * X[, 3] + y / 10
 interaction_X <- X

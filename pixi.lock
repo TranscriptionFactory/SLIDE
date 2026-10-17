@@ -2274,7 +2274,7 @@ packages:
   size: 63629
   timestamp: 1774072609062
 - pypi: ./
-  name: loveslide
+  name: slide-py
   version: 1.0.0
   sha256: 407b5625320171a3072ef3385694ede3ab31e583a04e47a826498fa63e560763
   requires_dist:
@@ -2319,7 +2319,7 @@ packages:
   - pytest>=7.0.0 ; extra == 'dev'
   - black>=23.0.0 ; extra == 'dev'
   - ruff>=0.1.0 ; extra == 'dev'
-  - loveslide[viz,single-cell,deep-learning,genomics,spatial,graph-extended,optimization,web,progress-extended,r] ; extra == 'full'
+  - slide-py[viz,single-cell,deep-learning,genomics,spatial,graph-extended,optimization,web,progress-extended,r] ; extra == 'full'
   requires_python: '>=3.9'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/make-4.4.1-hb9d3cd8_2.conda
   sha256: d652c7bd4d3b6f82b0f6d063b0d8df6f54cc47531092d7ff008e780f3261bdda

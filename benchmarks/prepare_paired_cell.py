@@ -10,7 +10,7 @@ import json
 import math
 from pathlib import Path
 
-from loveslide.tools import calc_default_fsize
+from slide_py.tools import calc_default_fsize
 
 
 def sha256(path: Path) -> str:

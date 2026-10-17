@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Renamed the Python distribution `loveslide` to `slide-py` and the import
+  package `loveslide` to `slide_py`. The CLI is now `slide-py`. There is no
+  compatibility alias; update `import loveslide` and any `loveslide ...`
+  invocations.
+
 ## 1.0.0 — 2026-10-13
 
 First production release of the Rust `slide` CLI/TUI and the Python

@@ -1,5 +1,5 @@
 """
-End-to-end pipeline tests for loveslide v1.0.0.
+End-to-end pipeline tests for slide-py v1.0.0.
 
 Runs the full SLIDE pipeline on real HIV cytokine data and compares
 outputs against reference results from the build check (20260122_135613).
@@ -65,7 +65,7 @@ def _nonzero_rows(A):
 def _run_pipeline(out_dir, knockoff_backend, x_path, y_path,
                   y_factor=True, **kwargs):
     """Run OptimizeSLIDE.run_pipeline with given backend, return (slider, result_dir)."""
-    from loveslide import OptimizeSLIDE
+    from slide_py import OptimizeSLIDE
 
     input_params = {
         "x_path": str(x_path),
@@ -138,7 +138,7 @@ def love_result_on_hiv(hiv_data):
 
     Uses pure_homo=True, delta=[0.1] to match the build check config.
     """
-    from loveslide import call_love
+    from slide_py import call_love
 
     X, y = hiv_data
     result = call_love(
@@ -174,17 +174,17 @@ def ssc_data():
 # 1. Package Install Tests
 # ===========================================================================
 class TestPackageInstall:
-    """Validate that loveslide installs correctly and exports are importable."""
+    """Validate that slide-py installs correctly and exports are importable."""
 
     def test_import_version(self):
-        import loveslide
-        assert loveslide.__version__ == "1.0.0"
+        import slide_py
+        assert slide_py.__version__ == "1.0.0"
 
     def test_all_exports(self):
-        import loveslide
+        import slide_py
 
-        for name in loveslide.__all__:
-            obj = getattr(loveslide, name, None)
+        for name in slide_py.__all__:
+            obj = getattr(slide_py, name, None)
             assert obj is not None, f"{name} listed in __all__ but not importable"
 
 
@@ -254,7 +254,7 @@ class TestKnockoffPipeline:
     @pytest.mark.slow
     def test_knockoff_python_backend(self, hiv_data, love_result_on_hiv):
         """Run select_short_freq with python backend on latent factors."""
-        from loveslide import Knockoffs
+        from slide_py import Knockoffs
 
         X, y = hiv_data
         A = love_result_on_hiv["A"]
@@ -280,7 +280,7 @@ class TestKnockoffPipeline:
 
     def test_knockoff_slide_voting(self, hiv_data, love_result_on_hiv):
         """Run select_short_freq_slide and verify VotingResult."""
-        from loveslide import Knockoffs, VotingResult
+        from slide_py import Knockoffs, VotingResult
 
         X, y = hiv_data
         A = love_result_on_hiv["A"]
@@ -307,7 +307,7 @@ class TestKnockoffPipeline:
 
     def test_knockoff_reproducibility(self, hiv_data, love_result_on_hiv):
         """Same base_seed should produce identical selections."""
-        from loveslide import Knockoffs
+        from slide_py import Knockoffs
 
         X, y = hiv_data
         A = love_result_on_hiv["A"]
@@ -324,7 +324,7 @@ class TestKnockoffPipeline:
 
     def test_invalid_backend_raises(self, hiv_data, love_result_on_hiv):
         """Invalid backend name should raise ValueError."""
-        from loveslide import Knockoffs
+        from slide_py import Knockoffs
 
         X, y = hiv_data
         A = love_result_on_hiv["A"]
@@ -424,7 +424,7 @@ class TestEstimatorScoring:
 
     def test_estimator_basic(self, hiv_data, love_result_on_hiv):
         """Estimator.get_aucs should return array of AUC scores."""
-        from loveslide import Estimator
+        from slide_py import Estimator
 
         X, y = hiv_data
         A = love_result_on_hiv["A"]
@@ -454,13 +454,13 @@ class TestDSDPFallback:
 
     def test_sdp_solver_detection(self):
         """The default SDP solver is DSDP, with no implicit cvxpy fallback."""
-        from loveslide.knockoff.solve import _get_sdp_solver
+        from slide_py.knockoff.solve import _get_sdp_solver
 
         assert _get_sdp_solver() == "dsdp"
 
     def test_sdp_solve_produces_valid_diag(self):
         """create_solve_sdp should produce valid diag_s for a small matrix."""
-        from loveslide.knockoff.solve import create_solve_sdp
+        from slide_py.knockoff.solve import create_solve_sdp
 
         np.random.seed(42)
         p = 10
@@ -590,7 +590,7 @@ class TestBackendComparison:
                                        r_knockoffs_hiv_result,
                                        full_r_hiv_result):
         """All backends should produce AUC > 0.5 (better than random)."""
-        from loveslide import Estimator
+        from slide_py import Estimator
 
         for label, (_, out_dir) in [
             ("Python", python_hiv_result),
@@ -630,7 +630,7 @@ class TestSScPipeline:
 
     def test_ssc_love_runs(self, ssc_data):
         """call_love on SSc data produces valid K and A."""
-        from loveslide import call_love
+        from slide_py import call_love
 
         X, y = ssc_data
         result = call_love(
@@ -765,7 +765,7 @@ class TestSScBackendComparison:
                                            ssc_r_knockoffs_result,
                                            ssc_full_r_result):
         """Print full comparison table across backends."""
-        from loveslide import Estimator
+        from slide_py import Estimator
 
         y = pd.read_csv(_SSC_Y, index_col=0).iloc[:, 0]
 

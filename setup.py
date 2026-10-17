@@ -1,5 +1,5 @@
 """
-Setup script for loveslide with optional C extension.
+Setup script for slide-py with optional C extension.
 
 The dsdp_solver C extension provides the DSDP SDP solver that knockoff
 construction requires by default (it matches R's Rdsdp). If compilation fails
@@ -157,7 +157,7 @@ def get_dsdp_solverension():
     Create the pydsdp5 Extension object.
     """
     # Get source files
-    base_dir = 'src/loveslide/dsdp_solver'
+    base_dir = 'src/slide_py/dsdp_solver'
     c_dir = os.path.join(base_dir, 'dsdp', 'C')
 
     sources = [os.path.join(c_dir, 'pyreadsdpa.c')]
@@ -185,7 +185,7 @@ def get_dsdp_solverension():
         extra_compile_args.extend(['-Wno-unused-function', '-Wno-maybe-uninitialized'])
 
     return Extension(
-        'loveslide.dsdp_solver.pydsdp5',
+        'slide_py.dsdp_solver.pydsdp5',
         sources=sources,
         include_dirs=include_dirs,
         library_dirs=library_dirs,
