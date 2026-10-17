@@ -1,0 +1,16 @@
+# Bundled LOVE (Python) and SLIDE R scripts
+recursive-include src/slide_py/love_python *
+recursive-include src/slide_py/slide_r *
+
+# C extension source files for dsdp_solver (DSDP SDP solver)
+recursive-include src/slide_py/dsdp_solver/dsdp/C *.c *.h
+include src/slide_py/dsdp_solver/README
+include src/slide_py/dsdp_solver/LICENSE
+
+# Native glmnet sources, never checkout-specific compiled artifacts.
+recursive-include src/slide_py/knockoff/_vendor/glmnet *.py *.pyf *.f90
+include src/slide_py/knockoff/_vendor/glmnet/meson.build
+include src/slide_py/knockoff/_vendor/glmnet/LICENSE
+global-exclude *.so *.pyd *.pyc
+prune src/slide_py/knockoff/_vendor/glmnet/builddir
+global-exclude __pycache__

@@ -1,0 +1,99 @@
+[workspace]
+name = "slide-py"
+version = "1.0.0"
+description = "Python implementation of SLIDE (LOVE + Knockoffs)"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# ─── Default feature: core scientific deps ────────────────────────────────────
+[dependencies]
+python = "3.11.*"
+numpy = ">=1.20"
+scipy = ">=1.7"
+scikit-learn = ">=1.0"
+pandas = ">=2.0"
+joblib = ">=0.14.1"
+statsmodels = ">=0.14"
+cvxpy = ">=1.3"
+tqdm = ">=4.60"
+networkx = ">=3.0"
+matplotlib = ">=3.7"
+seaborn = ">=0.12"
+pyyaml = ">=6.0"
+r-base = ">=4.5.3,<4.6"
+meson = ">=1.11.1,<2"
+ninja = ">=1.13.2,<2"
+# Fortran compiler toolchain for building vendored glmnet (same Fortran code as R's glmnet)
+gfortran = "*"
+gcc = "*"
+
+[pypi-dependencies]
+slide-py = { path = ".", editable = true }
+pqdm = "*"
+easydict = "*"
+rpy2 = ">=3.6.7"
+
+# ─── Feature: R integration ──────────────────────────────────────────────────
+[feature.r.dependencies]
+r-base = ">=4.4"
+rpy2 = ">=3.6.7"
+r-knockoff = ">=0.3.6,<0.4"
+r-linprog = "*"
+r-lpsolve = "*"
+r-mass = "*"
+r-glmnet = ">=5.0,<6"
+r-remotes = ">=2.5.0,<3"
+r-igraph = ">=2.3.3,<3"
+r-ggraph = ">=2.2.2,<3"
+r-qgraph = ">=1.10.1,<2"
+r-ggpubr = ">=1.0.0,<2"
+r-dplyr = ">=1.2.1,<2"
+r-ggplot2 = ">=4.0.3,<5"
+
+# ─── Feature: dev tools ──────────────────────────────────────────────────────
+[feature.dev.dependencies]
+pytest = ">=7.0"
+ruff = ">=0.1"
+
+[feature.dev.pypi-dependencies]
+black = ">=23.0"
+
+# ─── Feature: viz extras ─────────────────────────────────────────────────────
+[feature.viz.pypi-dependencies]
+adjusttext = ">=1.0"
+altair = ">=5.0"
+wordcloud = "*"
+
+# ─── Environments ────────────────────────────────────────────────────────────
+[environments]
+default = { features = [], solve-group = "default" }
+dev = { features = ["r", "dev", "viz"], solve-group = "default" }
+
+# ─── Activation ──────────────────────────────────────────────────────────────
+# Prevent stale user-site packages from shadowing pixi's environment
+# RPY2_CFFI_MODE=ABI: use rpy2's stable ABI mode (avoids cffi def_extern build issues)
+[activation]
+env = { PYTHONNOUSERSITE = "1", RPY2_CFFI_MODE = "ABI" }
+
+# ─── Tasks ───────────────────────────────────────────────────────────────────
+[tasks]
+test = "pytest -c tests/pytest.ini tests/tests -m \"not slow\""
+lint = "ruff check src/"
+fmt = "ruff format src/"
+check = "python -c \"import slide_py; print('slide-py', slide_py.__version__ if hasattr(slide_py, '__version__') else 'OK')\""
+# Build the vendored Fortran glmnet extension (same glmnet5.f90 as R's glmnet package).
+# This provides ~5-10x speedup over sklearn fallback and identical tie-breaking to R.
+# If this fails, the package still works (falls back to sklearn's lasso_path).
+build-glmnet = """python -c "
+import subprocess, sys, os, shutil
+src = 'src/slide_py/knockoff/_vendor/glmnet'
+bdir = os.path.join(src, 'builddir')
+if os.path.exists(bdir): shutil.rmtree(bdir)
+subprocess.check_call(['meson', 'setup', bdir, src])
+subprocess.check_call(['ninja', '-C', bdir])
+import glob
+for so in glob.glob(os.path.join(bdir, '_glmnet*.so')) + glob.glob(os.path.join(bdir, '_glmnet*.pyd')):
+    shutil.copy2(so, src)
+    print(f'Installed: {os.path.basename(so)}')
+"
+"""

@@ -1,0 +1,73 @@
+## Rust mirror tol 1e-4 (production)
+swap False rho 0.9999999999200588 c_left-c_right -2.9771330890241856e-05
+rust entry idx [20, 125] lam [5.36193 5.28103 5.20136 5.12289 5.0456  4.96948]
+  rust li=19 cand   col=20 grad=4.0066993053 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  rust li=19 cand   col=42 grad=4.0055572560 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  rust li=20 cand   col=20 grad=3.9666176911 lam=3.9562135668 beta 0.000e+00->1.086e-02
+  rust li=20 cand   col=42 grad=3.9552442460 lam=3.9562135668 beta 0.000e+00->0.000e+00
+  rust li=21 active col=20 grad=3.9199273899 lam=3.8965268026 beta 1.086e-02->2.442e-02
+  rust li=21 cand   col=20 grad=3.9384158642 lam=3.8965268026 beta 2.442e-02->4.371e-02
+  rust li=21 cand   col=42 grad=3.8951522218 lam=3.8965268026 beta 0.000e+00->0.000e+00
+  beta at entry+0..3: [[0.0, 0.01085648, 0.04371033, 0.08291761, 0.12324656], [0.0, 0.0, 0.0, 0.0, 0.0]]
+glmnet entry idx [20, 20] lam [5.36193 5.28103 5.20136 5.12289 5.0456  4.96948]
+  glmnet li=19 full   col=20 grad=4.0090112058 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  glmnet li=19 full   col=42 grad=4.0090379644 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  glmnet li=20 full   col=20 grad=3.9688928859 lam=3.9562135668 beta 0.000e+00->1.323e-02
+  glmnet li=20 full   col=42 grad=3.9565213331 lam=3.9562135668 beta 0.000e+00->3.211e-04
+  glmnet li=20 full   col=20 grad=3.9797791643 lam=3.9562135668 beta 2.341e-02->2.459e-02
+  glmnet li=20 full   col=42 grad=3.9568503673 lam=3.9562135668 beta 3.942e-04->6.645e-04
+  glmnet li=21 full   col=20 grad=3.9597745277 lam=3.8965268026 beta 6.498e-02->6.600e-02
+  glmnet li=21 full   col=42 grad=3.8975271541 lam=3.8965268026 beta 8.080e-04->1.044e-03
+  beta at entry+0..3: [[0.0, 0.02459019, 0.06599763, 0.10668164, 0.14672402], [0.0, 0.00066449, 0.00104385, 0.00141046, 0.0017714]]
+## Rust mirror tol 1e-7, with glmnet naive mirror (inner-loop lines kept)
+swap False rho 0.9999999999200588 c_left-c_right -2.9771330890241856e-05
+rust entry idx [20, 107] lam [5.36193 5.28103 5.20136 5.12289 5.0456  4.96948]
+  rust li=19 cand   col=20 grad=4.0090942396 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  rust li=19 cand   col=42 grad=4.0090561392 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  rust li=20 cand   col=20 grad=3.9689746891 lam=3.9562135668 beta 0.000e+00->1.332e-02
+  rust li=20 cand   col=42 grad=3.9565480128 lam=3.9562135668 beta 0.000e+00->3.490e-04
+  rust li=20 active col=20 grad=3.9746867570 lam=3.9562135668 beta 1.332e-02->1.928e-02
+  rust li=20 active col=42 grad=3.9561952418 lam=3.9562135668 beta 3.490e-04->0.000e+00
+  rust li=20 active col=20 grad=3.9780260711 lam=3.9562135668 beta 1.928e-02->2.276e-02
+  rust li=20 active col=42 grad=3.9560033662 lam=3.9562135668 beta 0.000e+00->0.000e+00
+  rust li=20 active col=20 grad=3.9797400454 lam=3.9562135668 beta 2.276e-02->2.455e-02
+  rust li=20 active col=42 grad=3.9560967618 lam=3.9562135668 beta 0.000e+00->0.000e+00
+  rust li=20 cand   col=20 grad=3.9805932605 lam=3.9562135668 beta 2.455e-02->2.544e-02
+  rust li=20 cand   col=42 grad=3.9561640624 lam=3.9562135668 beta 0.000e+00->0.000e+00
+  rust li=21 active col=20 grad=3.9272057688 lam=3.8965268026 beta 2.544e-02->3.201e-02
+  rust li=21 active col=20 grad=3.9419964579 lam=3.8965268026 beta 3.201e-02->4.745e-02
+  rust li=21 active col=20 grad=3.9514256884 lam=3.8965268026 beta 4.745e-02->5.729e-02
+  rust li=21 active col=20 grad=3.9565821826 lam=3.8965268026 beta 5.729e-02->6.267e-02
+  rust li=21 active col=20 grad=3.9592070394 lam=3.8965268026 beta 6.267e-02->6.541e-02
+  rust li=21 active col=20 grad=3.9604810378 lam=3.8965268026 beta 6.541e-02->6.673e-02
+  rust li=21 cand   col=20 grad=3.9610774548 lam=3.8965268026 beta 6.673e-02->6.736e-02
+  rust li=21 cand   col=42 grad=3.8964966698 lam=3.8965268026 beta 0.000e+00->0.000e+00
+  beta at entry+0..3: [[0.0, 0.02543968, 0.0673572, 0.10837666, 0.14877633], [0.0, 0.0, 0.0, 0.0, 0.0]]
+glmnet entry idx [20, 20] lam [5.36193 5.28103 5.20136 5.12289 5.0456  4.96948]
+  glmnet li=19 full   col=20 grad=4.0090112058 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  glmnet li=19 full   col=42 grad=4.0090379644 lam=4.0168146092 beta 0.000e+00->0.000e+00
+  glmnet li=20 full   col=20 grad=3.9688928859 lam=3.9562135668 beta 0.000e+00->1.323e-02
+  glmnet li=20 full   col=42 grad=3.9565213331 lam=3.9562135668 beta 0.000e+00->3.211e-04
+  glmnet li=20 inner  col=20 grad=3.9738740239 lam=3.9562135668 beta 1.323e-02->1.843e-02
+  glmnet li=20 inner  col=42 grad=3.9565446568 lam=3.9562135668 beta 3.211e-04->3.455e-04
+  glmnet li=20 inner  col=20 grad=3.9768747806 lam=3.9562135668 beta 1.843e-02->2.156e-02
+  glmnet li=20 inner  col=42 grad=3.9565679845 lam=3.9562135668 beta 3.455e-04->3.698e-04
+  glmnet li=20 inner  col=20 grad=3.9786445394 lam=3.9562135668 beta 2.156e-02->2.341e-02
+  glmnet li=20 inner  col=42 grad=3.9565913162 lam=3.9562135668 beta 3.698e-04->3.942e-04
+  glmnet li=20 full   col=20 grad=3.9797791643 lam=3.9562135668 beta 2.341e-02->2.459e-02
+  glmnet li=20 full   col=42 grad=3.9568503673 lam=3.9562135668 beta 3.942e-04->6.645e-04
+  glmnet li=21 inner  col=20 grad=3.9295389845 lam=3.8965268026 beta 2.459e-02->3.445e-02
+  glmnet li=21 inner  col=42 grad=3.8971864902 lam=3.8965268026 beta 6.645e-04->6.884e-04
+  glmnet li=21 inner  col=20 grad=3.9418452914 lam=3.8965268026 beta 3.445e-02->4.729e-02
+  glmnet li=21 inner  col=42 grad=3.8972093937 lam=3.8965268026 beta 6.884e-04->7.123e-04
+  glmnet li=21 inner  col=20 grad=3.9498743607 lam=3.8965268026 beta 4.729e-02->5.567e-02
+  glmnet li=21 inner  col=42 grad=3.8972323075 lam=3.8965268026 beta 7.123e-04->7.362e-04
+  glmnet li=21 inner  col=20 grad=3.9545330567 lam=3.8965268026 beta 5.567e-02->6.053e-02
+  glmnet li=21 inner  col=42 grad=3.8972552291 lam=3.8965268026 beta 7.362e-04->7.601e-04
+  glmnet li=21 inner  col=20 grad=3.9572497708 lam=3.8965268026 beta 6.053e-02->6.336e-02
+  glmnet li=21 inner  col=42 grad=3.8972781571 lam=3.8965268026 beta 7.601e-04->7.840e-04
+  glmnet li=21 inner  col=20 grad=3.9587965053 lam=3.8965268026 beta 6.336e-02->6.498e-02
+  glmnet li=21 inner  col=42 grad=3.8973010892 lam=3.8965268026 beta 7.840e-04->8.080e-04
+  glmnet li=21 full   col=20 grad=3.9597745277 lam=3.8965268026 beta 6.498e-02->6.600e-02
+  glmnet li=21 full   col=42 grad=3.8975271541 lam=3.8965268026 beta 8.080e-04->1.044e-03
+  beta at entry+0..3: [[0.0, 0.02459019, 0.06599763, 0.10668164, 0.14672402], [0.0, 0.00066449, 0.00104385, 0.00141046, 0.0017714]]

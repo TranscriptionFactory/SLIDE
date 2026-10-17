@@ -1,0 +1,57 @@
+{
+  "timestamp": "2026-10-16T14:41:26.703841+00:00",
+  "enclosing_git_sha": "5e738846bb65295c91e7c5b734e88e1f709e56e2",
+  "hostname": "htc-n77.crc.pitt.edu",
+  "cpu_count": 128,
+  "threads": 4,
+  "blas_threads": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1"
+  },
+  "python": "3.11.15 | packaged by conda-forge | (main, Mar  5 2026, 16:45:40) [GCC 14.3.0]",
+  "platform": "linux",
+  "seed": 5000,
+  "niter": 500,
+  "spec": 0.1,
+  "rust_fdr": 0.1,
+  "python_r_fdr": 0.1,
+  "slide_selection": true,
+  "configuration": "parity",
+  "source_revision": "5e738846bb65295c91e7c5b734e88e1f709e56e2",
+  "source_path": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/source",
+  "rust_binary": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/bin/slide",
+  "rust_nlambda": 500,
+  "python_r_gaussian_settings": {
+    "nlambda": 500,
+    "tolerance": 1e-07,
+    "max_iter": 100000,
+    "lambda_min_ratio": 0.0005
+  },
+  "rust_native_defaults": {
+    "tolerance": 0.0001,
+    "max_iter": 1000,
+    "covariance_gate": "positive definite and condition number <= 100000",
+    "lambda_min_ratio": "1e-4 if n > 2p else 1/2000"
+  },
+  "inherited_environment": {
+    "SLIDE_KNOCKOFF_MATCH_R_COV": "1",
+    "SLIDE_R_OPTIMIZE": "1",
+    "SLIDE_KNOCKOFF_MAX_ITER": "100000",
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA": "1",
+    "SLIDE_R_SOURCE": "installed",
+    "SLIDE_OPT_ITER": "1",
+    "SLIDE_KNOCKOFF_TOL": "1e-7"
+  },
+  "rust_solver_environment": {
+    "SLIDE_KNOCKOFF_TOL": "1e-7",
+    "SLIDE_KNOCKOFF_MAX_ITER": "100000",
+    "SLIDE_KNOCKOFF_MATCH_R_COV": "1",
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA": "1"
+  },
+  "workers_by_backend": {
+    "rust": 4
+  },
+  "timing_boundary": "Python excludes imports; Rust/R include subprocess startup",
+  "paired_random_draws": false
+}
