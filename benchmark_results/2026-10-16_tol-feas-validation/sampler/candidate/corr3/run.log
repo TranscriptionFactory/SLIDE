@@ -1,0 +1,9 @@
+
+running 1 test
+test tests::emit_diag_s ... Sigma=3x3 -> diag_s (len 3, min 3.201311e-1, max 9.999995e-1)
+shared_s unregularized Cholesky succeeds: true
+native unregularized Cholesky succeeds: true
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.03s
+

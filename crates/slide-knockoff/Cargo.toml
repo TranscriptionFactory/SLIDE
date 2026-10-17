@@ -1,0 +1,28 @@
+[package]
+name = "slide-knockoff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "Knockoff filter variable selection for SLIDE"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+nalgebra.workspace = true
+ndarray.workspace = true
+rand.workspace = true
+rand_distr = "0.4"
+rayon.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+slide-glmnet = { version = "1.0.0", path = "../slide-glmnet" }
+slide-sdp = { version = "1.0.0", path = "../slide-sdp" }
+slide-types = { version = "1.0.0", path = "../slide-types" }

@@ -1,0 +1,19 @@
+# Quick test config: small grid + few iterations for visible TUI progress
+x_path: example/HIV+cytokines_X.csv
+y_path: example/HIV+cytokines_y.csv
+
+delta:
+  - 0.05
+  - 0.1
+  - 0.15
+lambda:
+  - 0.1
+  - 0.5
+
+spec: 0.1
+fdr: 0.1
+SLIDE_iter: 100
+thresh_fdr: 0.1
+y_factor: true
+do_interacts: true
+pure_homo: true

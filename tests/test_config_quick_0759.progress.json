@@ -1,0 +1,7 @@
+{
+  "grid_index": 4,
+  "total_grid": 6,
+  "delta": 0.15,
+  "lambda": 0.1,
+  "phase": "Scoring"
+}

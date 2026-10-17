@@ -1,0 +1,34 @@
+environment overrides change knockoff results: SLIDE_KNOCKOFF_MATCH_R_COV=1, SLIDE_KNOCKOFF_MATCH_R_LAMBDA=1, SLIDE_KNOCKOFF_MAX_ITER=100000, SLIDE_KNOCKOFF_TOL=1e-7; recorded as config.env_overrides in the checkpoint
+Loading feature matrix from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/X.csv
+Loading response vector from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/Y.csv
+Starting SLIDE optimization: 1 delta(s) x 1 lambda(s) = 1 evaluations
+Checkpoint: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_2000/rust/0.01_0.1_out/checkpoint.json
+SDP_BENCH status=Solved iterations=22 r_prim=5.99271704654388002e-9 r_dual=1.57130325489008090e-10 gap=5.30900102047038303e-7 solve_seconds=5.35041799999999984e-2
+SDP_BENCH status=Solved iterations=14 r_prim=5.51656351985814203e-9 r_dual=7.71066689662858393e-10 gap=5.75932856183847264e-7 solve_seconds=1.80798440000000012e-2
+SDP_BENCH status=Solved iterations=17 r_prim=6.17806765698991215e-10 r_dual=2.72824400021334069e-11 gap=5.63925176555457597e-8 solve_seconds=2.29292879999999991e-2
+SDP_BENCH status=Solved iterations=13 r_prim=1.99482475277064954e-9 r_dual=7.67543061635831451e-11 gap=4.20961957514620622e-8 solve_seconds=1.78638430000000008e-2
+SDP_BENCH status=Solved iterations=20 r_prim=4.31909825239193291e-9 r_dual=4.56565020936030318e-11 gap=2.75843721281310295e-7 solve_seconds=3.04646600000000010e-2
+SDP_BENCH status=Solved iterations=15 r_prim=1.57850309267240921e-9 r_dual=1.00745696902440979e-10 gap=1.56706011944507395e-7 solve_seconds=1.90426840000000007e-2
+SDP_BENCH status=Solved iterations=15 r_prim=7.32169493830526642e-9 r_dual=5.08525203533701640e-10 gap=7.50412174899128814e-7 solve_seconds=1.83504630000000009e-2
+SDP_BENCH status=Solved iterations=13 r_prim=7.16486079839792182e-9 r_dual=2.70841749656870310e-9 gap=6.25834833067884233e-7 solve_seconds=7.19743099999999979e-3
+SDP_BENCH status=Solved iterations=5 r_prim=7.53611812364359135e-9 r_dual=8.74985698676807449e-9 gap=1.76521847450317182e-6 solve_seconds=2.53078930000000014e-2
+SDP_BENCH status=Solved iterations=5 r_prim=5.57916549508264172e-9 r_dual=7.98313700025280798e-9 gap=4.33834672719513037e-6 solve_seconds=1.85232789300000000e0
+SDP_BENCH status=Solved iterations=5 r_prim=4.99514731762489947e-9 r_dual=6.97014574664714235e-9 gap=3.74428989857733541e-6 solve_seconds=1.89827711100000007e0
+SDP_BENCH status=Solved iterations=5 r_prim=1.33927797766858529e-9 r_dual=1.66227368614209847e-9 gap=8.90475391202016908e-7 solve_seconds=1.88913441899999990e0
+SDP_BENCH status=Solved iterations=5 r_prim=1.63937676655312191e-9 r_dual=2.14522067983440577e-9 gap=1.14997024525109737e-6 solve_seconds=1.82548931399999992e0
+SDP_BENCH status=Solved iterations=5 r_prim=2.98335510968275499e-9 r_dual=3.99026978012669178e-9 gap=2.14150378496924532e-6 solve_seconds=1.77265189400000001e0
+SDP_BENCH status=Solved iterations=5 r_prim=3.37068708369666384e-9 r_dual=4.68251998578736418e-9 gap=2.48504885291822575e-6 solve_seconds=1.66059821599999990e0
+SDP_BENCH status=Solved iterations=9 r_prim=1.55684036497284831e-10 r_dual=1.17227499794643853e-10 gap=3.51907836204645719e-9 solve_seconds=2.31830000000000008e-4
+SDP_BENCH status=Solved iterations=5 r_prim=1.50426176547353137e-9 r_dual=1.88116779534770685e-9 gap=9.96392046204164217e-7 solve_seconds=1.65095760999999985e0
+SDP_BENCH status=Solved iterations=5 r_prim=2.28411836397854178e-9 r_dual=2.93137690377556179e-9 gap=1.55415345659548620e-6 solve_seconds=1.81087573499999999e0
+SDP_BENCH status=Solved iterations=5 r_prim=3.33507485986467561e-9 r_dual=4.41806317556247881e-9 gap=2.34418658351387421e-6 solve_seconds=1.66033980100000012e0
+SDP_BENCH status=Solved iterations=5 r_prim=5.47662602162064988e-9 r_dual=7.87230025656543165e-9 gap=4.13210922545204085e-6 solve_seconds=1.56316630199999995e0
+SDP_BENCH status=Solved iterations=9 r_prim=9.02000378637162891e-9 r_dual=4.75652458839174500e-9 gap=3.18387815223530879e-7 solve_seconds=4.10925999999999989e-4
+SDP_BENCH status=Solved iterations=5 r_prim=2.22863028147746203e-9 r_dual=2.99871321976271967e-9 gap=1.57179323423406458e-6 solve_seconds=1.57088028400000002e0
+SDP_BENCH status=Solved iterations=5 r_prim=1.68977697967179884e-9 r_dual=2.20104510177818443e-9 gap=1.15289753921388183e-6 solve_seconds=1.56011888000000010e0
+=== SLIDE Optimization Complete ===
+Best score:  0.979968
+Best delta:  0.01
+Best lambda: 0.1
+Selected LFs: 6 marginal, 13 interactions
+Checkpoint written to: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_2000/rust/0.01_0.1_out/checkpoint.json

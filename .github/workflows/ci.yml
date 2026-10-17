@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (build, test, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopenblas-dev liblapack-dev gfortran cmake clang libclang-dev libcairo2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --release --locked
+      - name: Test
+        run: cargo test --workspace --release --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  python:
+    name: Python (slide-py)
+    runs-on: ubuntu-latest
+    env:
+      TMPDIR: ${{ github.workspace }}/.tmpfiles/ci-python/temp
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create temporary directory
+        run: mkdir -p "$TMPDIR"
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopenblas-dev liblapack-dev gfortran
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build and install wheel
+        run: |
+          mkdir -p .tmpfiles/ci-python/{temp,dist}
+          export TMPDIR="$PWD/.tmpfiles/ci-python/temp"
+          python -m pip install --upgrade pip build
+          python -m build --outdir .tmpfiles/ci-python/dist
+          python -m pip install "$(echo .tmpfiles/ci-python/dist/*.whl)[dev]"
+      - name: Check installed artifact outside checkout
+        run: |
+          cd "$GITHUB_WORKSPACE/../"
+          python - <<'PYTHON'
+          from pathlib import Path
+          import os
+          import zipfile
+          import slide_py
+          from slide_py.dsdp_solver import pydsdp5
+          from slide_py.knockoff._vendor.glmnet import _glmnet, ElasticNet, LogitNet
+          from slide_py.love_python.love import LOVE
+          package = Path(slide_py.__file__).resolve().parent
+          assert not str(package).startswith(os.environ["GITHUB_WORKSPACE"] + "/")
+          assert (package / "slide_r" / "getLatentFactors.R").is_file()
+          assert pydsdp5.__file__.endswith(".so")
+          assert _glmnet.__file__.endswith(".so")
+          wheel = next((Path(os.environ["GITHUB_WORKSPACE"]) / ".tmpfiles/ci-python/dist").glob("*.whl"))
+          names = zipfile.ZipFile(wheel).namelist()
+          assert len([n for n in names if n.endswith((".so", ".pyd"))]) == 2
+          assert not any("__pycache__" in n or "/builddir/" in n for n in names)
+          PYTHON
+          slide-py --version
+      - name: Test
+        run: python -m pytest tests/tests -m "not slow and not requires_r and not requires_rust" -q
+      - name: CLI smoke test
+        run: slide-py --version

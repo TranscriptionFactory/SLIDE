@@ -1,0 +1,14 @@
+{
+  "dataset": "hiv_cytokines",
+  "delta": 0.1,
+  "lambda": 0.5,
+  "thresh_fdr": 0.2,
+  "fdr": 0.1,
+  "spec": 0.2,
+  "niter": 20,
+  "do_interacts": false,
+  "knockoff_method": "equi",
+  "knockoff_offset": 0,
+  "statistic": "stat.glmnet_lambdasmax",
+  "response_type": "binary"
+}

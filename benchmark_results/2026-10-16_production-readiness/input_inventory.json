@@ -1,0 +1,16 @@
+{
+  "ssc": {
+    "n": 24,
+    "p": 804,
+    "response_unique": 18,
+    "sample_ids_match": false,
+    "pairing": "unchanged historical row order; biological pairing unverified"
+  },
+  "cd4": {
+    "n": 2482,
+    "p": 1776,
+    "response_unique": 3,
+    "sample_ids_match": true,
+    "pairing": "identical sample IDs and row order"
+  }
+}

@@ -1,0 +1,22 @@
+--- a/crates/slide-sdp/src/lib.rs
++++ b/crates/slide-sdp/src/lib.rs
+@@ -201,6 +201,10 @@
+         message: error.to_string(),
+     })?;
+     solver.solve();
++    eprintln!("SDP_BENCH status={:?} iterations={} r_prim={:.17e} r_dual={:.17e} gap={:.17e} solve_seconds={:.17e}",
++        solver.solution.status, solver.solution.iterations, solver.solution.r_prim,
++        solver.solution.r_dual, (solver.solution.obj_val - solver.solution.obj_val_dual).abs(),
++        solver.solution.solve_time);
+ 
+     Ok(solver.solution)
+ }
+@@ -662,7 +666,7 @@
+         };
+         let settings = diagnostic_settings(tighten_feasibility);
+         let mut comparison = settings.clone();
+-        comparison.tol_feas = 1.0e-6;
++        comparison.tol_feas = diagnostic_settings(false).tol_feas;
+         assert_eq!(
+             format!("{comparison:#?}"),
+             format!("{:#?}", diagnostic_settings(false))

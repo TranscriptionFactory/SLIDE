@@ -1,0 +1,16 @@
+environment overrides change knockoff results: SLIDE_KNOCKOFF_MATCH_R_COV=1, SLIDE_KNOCKOFF_MATCH_R_LAMBDA=1, SLIDE_KNOCKOFF_MAX_ITER=100000, SLIDE_KNOCKOFF_TOL=1e-7; recorded as config.env_overrides in the checkpoint
+Loading feature matrix from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/X.csv
+Loading response vector from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/Y.csv
+Starting SLIDE optimization: 1 delta(s) x 1 lambda(s) = 1 evaluations
+Checkpoint: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_42/rust/0.1_1.0_out/checkpoint.json
+SDP_BENCH status=Solved iterations=22 r_prim=1.19222889016496209e-9 r_dual=2.76329039559670872e-11 gap=1.12416531972137079e-7 solve_seconds=4.52158340000000034e-2
+SDP_BENCH status=Solved iterations=20 r_prim=3.29415375620471920e-9 r_dual=2.24389876563557240e-10 gap=3.43977637706771588e-7 solve_seconds=2.32871179999999990e-2
+SDP_BENCH status=Solved iterations=16 r_prim=6.28502474697920107e-9 r_dual=5.68935924403943624e-10 gap=6.99645144153215881e-7 solve_seconds=1.86493949999999992e-2
+SDP_BENCH status=Solved iterations=24 r_prim=2.55275860508908370e-9 r_dual=3.15950531646053554e-11 gap=1.97994680206647899e-7 solve_seconds=3.01100819999999998e-2
+SDP_BENCH status=Solved iterations=12 r_prim=5.92583426173406954e-9 r_dual=1.20155207484333126e-9 gap=4.62603202855405016e-7 solve_seconds=6.18393600000000012e-3
+SDP_BENCH status=Solved iterations=5 r_prim=3.30009212180489678e-9 r_dual=5.59402133295743127e-9 gap=3.07354103767920606e-6 solve_seconds=1.90367393399999996e0
+SDP_BENCH status=NumericalError iterations=9 r_prim=9.53223654253800441e-9 r_dual=1.68974635658366512e-8 gap=9.28850735704145336e-6 solve_seconds=3.02169420599999983e0
+Error: SLIDE optimization failed
+
+Caused by:
+    SDP solver failed with status NumericalError; consider falling back to equi-correlated
