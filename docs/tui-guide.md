@@ -228,6 +228,13 @@ features according to its active row mode and caps the displayed rows. Press
 `selected factor` modes. The title line reports the active mode, factor window,
 visible row count, and `PgDn` / `PgUp` factor-window navigation.
 
+Press `/` to search feature names (case-insensitive substring matching).
+Type the query, then press `Enter` to keep it or `Esc` to clear it. While
+editing, keys such as `q` enter text instead of triggering navigation. Search
+results appear in the feature-detail panels; matching rows are highlighted in
+the loading matrix. Supply `--x` to search original feature names rather than
+fallback labels such as `feature_1`.
+
 ### Factors tab
 
 Per-factor detail for the selected run:
@@ -290,6 +297,9 @@ If final CV was not enabled for the run, the tab displays a short
 | `v` | Cycle primary sub-views (LOVE, SLIDE, and Performance tabs) |
 | `1`–`7` | Jump to LOVE sub-view directly (`6` and `7` are advanced) |
 | `g` | Cycle Overview grid metric |
+| `m` | Cycle loading-matrix row mode (LOVE view `3`) |
+| `/` | Edit feature-name search |
+| `Enter` / `Esc` | Keep / clear search while editing |
 | `r` | Force reload checkpoint from disk |
 | `q` | Quit |
 
@@ -303,7 +313,7 @@ If final CV was not enabled for the run, the tab displays a short
 # Single command — runs pipeline and TUI together
 ./target/release/slide monitor \
   --config my_config.yaml \
-  --checkpoint /tmp/my_run.json
+  --checkpoint .tmpfiles/my_run.json
 ```
 
 ### SLURM batch job + separate TUI
@@ -350,7 +360,8 @@ Pass `--x` to display original feature names instead of column indices.
 
 | Problem | Fix |
 |---------|-----|
-| TUI shows "Waiting for checkpoint..." | The pipeline hasn't written its first result yet. Give it time. |
+| TUI shows "Waiting for pipeline to start..." | The checkpoint does not exist yet. Check the path or wait for the first result. |
+| TUI shows "error: failed to load checkpoint" | The checkpoint exists but cannot be read or parsed. Check the file, then press `r` to retry. |
 | Blank heatmaps | Terminal must support 256 colors or truecolor. Use a modern terminal emulator. |
 | Block correlation shows "too many variables" | The view caps at 300 variables. This is by design for readability. |
 | Garbled display | Resize your terminal or press `r` to force a reload. Minimum ~120 columns recommended. |

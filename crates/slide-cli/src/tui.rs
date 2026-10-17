@@ -296,10 +296,13 @@ struct App {
 
 impl App {
     fn load(args: TuiArgs) -> Result<Self> {
-        let data = if args.checkpoint.exists() {
-            DashboardData::load(&args).ok()
+        let (data, last_error) = if args.checkpoint.exists() {
+            match DashboardData::load(&args) {
+                Ok(data) => (Some(data), None),
+                Err(error) => (None, Some(format!("{error:#}"))),
+            }
         } else {
-            None
+            (None, None)
         };
         let config_summary = args.config.as_ref().and_then(|path| {
             let yaml = fs::read_to_string(path).ok()?;
@@ -365,7 +368,7 @@ impl App {
             selected_run: 0,
             selected_factor: 0,
             data,
-            last_error: None,
+            last_error,
             progress: None,
             last_poll: Instant::now(),
             love_sub_view: LoveSubView::Diagnostics,
@@ -864,7 +867,7 @@ impl App {
             footer_spans.push(format!(" | feat: {query}").yellow());
         }
         let footer = Line::from(footer_spans);
-        frame.render_widget(Paragraph::new(footer), layout[2]);
+        frame.render_widget(Paragraph::new(footer).wrap(Wrap { trim: true }), layout[2]);
     }
 
     fn render_waiting(&self, frame: &mut Frame, area: Rect) {
@@ -892,7 +895,9 @@ impl App {
             lines.push(Line::default());
         }
 
-        if let Some(ref prog) = self.progress {
+        if let Some(error) = &self.last_error {
+            lines.push(Line::from(format!("error: {error}").red()));
+        } else if let Some(ref prog) = self.progress {
             lines.push(Line::from(format!(
                 "Progress: eval {}/{} (delta={:.4}, lambda={:.4})",
                 prog.grid_index + 1,
@@ -1288,7 +1293,8 @@ impl App {
             if self.feature_search_editing { "_" } else { "" }
         ))];
         if query.is_empty() {
-            lines.push(Line::from("type a feature name; Enter keeps, Esc clears"));
+            lines.push(Line::from("type a feature name"));
+            lines.push(Line::from("Enter keeps; Esc clears"));
             return Paragraph::new(Text::from(lines))
                 .block(
                     Block::default()
@@ -3970,8 +3976,169 @@ fn render_phase_timeline(frame: &mut Frame, area: Rect, current: &Phase) {
 
 #[cfg(test)]
 mod tests {
-    use super::{GridMetric, LoadingRowMode, LoveSubView, PerformanceSubView};
+    use super::{App, GridMetric, LoadingRowMode, LoveSubView, PerformanceSubView, Tab};
+    use crate::TuiArgs;
+    use crossterm::event::KeyCode;
+    use ratatui::{backend::TestBackend, Terminal};
     use slide_core::OptimizeResponseType;
+    use std::path::Path;
+
+    fn fixture_app(checkpoint: &str) -> App {
+        let mut app = App::load(TuiArgs {
+            checkpoint: Path::new(env!("CARGO_MANIFEST_DIR")).join(checkpoint),
+            config: None,
+            result: None,
+            x: None,
+            poll_ms: 1000,
+            no_follow: true,
+        })
+        .unwrap();
+        if checkpoint.ends_with(".json") && app.args.checkpoint.is_file() {
+            // Reuse legacy run payloads without depending on their obsolete config schema.
+            let fixture: serde_json::Value = super::read_json(&app.args.checkpoint).unwrap();
+            let runs: Vec<slide_core::SlideRunResult> =
+                serde_json::from_value(fixture["evaluations"].clone()).unwrap();
+            let run_count = runs.len();
+            let nfeatures = runs.first().map_or(0, |run| run.love.a.nrows());
+            app.data = Some(super::DashboardData {
+                best_run: runs.first().cloned(),
+                final_cv: None,
+                total_grid_points: run_count,
+                delta_values: super::dedupe_sorted(
+                    &runs.iter().map(|run| run.delta).collect::<Vec<_>>(),
+                ),
+                lambda_values: super::dedupe_sorted(
+                    &runs.iter().map(|run| run.lambda).collect::<Vec<_>>(),
+                ),
+                run_lookup: runs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, run)| {
+                        (
+                            (
+                                super::ScalarKey::new(run.delta),
+                                super::ScalarKey::new(run.lambda),
+                            ),
+                            i,
+                        )
+                    })
+                    .collect(),
+                runs,
+                response_type: OptimizeResponseType::Binary,
+                config_lines: Vec::new(),
+                feature_names: (1..=nfeatures).map(|i| format!("feature_{i}")).collect(),
+                x_path: None,
+                y_path: None,
+                derived: std::cell::RefCell::new(super::DerivedDashboardData {
+                    factor_rankings: vec![None; run_count],
+                    group_correlations: vec![None; run_count],
+                    factor_response_corr: vec![None; run_count],
+                    block_correlations: vec![None; run_count],
+                    ..Default::default()
+                }),
+            });
+            app.last_error = None;
+        }
+        app
+    }
+
+    fn render_text(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn dashboard_views_render_at_normal_and_narrow_sizes() {
+        for checkpoint in [
+            "../../tests/test_config_checkpoint.json",
+            "../../tests/test_checkpoint.json",
+        ] {
+            let mut app = fixture_app(checkpoint);
+            assert!(
+                app.data.is_some(),
+                "fixture failed to load: {:?}",
+                app.last_error
+            );
+            for (width, height) in [(140, 45), (60, 20), (20, 8)] {
+                for tab in [
+                    Tab::Overview,
+                    Tab::Love,
+                    Tab::Factors,
+                    Tab::Slide,
+                    Tab::Performance,
+                ] {
+                    app.tab = tab;
+                    render_text(&app, width, height);
+                }
+                app.tab = Tab::Love;
+                for key in 1..=7 {
+                    app.love_sub_view = LoveSubView::from_number(key).unwrap();
+                    render_text(&app, width, height);
+                }
+                app.tab = Tab::Slide;
+                app.selection_sub_view = app.selection_sub_view.next();
+                render_text(&app, width, height);
+                app.tab = Tab::Performance;
+                for view in [
+                    PerformanceSubView::Summary,
+                    PerformanceSubView::FoldScores,
+                    PerformanceSubView::Predictions,
+                    PerformanceSubView::RocPr,
+                    PerformanceSubView::Residuals,
+                ] {
+                    app.performance_sub_view = view;
+                    render_text(&app, width, height);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn missing_and_invalid_checkpoints_have_distinct_messages() {
+        let waiting = fixture_app("Cargo.toml/missing-checkpoint.json");
+        let invalid = fixture_app("Cargo.toml");
+        assert!(waiting.data.is_none());
+        assert!(invalid.data.is_none());
+        for (width, height) in [(140, 45), (60, 20)] {
+            assert!(render_text(&waiting, width, height).contains("Waiting for pipeline"));
+            let error = render_text(&invalid, width, height);
+            assert!(error.contains("error: failed to load checkpoint"));
+            assert!(!error.contains("Waiting for pipeline"));
+        }
+    }
+
+    #[test]
+    fn feature_search_and_loading_modes_have_visible_help() {
+        let mut app = fixture_app("../../tests/test_config_checkpoint.json");
+        app.tab = Tab::Love;
+        app.love_sub_view = LoveSubView::LoadingMatrix;
+        let text = render_text(&app, 120, 40);
+        assert!(text.contains("/ feat"));
+        assert!(text.contains("m row mode"));
+        app.tab = Tab::Factors;
+        app.start_feature_search();
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("Feature Search"));
+        assert!(text.contains("Enter keeps"));
+        assert!(text.contains("Esc clears"));
+        for character in "feature_1".chars() {
+            app.handle_feature_search_key(KeyCode::Char(character));
+        }
+        app.handle_feature_search_key(KeyCode::Enter);
+        assert_eq!(app.feature_search_query(), Some("feature_1"));
+        assert!(!app.feature_search_matches(6).is_empty());
+        assert!(render_text(&app, 140, 45).contains("feature_1"));
+        app.start_feature_search();
+        app.handle_feature_search_key(KeyCode::Esc);
+        assert_eq!(app.feature_search_query(), None);
+    }
 
     #[test]
     fn love_v_cycle_stays_on_primary_views() {
