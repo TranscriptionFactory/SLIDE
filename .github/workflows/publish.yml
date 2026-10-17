@@ -1,0 +1,82 @@
+name: Publish slide-py
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to production PyPI after build checks (leave off for a dry run)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-slide-py
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      TMPDIR: ${{ github.workspace }}/.tmpfiles/publish/temp
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create temporary directory
+        run: mkdir -p "$TMPDIR"
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopenblas-dev liblapack-dev gfortran
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build and check distributions
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build --outdir .tmpfiles/publish/dist
+          python -m twine check --strict .tmpfiles/publish/dist/*
+          python -m pip install "$(echo .tmpfiles/publish/dist/*.whl)[dev]"
+      - name: Check installed native extensions outside checkout
+        working-directory: ${{ github.workspace }}/.tmpfiles/publish/temp
+        run: |
+          python - <<'PYTHON'
+          from pathlib import Path
+          import sysconfig
+          import slide_py
+          from slide_py.dsdp_solver import pydsdp5
+          from slide_py.knockoff._vendor.glmnet import _glmnet
+          assert Path(slide_py.__file__).resolve().is_relative_to(Path(sysconfig.get_path("platlib")).resolve())
+          assert pydsdp5.__file__.endswith(".so")
+          assert _glmnet.__file__.endswith(".so")
+          PYTHON
+          slide-py --version
+      - name: Test
+        run: python -m pytest tests/tests -m "not slow and not requires_r and not requires_rust" -q
+      # shortcut: publish source only until portable native wheels have release coverage.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-py-sdist
+          path: .tmpfiles/publish/dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/slide-py/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: slide-py-sdist
+          path: dist/
+      - name: Publish source distribution
+        uses: pypa/gh-action-pypi-publish@release/v1
