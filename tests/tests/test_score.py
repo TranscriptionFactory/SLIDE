@@ -306,3 +306,99 @@ class TestScoreModuleIntegration:
         assert len(aucs) == 3
 
         # TODO: Verify specific performance metrics
+
+
+@pytest.fixture
+def control_reference():
+    from pathlib import Path
+    root = Path(__file__).parents[1] / 'fixtures' / 'control_plot'
+    return pd.read_csv(root / 'input.csv'), pd.read_csv(root / 'expected.csv').iloc[0]
+
+
+def test_control_matches_r_exact_pairs_and_binary_orientation(control_reference):
+    from slide_py.score import _control_score
+    data, expected = control_reference
+    z = data[['Z0', 'Z1', 'Z2']]
+    scores = SLIDE_Estimator.score_performance(
+        ['Z0', 'Z1'], ['Z2', 'Z0'], data.y, z,
+        interaction_pairs=np.array([[0, 1], [2, 0]]), n_iters=3, seed=4)
+    assert scores['real'] == pytest.approx(expected['corr'], abs=1e-12)
+    auc = _control_score(data[['binary_x']].values, data.binary_y.values, 'auc')
+    assert auc == pytest.approx(expected['auc'])
+    assert auc < 0.5  # pROC auto direction is not max(AUC, 1-AUC).
+
+
+def test_control_sampling_preserves_term_counts_and_full_pool(control_reference):
+    import slide_py.score as scoring
+    data, _ = control_reference
+    z = data[['Z0', 'Z1', 'Z2']]
+    designs = []
+    def capture(x, y, condition):
+        designs.append(x.copy())
+        return 0.5
+    with patch.object(scoring, '_control_score', side_effect=capture), \
+         patch.object(Estimator, 'get_aucs', side_effect=AssertionError('No CV')):
+        result = SLIDE_Estimator.score_performance(
+            ['Z0', 'Z1', 'Z2'], ['Z2', 'Z0'], data.y, z,
+            interaction_pairs=np.array([[0, 1], [2, 0]]), n_iters=4, seed=4)
+    assert len(designs) == 9
+    assert all(x.shape == (12, 5) for x in designs)
+    assert len(result['full_random']) == len(result['partial_random']) == 4
+    for x in designs[5:]:
+        np.testing.assert_equal(x[:, :3], z.values)
+    pool = (z.values[:, :, None] * z.values[:, None, :]).reshape(12, -1)
+    for x in designs[1:]:
+        for column in x[:, 3:].T:
+            assert any(np.array_equal(column, candidate) for candidate in pool.T)
+
+
+def test_control_defaults_and_reproducibility(control_reference):
+    data, _ = control_reference
+    z = data[['Z0', 'Z1', 'Z2']]
+    with patch('slide_py.score._control_score', return_value=0.5):
+        scores = SLIDE_Estimator.score_performance(['Z0'], [], data.y, z)
+    assert len(scores['full_random']) == 1000
+    assert 'partial_random' not in scores
+    a = SLIDE_Estimator.score_performance(['Z0'], [], data.y, z, seed=9, n_iters=5)
+    b = SLIDE_Estimator.score_performance(['Z0'], [], data.y, z, seed=9, n_iters=5)
+    np.testing.assert_equal(a['full_random'], b['full_random'])
+    with pytest.raises(ValueError, match='Exact interaction_pairs'):
+        SLIDE_Estimator.score_performance(['Z0'], ['Z1'], data.y, z)
+    with pytest.raises(ValueError, match='selected marginal'):
+        SLIDE_Estimator.score_performance([], [], data.y, z)
+    with pytest.raises(ValueError, match='nonconstant'):
+        SLIDE_Estimator.score_performance(['Z0'], [], np.ones(len(z)), z)
+
+
+def test_control_rejects_overflowed_features_predictions_and_scores():
+    from slide_py.score import _control_score
+    z = pd.DataFrame({'Z0': [1e200, 2e200, 3e200]})
+    with pytest.raises(ValueError, match='features must be finite'):
+        SLIDE_Estimator.score_performance(
+            ['Z0'], ['Z0'], np.arange(3.), z,
+            interaction_pairs=np.array([[0], [0]]), n_iters=1)
+    with patch('numpy.linalg.lstsq', return_value=(np.array([np.inf, 1.]),)):
+        with pytest.raises(ValueError, match='predictions must be finite'):
+            _control_score(np.arange(3.)[:, None], np.arange(3.), 'corr')
+    with pytest.raises(ValueError, match='score must be finite'):
+        _control_score(np.arange(3.)[:, None], np.arange(3.) * 1e200, 'corr')
+
+
+@pytest.mark.parametrize('selected,do_interacts', [([], True), ([0], False), ([0], True)])
+def test_selection_exports_empty_lists_and_clears_stale_pairs(tmp_path, selected, do_interacts):
+    from slide_py.slide import OptimizeSLIDE
+    slider = OptimizeSLIDE.__new__(OptimizeSLIDE)
+    slider.marginal_idxs = selected
+    slider.sig_interacts = ['Z1']
+    slider.interaction_pairs = np.array([[0], [1]])
+    slider.interaction_terms = np.ones((3, 1))
+    slider.calc_default_fsize = lambda count: 2
+    slider.find_standalone_LFs = Mock(return_value=None)
+    slider.find_interaction_LFs = Mock(return_value=None)
+    z = pd.DataFrame({'Z0': [1, 2, 3], 'Z1': [3, 2, 1]})
+    slider.run_SLIDE(z, niter=1, spec=.1, fdr=.1, outpath=tmp_path, do_interacts=do_interacts)
+    assert (tmp_path / 'sig_LFs.txt').read_text() == ('Z0\n' if selected else '')
+    assert (tmp_path / 'sig_interacts.txt').read_text() == ''
+    assert slider.sig_interacts == []
+    assert slider.interaction_pairs.shape == (2, 0)
+    assert slider.interaction_terms.shape == (3, 0)

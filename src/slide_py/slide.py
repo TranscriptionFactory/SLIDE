@@ -11,13 +11,15 @@ from collections import defaultdict
 from contextlib import redirect_stdout
 from io import StringIO
 import logging
+from scipy.stats import spearmanr
+from sklearn.metrics import roc_auc_score
 
 from .tools import init_data, calc_default_fsize, show_params
 from .love import call_love
 from .knockoffs import Knockoffs
 
 from .plotting import Plotter
-from .score import Estimator, SLIDE_Estimator
+from .score import SLIDE_Estimator
 
 logger = logging.getLogger(__name__)
 
@@ -102,71 +104,37 @@ class SLIDE:
 
     @staticmethod
     def get_LF_genes(A, lf, X, y, lf_thresh=0.05, top_feats=20, outpath=None):
+        """R feature union: top_feats/2 by loading and independently by association.
+
+        Binary association is raw-feature AUC (fixed direction); continuous
+        association is absolute Spearman correlation. No model is fitted.
         """
-        Select the top features associated with a latent factor.
-
-        Matches the R SLIDE approach: top N/2 by absolute loading, then
-        top N/2 by absolute correlation from the remaining features.
-
-        Parameters:
-        - A: Loading matrix (features x latent factors).
-        - lf: Column name in A for the latent factor.
-        - X: Feature data matrix.
-        - y: Response variable.
-        - top_feats: Total number of features to return (split between loading and correlation).
-        - outpath: Optional directory to save per-LF feature list.
-
-        Returns:
-        - DataFrame with 'loading', 'AUC', 'corr', 'color' columns for selected features.
-        """
-
         if lf not in A.columns:
             raise ValueError(f"Latent factor {lf} not found in A matrix")
-
-        # Get ALL non-zero features (no threshold — matches R behavior)
+        if not isinstance(top_feats, (int, np.integer)) or top_feats < 2:
+            raise ValueError("top_feats must be an integer of at least two")
+        response = np.asarray(y).reshape(-1)
         all_genes = A.loc[A[lf].abs() > 0, lf]
-
-        # Compute correlation for all candidates (cheap)
-        lf_info = pd.DataFrame(
-            index=all_genes.index, columns=["loading", "AUC", "corr", "color"]
-        )
-        lf_info["loading"] = all_genes
-        lf_info["corr"] = [
-            np.corrcoef(X[x].values.flatten(), y.values.flatten())[0, 1]
-            for x in all_genes.index
-        ]
-
-        # Select top N/2 by absolute loading
-        top_loading = lf_info.sort_values(by="loading", key=abs, ascending=False).head(
-            top_feats // 2
-        )
-
-        # Select top N/2 by absolute correlation from remaining features
-        remaining = lf_info.drop(top_loading.index)
-        top_corr = remaining.sort_values(by="corr", key=abs, ascending=False).head(
-            top_feats // 2
-        )
-
-        # Tag groups for plot ordering (loading at bottom, corr on top)
-        top_loading = top_loading.copy()
-        top_corr = top_corr.copy()
-        top_loading["group"] = "loading"
-        top_corr["group"] = "corr"
-
-        # Combine and compute AUC only for selected features (expensive)
-        selected = pd.concat([top_loading, top_corr], axis=0)
-        scorer = Estimator(model="auto", scaler="standard")
-        selected["AUC"] = np.array(
-            [scorer.evaluate(X[x], y, n_iters=3) for x in selected.index]
-        ).mean(axis=1)
-
-        # Color: red = positive corr, blue = negative corr (matches R)
-        selected["color"] = np.where(selected["corr"] > 0, "red", "blue")
-
-        selected = selected.sort_values(by="loading", key=abs, ascending=False)
-
+        lf_info = pd.DataFrame(index=all_genes.index)
+        lf_info["loading"] = all_genes.abs()
+        lf_info["corr"] = [spearmanr(X[gene], response).statistic for gene in all_genes.index]
+        binary = np.unique(response).size == 2
+        if binary:
+            lf_info["AUC"] = [roc_auc_score(response, X[gene]) for gene in all_genes.index]
+        lf_info["color"] = np.select(
+            [lf_info["corr"] > 0, lf_info["corr"] < 0], ["red", "blue"], default="white")
+        lf_info = lf_info.sort_values("loading", ascending=False, kind="stable")
+        top_loading = lf_info.head(top_feats // 2)
+        association = "AUC" if binary else "corr"
+        top_assoc = lf_info.sort_values(association, key=abs, ascending=False, kind="stable").head(top_feats // 2)
+        selected = pd.concat([top_loading, top_assoc])
+        selected = selected.loc[~selected.index.duplicated()]
         if outpath is not None:
-            selected.to_csv(os.path.join(outpath, f"feature_list_{lf}.csv"), sep="\t")
+            exported = selected.rename(columns={"loading": "A_loading", "AUC": "AUCs", "corr": "corrs"})
+            columns = ["A_loading"] + (["AUCs"] if binary else []) + ["corrs", "color"]
+            exported = exported[columns].copy()
+            exported["color"] = exported["color"].str.capitalize()
+            exported.to_csv(os.path.join(outpath, f"feature_list_{lf}.txt"), sep="\t", index_label="names")
 
         return selected
 
@@ -180,9 +148,15 @@ class SLIDE:
             full_random = "NA"
         else:
             true_scores = scores["real"]
-            partial_random = np.mean(
-                [x for x in scores["partial_random"] if x is not None]
-            )
+            partial_random = (np.mean(scores["partial_random"])
+                              if "partial_random" in scores else "NA")
+            pd.DataFrame([
+                {"group": label, "value": value}
+                for key, label in (("full_random", "FullRandom"),
+                                   ("partial_random", "PartialRandom"))
+                for value in scores.get(key, [])
+            ] + [{"group": "Real", "value": scores["real"]}]).to_csv(
+                os.path.join(outpath, "ControlPerformance.csv"), index=False)
             full_random = np.mean([x for x in scores["full_random"] if x is not None])
 
         with open(os.path.join(outpath, "scores.txt"), "w") as f:
@@ -224,7 +198,7 @@ class SLIDE:
                 "num_of_LFs",
                 "num_of_Sig_LFs",
                 "num_of_Interactors",
-                "sampleCV_Performance",
+                "Control_Performance",
             ]
         )
 
@@ -255,7 +229,7 @@ class SLIDE:
                             "num_of_LFs": [num_latent_factors],
                             "num_of_Sig_LFs": [num_marginals],
                             "num_of_Interactors": [num_interactions],
-                            "sampleCV_Performance": [true_scores],
+                            "Control_Performance": [true_scores],
                         }
                     ),
                 ],
@@ -264,10 +238,10 @@ class SLIDE:
 
         # df['full_random'] = df['full_random'].astype(float).round(3)
         # df['partial_random'] = df['partial_random'].astype(float).round(3)
-        df["sampleCV_Performance"] = pd.to_numeric(
-            df["sampleCV_Performance"].astype(str), errors="coerce"
+        df["Control_Performance"] = pd.to_numeric(
+            df["Control_Performance"].astype(str), errors="coerce"
         ).round(3)
-        df.sort_values(by="sampleCV_Performance", inplace=True)
+        df.sort_values(by="Control_Performance", inplace=True)
 
         df.to_csv(os.path.join(outpath, "summary_table.csv"), index=False)
 
@@ -719,6 +693,10 @@ class OptimizeSLIDE(SLIDE):
         sdp_solver="dsdp",
     ):
 
+        self.sig_interacts = []
+        self.interaction_pairs = np.empty((2, 0), dtype=int)
+        self.interaction_terms = np.empty((latent_factors.shape[0], 0))
+
         f_size = self.calc_default_fsize(latent_factors.shape[1])
 
         if verbose:
@@ -749,14 +727,12 @@ class OptimizeSLIDE(SLIDE):
             sdp_solver=sdp_solver,
         )
 
-        if len(self.marginal_idxs) == 0:
-            logger.info("No standalone LF found")
-            self.sig_LFs = []
-            self.sig_interacts = []
-            return
-
         self.sig_LFs = [f"Z{i}" for i in self.marginal_idxs]
         np.savetxt(os.path.join(outpath, "sig_LFs.txt"), self.sig_LFs, fmt="%s")
+        np.savetxt(os.path.join(outpath, "sig_interacts.txt"), [], fmt="%s")
+        if len(self.marginal_idxs) == 0:
+            logger.info("No standalone LF found")
+            return
 
         if verbose:
             logger.info(f"Found {len(self.marginal_idxs)} standalone LF")
@@ -900,7 +876,7 @@ class OptimizeSLIDE(SLIDE):
                     for lf in self.sig_LFs
                 }
                 Plotter.plot_latent_factors(
-                    sig_LF_genes, outdir=out_iter, title="marginal_LFs"
+                    sig_LF_genes, outdir=out_iter, title="plotSigGenes_marginals"
                 )
 
                 sig_interact_genes = {
@@ -915,10 +891,12 @@ class OptimizeSLIDE(SLIDE):
                     for lf in self.sig_interacts
                 }
 
-                if len(sig_interact_genes) > 0:
+                if self.input_params["do_interacts"]:
                     Plotter.plot_latent_factors(
-                        sig_interact_genes, outdir=out_iter, title="interaction_LFs"
+                        sig_LF_genes | sig_interact_genes, outdir=out_iter,
+                        title="plotSigGenes", marginal_lfs=self.sig_LFs
                     )
+                if len(sig_interact_genes) > 0:
                     Plotter.plot_interactions(
                         self.interaction_pairs,
                         outdir=out_iter,
@@ -930,12 +908,14 @@ class OptimizeSLIDE(SLIDE):
                     sig_LFs=self.sig_LFs,
                     sig_interacts=self.sig_interacts,
                     y=self.data.Y,
-                    n_iters=2000,
-                    test_size=0.15,
-                    scaler="standard",
+                    interaction_pairs=(self.interaction_pairs if self.input_params["do_interacts"] else None),
+                    seed=self.input_params.get("knockoff_base_seed"),
                 )
 
-                Plotter.plot_controlplot(scores, outdir=out_iter, title="control_plot")
+                Plotter.plot_controlplot(
+                    scores, outdir=out_iter,
+                    file_format="png" if self.input_params["do_interacts"] else "pdf",
+                )
 
                 Plotter.plot_corr_network(
                     self.data.X,
