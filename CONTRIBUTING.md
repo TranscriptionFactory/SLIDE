@@ -79,6 +79,39 @@ R packages needed for the Python layer: `knockoff`, `glmnet`, `MASS`, `linprog`,
 
 ---
 
+## Publishing Python releases
+
+`.github/workflows/publish.yml` builds and tests a source distribution on Python
+3.11, then uses PyPI Trusted Publishing. It reuses the native build/install
+commands from `ci.yml`; publication runs in a separate job without source checkout.
+Only the source archive is uploaded. Users need C/Fortran compilers and BLAS/LAPACK
+until portable native wheels are available.
+
+Before the first run, a repository administrator must configure GitHub:
+
+1. Open `TranscriptionFactory/SLIDE-rs` → Settings → Environments → New environment.
+2. Name it **`pypi`**. Require a trusted release reviewer where the GitHub plan
+   supports that protection. Configure deployment branches to allow only `main`.
+3. On PyPI, add a pending publisher for project `slide-py`, owner
+   `TranscriptionFactory`, repository `SLIDE-rs`, workflow **`publish.yml`**,
+   environment **`pypi`**. No API-token secret is needed.
+
+These repository settings are separate from the YAML environment declaration;
+the workflow file alone does not configure approval rules. Private-repository
+environment protections depend on the GitHub plan. Confirm the available controls
+before enabling publication.
+
+After review and merge, run **Actions → Publish slide-py → Run workflow** on `main`.
+Leave **publish** unchecked for a build-only dry run. To publish, first resolve
+the README's license/publication gates and set an unused version in both
+`pyproject.toml` and `src/slide_py/__init__.py`, then run with **publish** checked
+and approve the environment deployment if required reviewers are configured.
+Do not use the current `1.0.0` version for an alpha release. No push, tag, or release
+event automatically publishes. The workflow skips branches other than `main`.
+
+See the [PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
+and [GitHub environment documentation](https://docs.github.com/en/actions/deployment/targeting-different-environments/managing-environments-for-deployment).
+
 ## Running the pipeline
 
 Create a YAML config:
