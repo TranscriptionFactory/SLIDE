@@ -5,7 +5,6 @@
 ^tests$
 ^scripts$
 ^benchmarks$
-^benchmark_results$
 ^docs$
 ^examples/HIV\+cytokines_[Xy]\.csv$
 ^examples/example\.ipynb$

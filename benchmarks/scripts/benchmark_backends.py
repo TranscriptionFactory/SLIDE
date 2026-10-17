@@ -13,19 +13,19 @@ Backends:
 
 Usage:
     # Full benchmark on SSc UnTx (default)
-    python benchmarks/benchmark_backends.py
+    python benchmarks/scripts/benchmark_backends.py
 
     # Quick test on HIV data
-    python benchmarks/benchmark_backends.py \\
+    python benchmarks/scripts/benchmark_backends.py \\
         --x-path examples/HIV+cytokines_X.csv \\
         --y-path examples/HIV+cytokines_y.csv \\
         --y-factor --delta 0.1 --lambda 0.5
 
     # Submit to SLURM
-    python benchmarks/benchmark_backends.py --slurm
+    python benchmarks/scripts/benchmark_backends.py --slurm
 
     # Only compare existing outputs
-    python benchmarks/benchmark_backends.py --skip-run --out-dir benchmark_results
+    python benchmarks/scripts/benchmark_backends.py --skip-run --out-dir benchmarks/results
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ log = logging.getLogger("benchmark")
 _SSC_X = "/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/X.csv"
 _SSC_Y = "/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/Y.csv"
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +163,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Rust per-draw knockoff FDR target q (None=default 0.1; "
                         "raise to loosen per-draw selection and lift borderline-LF "
                         "counts without re-partitioning the stage-one union)")
-    p.add_argument("--out-dir", type=Path, default=Path("benchmark_results"))
+    p.add_argument("--out-dir", type=Path, default=Path("benchmarks/results"))
     p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
     p.add_argument("--threads", type=int, default=None,
                    help="Worker budget (default: parity 4, native 10; python_serial 1)")
@@ -523,10 +523,10 @@ _DEFAULT_RSCRIPT = "/software/rhel9/manual/install/r/4.5.0/bin/Rscript"
 def run_pure_r_backend(
     args: argparse.Namespace, delta: float, lam: float, out_dir: Path,
 ) -> TimingRecord:
-    """Run pure-R SLIDE backend via benchmarks/run_slide_r.R subprocess."""
+    """Run pure-R SLIDE backend via benchmarks/scripts/run_slide_r.R subprocess."""
     out_dir.mkdir(parents=True, exist_ok=True)
     rscript = args.rscript or _DEFAULT_RSCRIPT
-    runner = _PROJECT_ROOT / "benchmarks" / "run_slide_r.R"
+    runner = _PROJECT_ROOT / "benchmarks" / "scripts" / "run_slide_r.R"
 
     cmd = [
         rscript, str(runner),

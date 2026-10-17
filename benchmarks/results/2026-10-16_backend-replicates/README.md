@@ -15,12 +15,12 @@ Arms: Rust, Python (DSDP), pure R, Rust-with-R-knockoffs. In the harness,
 `rust_r_knockoffs` means the Rust CLI with R-generated knockoffs (R SDP and Gaussian draws);
 `r_knockoffs` means `slide-py` with Python LOVE and R knockoffs via `rpy2`.
 These are distinct arms, as defined in
-[`benchmarks/benchmark_backends.py`](../../benchmarks/benchmark_backends.py).
+[`benchmarks/scripts/benchmark_backends.py`](../../scripts/benchmark_backends.py).
 The latter arm had no completed statistical analysis and remains excluded.
 Delta 0.01/0.1 × lambda 0.1/1.0; 500 iterations, specificity 0.1,
 SLIDE selection, parity settings, four workers and one BLAS thread.
 Seed labels: 42, 1000 through 9000 by 1000. Fresh pure R is the reference.
-See [run setup](../2026-10-16_backend-replicates-all-arms/README.md)
+See [run setup](SETUP.md)
 for the frozen environment, inputs and build.
 
 K and Z agree with R in every completed cell: maximum absolute Z
@@ -129,7 +129,7 @@ Run from the repository root with a new output directory:
 
 ```bash
 RUN="$PWD/.tmpfiles/2026-10-16_backend-replicates-all-arms"
-OUT="$PWD/benchmark_results/2026-10-16_backend-replicates-four-arms"
+OUT="$PWD/benchmarks/results/2026-10-16_backend-replicates"
 ENV=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev
 export TMPDIR="$RUN/scratch" TMP="$RUN/scratch" TEMP="$RUN/scratch"
 export MPLCONFIGDIR="$RUN/scratch/mpl" PYTHONDONTWRITEBYTECODE=1

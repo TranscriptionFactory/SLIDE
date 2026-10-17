@@ -1,6 +1,6 @@
 import unittest
 
-from benchmarks.prepare_paired_cell import verify_matrix
+from benchmarks.scripts.prepare_paired_cell import verify_matrix
 
 
 class VerifySavedMatrixTests(unittest.TestCase):

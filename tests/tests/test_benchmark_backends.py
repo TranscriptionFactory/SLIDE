@@ -8,12 +8,17 @@ import types
 import pytest
 
 
-MODULE_PATH = Path(__file__).parents[2] / "benchmarks" / "benchmark_backends.py"
+MODULE_PATH = Path(__file__).parents[2] / "benchmarks" / "scripts" / "benchmark_backends.py"
 SPEC = importlib.util.spec_from_file_location("benchmark_backends", MODULE_PATH)
 benchmark = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = benchmark
 SPEC.loader.exec_module(benchmark)
+
+
+def test_benchmark_project_root_and_r_runner():
+    assert benchmark._PROJECT_ROOT == Path(__file__).resolve().parents[2]
+    assert (benchmark._PROJECT_ROOT / "benchmarks/scripts/run_slide_r.R").is_file()
 
 
 def test_parity_settings_override_inherited_rust_shortcuts(monkeypatch, tmp_path):

@@ -40,7 +40,7 @@ later backends. Maximum reserved allocation is 27 CPU-hours.
 Exact harness arguments are in `manifests/`; submission command:
 
 ```bash
-bash benchmark_results/2026-10-17_torok-all-binary/submit.sh
+bash benchmarks/results/2026-10-17_torok-all-binary/submit.sh
 ```
 
 Already submitted: see `jobs.csv`. Submission and output creation refuse
@@ -48,11 +48,11 @@ existing records. For a rerun, use a new dated output directory and update paths
 not an overwrite. Existing cost analysis can run after completion:
 
 ```bash
-OUT="$PWD/benchmark_results/2026-10-17_torok-all-binary"
+OUT="$PWD/benchmarks/results/2026-10-17_torok-all-binary"
 PY=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/python
 export TMPDIR="$PWD/.tmpfiles/2026-10-16_production-readiness/scratch"
 export TMP="$TMPDIR" TEMP="$TMPDIR" MPLCONFIGDIR="$TMPDIR/mpl"
-"$PY" benchmarks/compare_timings.py --manifest "$OUT/manifests/rust.json" \
+"$PY" benchmarks/scripts/compare_timings.py --manifest "$OUT/manifests/rust.json" \
     --manifest "$OUT/manifests/python.json" --manifest "$OUT/manifests/pure_r.json" \
     --out "$OUT/costs"
 ```

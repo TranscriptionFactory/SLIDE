@@ -2,9 +2,12 @@
 
 ## Maintained tools and saved results
 
-See the [retained-evidence index](../benchmark_results/README.md) for current
+The entrypoints below live in [`scripts/`](scripts/). Saved measurements live
+in [`results/`](results/).
+
+See the [retained-evidence index](results/README.md) for current
 runtime, memory and significant-LF comparisons. Keep each new run in a dated,
-descriptive directory under `benchmark_results/`, with its command/configuration
+descriptive directory under `benchmarks/results/`, with its command/configuration
 and differences from the preceding run in a `README.md`.
 
 - `benchmark_backends.py`, `run_slide_r.R`, `run_backend_array.sh`: backend
@@ -17,10 +20,16 @@ and differences from the preceding run in a `README.md`.
 - `prepare_paired_cell.py`, `paired_xtilde.py`, `paired_xtilde.R`,
   `analyze_paired_xtilde.py`, `replay_paired_xtilde.py`: saved-draw preparation,
   replay and analysis for investigating selection differences.
+- `replay_jitter.py`, `replay_gaussian_parity.py`: retained fixture-replay
+  helpers moved from `tmpfiles/`; these still require historical external
+  controls and are not self-contained benchmark runs.
 
 One-off diagnostics, old plotting tools and machine-specific launchers moved to
 the [cleanup archive](../archive/2026-10-17_production-cleanup/README.md).
 Use the retained run commands rather than those historical launchers.
+Commands recorded inside frozen runs may use the original `benchmarks/<script>`
+layout after entering a frozen source tree; maintained current-checkout tools
+live under `benchmarks/scripts/`.
 
 ## Configuration modes
 
@@ -60,10 +69,10 @@ Use the existing project BLAS/environment setup as needed.
 
 ```bash
 cargo build --release -p slide-rs
-python benchmarks/benchmark_backends.py \
+python benchmarks/scripts/benchmark_backends.py \
   --configuration parity --threads 4 --knockoff-base-seed 42 \
   --rust-bin "$PWD/target/release/slide" \
-  --out-dir benchmark_results/2026-09-14_gaussian-parity
+  --out-dir benchmarks/results/2026-09-14_gaussian-parity
 ```
 
 Add input paths as needed. Use a fresh output directory for each configuration;

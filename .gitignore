@@ -19,7 +19,7 @@ archive/
 .pytest_cache/
 *.egg-info/
 **/**output*/**
-benchmark_results/
+benchmarks/results/
 # SLIDE run outputs (all implementations)
 **/*.png
 **/*.pkl
@@ -41,6 +41,7 @@ runs/hiv_runner/native_R
 # C extensions
 *.so
 .tmpfiles
+/tmpfiles/
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

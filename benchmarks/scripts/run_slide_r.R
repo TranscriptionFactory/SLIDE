@@ -2,7 +2,7 @@
 # Pure-R SLIDE benchmark runner: one (delta, lambda) combo per invocation.
 #
 # Writes the same per-combo files the Python/R-knockoffs backends produce so
-# benchmarks/benchmark_backends.py:load_python_result can pick them up:
+# benchmarks/scripts/benchmark_backends.py:load_python_result can pick them up:
 #   <out_dir>/<delta>_<lambda>_out/
 #     sig_LFs.txt
 #     sig_interacts.txt
@@ -83,7 +83,7 @@ script_dir <- if (length(script_arg) > 0) {
 if (identical(slide_source, "vendor")) {
   vendor_dir <- Sys.getenv("SLIDE_VENDOR_DIR", unset = "")
   if (!nzchar(vendor_dir)) {
-    vendor_dir <- file.path(dirname(script_dir), "vendor", "SLIDE-jishnu", "R")
+    vendor_dir <- file.path(dirname(dirname(script_dir)), "vendor", "SLIDE-jishnu", "R")
   }
   if (!dir.exists(vendor_dir)) {
     stop("SLIDE_R_SOURCE=vendor but no vendored R sources at: ", vendor_dir)
@@ -94,12 +94,12 @@ if (identical(slide_source, "vendor")) {
   optimize_slide <- get("optimizeSLIDE", envir = slide_env)
   # vendor/ is gitignored, so a fresh checkout has the pristine upstream tree and
   # SLIDE_OPT_ITER=0 would silently produce stock findOptIter numbers. Fail loudly
-  # instead; benchmarks/vendor_slide_opt_iter.patch reapplies the gate.
+  # instead; benchmarks/scripts/vendor_slide_opt_iter.patch reapplies the gate.
   if (identical(Sys.getenv("SLIDE_OPT_ITER", unset = "1"), "0") &&
       !any(grepl("SLIDE_OPT_ITER",
                  deparse(get("selectShortFreq", envir = slide_env)), fixed = TRUE))) {
     stop("SLIDE_OPT_ITER=0 requested but the vendored selectShortFreq does not honour ",
-         "it. Apply benchmarks/vendor_slide_opt_iter.patch to ", vendor_dir, ".")
+         "it. Apply benchmarks/scripts/vendor_slide_opt_iter.patch to ", vendor_dir, ".")
   }
   cat(sprintf("[pure_r] SLIDE_R_SOURCE=vendor: sourced %d files from %s (SLIDE_OPT_ITER=%s)\n",
               length(vendor_files), vendor_dir,
@@ -112,12 +112,12 @@ if (identical(slide_source, "vendor")) {
 
 # Preserve a stock comparison route without editing installed package files.
 # Opt in with SLIDE_R_OPTIMIZE=1; copied runners then also need
-# src/slide_py/slide_r/knockoffPerformance.R alongside benchmarks/.
+# src/slide_py/slide_r/knockoffPerformance.R alongside benchmarks/scripts/.
 optimize_interactions <- Sys.getenv("SLIDE_R_OPTIMIZE", unset = "0")
 if (!optimize_interactions %in% c("0", "1")) stop("SLIDE_R_OPTIMIZE must be 0 or 1")
 if (identical(optimize_interactions, "1")) {
   performance_env <- new.env(parent = globalenv())
-  sys.source(file.path(dirname(script_dir), "src", "slide_py", "slide_r",
+  sys.source(file.path(dirname(dirname(script_dir)), "src", "slide_py", "slide_r",
                        "knockoffPerformance.R"), envir = performance_env)
   optimized_env <- performance_env$withPreparedInteractionKnockoffs(slide_env)
   optimize_slide <- optimized_env$optimizeSLIDE

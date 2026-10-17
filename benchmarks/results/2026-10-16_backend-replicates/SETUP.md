@@ -5,19 +5,19 @@ Python-with-R-knockoffs tasks hit their 20-minute limits; 17 of their planned
 40 cells finished before timeout. The user excluded that arm from statistical
 analysis. Final four-arm analysis completed in job 11958124; tables and
 figures verified. See
-[final results](../2026-10-16_backend-replicates-four-arms/README.md).
+[final results](README.md).
 Source: c4726e3 (Gaussian arithmetic and interaction-residual fixes).
 
 ## Design
 
-Reuses benchmarks/benchmark_backends.py and the October 13 run.sbatch,
+Reuses the maintained `benchmarks/scripts/benchmark_backends.py` harness and the October 13 `run.sbatch`,
 with the arm list extended and array range changed to 0–49 (10 concurrent).
 No model or analysis code changes.
 
 - Arms: rust, python (DSDP), pure_r, rust_r_knockoffs, r_knockoffs. In the
   harness, `rust_r_knockoffs` is the Rust CLI with R-generated knockoffs (R SDP and Gaussian draws);
   `r_knockoffs` is `slide-py` with Python LOVE and R knockoffs via `rpy2`.
-  See [`benchmarks/benchmark_backends.py`](../../benchmarks/benchmark_backends.py).
+  See [`benchmarks/scripts/benchmark_backends.py`](../../scripts/benchmark_backends.py).
 - Ten runs each: seed labels 42, 1000, 2000, 3000, 4000, 5000, 6000,
   7000, 8000, 9000.
 - Delta 0.01/0.1 × lambda 0.1/1.0: 50 tasks, 200 cells.
@@ -100,7 +100,7 @@ from pathlib import Path
 from statistics import median
 import json
 
-root = Path("benchmark_results/2026-10-16_backend-replicates-all-arms/results/r_knockoffs")
+root = Path("benchmarks/results/2026-10-16_backend-replicates/results/r_knockoffs")
 cells = defaultdict(list)
 for path in root.glob("seed_*/r_knockoffs/timing_shards/*.json"):
     timing = json.loads(path.read_text())

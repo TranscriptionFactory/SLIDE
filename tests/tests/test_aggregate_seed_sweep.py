@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 
-MODULE_PATH = Path(__file__).parents[2] / "benchmarks" / "aggregate_seed_sweep.py"
+MODULE_PATH = Path(__file__).parents[2] / "benchmarks" / "scripts" / "aggregate_seed_sweep.py"
 SPEC = importlib.util.spec_from_file_location("aggregate_seed_sweep", MODULE_PATH)
 aggregate = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

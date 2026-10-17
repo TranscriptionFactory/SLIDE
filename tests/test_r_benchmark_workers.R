@@ -1,6 +1,6 @@
 # Run from the repository root with TMPDIR pointing into project .tmpfiles/.
 stopifnot(nzchar(Sys.getenv("TMPDIR")), !startsWith(normalizePath(tempdir()), "/tmp/"))
-runner <- normalizePath("benchmarks/run_slide_r.R")
+runner <- normalizePath("benchmarks/scripts/run_slide_r.R")
 expressions <- parse(runner)
 # Evaluate runner setup only, without reading data or executing a benchmark.
 starts <- which(vapply(expressions, function(x) grepl("^suppressPackageStartupMessages", deparse(x)[1]), logical(1)))

@@ -45,7 +45,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze_paired_xtilde import aggregate_selection, prefix_stability, zero_entry_ties  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 HASH_FIELDS = (
     "a_sha256",
     "z_sha256",

@@ -14,7 +14,7 @@ def test_comparison_mode_requires_test_pair(monkeypatch, tmp_path):
         analysis.main()
     assert error.value.code == 2
 
-PATH = Path(__file__).parents[2] / "benchmarks" / "analyze_seed_replicates.py"
+PATH = Path(__file__).parents[2] / "benchmarks" / "scripts" / "analyze_seed_replicates.py"
 SPEC = importlib.util.spec_from_file_location("analyze_seed_replicates", PATH)
 analysis = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = analysis

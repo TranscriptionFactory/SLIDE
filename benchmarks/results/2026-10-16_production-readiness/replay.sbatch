@@ -26,7 +26,7 @@ for c in 1 4; do
 done
 # The existing driver reads historical controls relative to the repository root.
 cd "$PROJECT"
-bash scripts/with-rust-blas-env.sh "$ENV/bin/python" tmpfiles/2026-10-16_native-chunk-jitter/replay_jitter.py \
+bash scripts/with-rust-blas-env.sh "$ENV/bin/python" benchmarks/scripts/replay_jitter.py \
     "$REPLAY" "$CARGO_TARGET_DIR/release/examples/paired_xtilde" "$OUT" --r-s
 for c in 1 4; do
     "$ENV/bin/Rscript" -e 'library(knockoff); source("archive/2026-10-17_production-cleanup/benchmark_results/2026-10-13_s-zero-handling/r_stat.R")' "$REPLAY/chunk_$c" r_s 500 24 22 0.1

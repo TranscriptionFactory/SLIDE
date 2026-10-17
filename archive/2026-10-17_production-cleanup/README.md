@@ -13,7 +13,7 @@ combined R/Python/Rust repository cleanup. No measurements were rerun or deleted
 Archive operation: move each retired path from `benchmark_results/<name>` or
 `benchmarks/<name>` under this directory, keeping its name and contents. This is
 an organizational change, not a new experimental run. The
-[retained-evidence index](../../benchmark_results/README.md) explains what stayed.
+[retained-evidence index](../../benchmarks/results/README.md) explains what stayed.
 
 Archived scripts and recorded commands retain historical working-directory,
 environment and input assumptions. They are reference material, not supported

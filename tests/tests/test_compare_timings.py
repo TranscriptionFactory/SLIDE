@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-SPEC = importlib.util.spec_from_file_location("compare_timings", Path(__file__).parents[2] / "benchmarks/compare_timings.py")
+SPEC = importlib.util.spec_from_file_location("compare_timings", Path(__file__).parents[2] / "benchmarks/scripts/compare_timings.py")
 report = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(report)
 

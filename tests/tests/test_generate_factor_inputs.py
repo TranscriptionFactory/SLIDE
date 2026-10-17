@@ -8,7 +8,7 @@ import pytest
 
 
 SPEC = importlib.util.spec_from_file_location(
-    "generate_factor_inputs", Path(__file__).parents[2] / "benchmarks/generate_factor_inputs.py"
+    "generate_factor_inputs", Path(__file__).parents[2] / "benchmarks/scripts/generate_factor_inputs.py"
 )
 generator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(generator)

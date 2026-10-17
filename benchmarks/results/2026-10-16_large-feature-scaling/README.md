@@ -25,7 +25,7 @@ Inputs were generated with the existing frozen generator, once per p:
 
 ```bash
 OLD="$PWD/.tmpfiles/2026-10-16_production-readiness"
-OUT="$PWD/benchmark_results/2026-10-16_large-feature-scaling"
+OUT="$PWD/benchmarks/results/2026-10-16_large-feature-scaling"
 PY=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/python
 export TMPDIR="$OLD/scratch" TMP="$OLD/scratch" TEMP="$OLD/scratch"
 for p in 10000 15000 20000; do

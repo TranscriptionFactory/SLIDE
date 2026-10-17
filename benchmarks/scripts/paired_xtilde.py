@@ -20,7 +20,7 @@ from slide_py.knockoff.stats.glmnet import HAS_GLMNET, stat_glmnet_lambdasmax
 from slide_py.knockoff.filter import knockoff_threshold
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def sha256(path: Path) -> str:
@@ -110,7 +110,7 @@ def main() -> None:
     subprocess.run(
         [
             str(args.rscript),
-            str(ROOT / "benchmarks" / "paired_xtilde.R"),
+            str(ROOT / "benchmarks" / "scripts" / "paired_xtilde.R"),
             str(inputs / "z.raw"),
             str(inputs / "y.raw"),
             str(inputs / "a.raw"),

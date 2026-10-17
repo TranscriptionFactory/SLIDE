@@ -1,8 +1,8 @@
 import pytest
 import numpy as np
 
-from benchmarks.analyze_paired_xtilde import aggregate_selection, gaussian_kkt, jaccard, prefix_stability, validate_hashes, zero_entry_ties
-from benchmarks.replay_paired_xtilde import CHOLESKY_JITTER, CONTRASTS, contrast_summary, knockoff_factor, paired_vote_summary
+from benchmarks.scripts.analyze_paired_xtilde import aggregate_selection, gaussian_kkt, jaccard, prefix_stability, validate_hashes, zero_entry_ties
+from benchmarks.scripts.replay_paired_xtilde import CHOLESKY_JITTER, CONTRASTS, contrast_summary, knockoff_factor, paired_vote_summary
 
 
 def test_paired_vote_summary_preserves_pairing_and_direction():

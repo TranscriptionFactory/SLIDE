@@ -76,7 +76,7 @@ at 0.999; other factors are independent. Feature noise has standard deviation
 Null response is independent unit Gaussian noise. Save loadings, latent scores,
 feature noise and response noise with each input. The closest existing generator
 is the fixed p=6/K=2 fixture in `tests/tests/test_love.py`; it has no response or
-truth-export workflow. `benchmarks/generate_factor_inputs.py` supplies the
+truth-export workflow. `benchmarks/scripts/generate_factor_inputs.py` supplies the
 benchmark workflow without changing that fixture.
 
 ## Approved provisional margins and inference
@@ -128,7 +128,7 @@ Build (submitted job 11961811; script syntax checked):
 ```bash
 RUN="$PWD/.tmpfiles/2026-10-16_production-readiness"
 sbatch --parsable --output="$RUN/logs/build-%j.out" \
-  benchmark_results/2026-10-16_production-readiness/build.sbatch "$RUN"
+  benchmarks/results/2026-10-16_production-readiness/build.sbatch "$RUN"
 ```
 
 Raw per-cell outputs remain in staging, with
@@ -184,7 +184,7 @@ Rerun preparation and execution use the recorded environment plus existing tools
 
 ```bash
 export PROJECT="$PWD"
-export ASSESSMENT="$PROJECT/benchmark_results/2026-10-16_production-readiness"
+export ASSESSMENT="$PROJECT/benchmarks/results/2026-10-16_production-readiness"
 export RUN="$PROJECT/.tmpfiles/2026-10-16_production-readiness"
 export ENV=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev
 export R_DEPS=/vast/djishnu/Aaron/.tmpfiles/20260902_r-generated-knockoff-backend-evaluation/R-library
@@ -194,6 +194,7 @@ export R_DEPS=/vast/djishnu/Aaron/.tmpfiles/20260902_r-generated-knockoff-backen
 bash "$ASSESSMENT/prepare-command.sh"
 sbatch --output="$RUN/logs/preflight-%j.out" "$ASSESSMENT/preflight.sbatch"
 # Within the recorded four-CPU allocation, one manifest at a time:
+# environment.sh enters the frozen source tree; its runner paths retain that snapshot's layout.
 source "$ASSESSMENT/environment.sh"
 bash scripts/with-rust-blas-env.sh bash benchmarks/run_backend_array.sh --manifest "$RUN/first.json"
 bash scripts/with-rust-blas-env.sh bash benchmarks/run_backend_array.sh --manifest "$RUN/remaining.json"
@@ -242,7 +243,7 @@ import sys
 import pandas as pd
 sys.path.insert(0, "benchmarks")
 from replay_paired_xtilde import plot_sampler_votes
-out = Path("benchmark_results/2026-10-16_production-readiness/replay")
+out = Path("benchmarks/results/2026-10-16_production-readiness/replay")
 votes = pd.read_csv(out / "paired_votes.csv")
 votes = votes[votes.contrast == "r_s-native"].rename(columns={"factor": "feature"})
 votes["design"] = votes.chunk.map({1: "Native chunk 1 (Z20)", 4: "Native chunk 4 (Z74)"})
@@ -273,7 +274,7 @@ completed analysis files do not imply that cancelled simulations completed.
 
 The analysis artifacts under `ssc/` and `cd4/`, together with
 `ssc-analysis.log` and `cd4-analysis.log`, were recovered on 2026-10-17 from the
-sibling `../omni-SLIDE/benchmark_results/2026-10-16_production-readiness/`.
+sibling `../omni-SLIDE/benchmarks/results/2026-10-16_production-readiness/`.
 They are byte-identical copies of outputs from the original frozen
 `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4` run, not a rerun. The 60 raw
 `benchmark_summary.json` files in `results/` were restored from that run's
@@ -397,7 +398,7 @@ sys.path.insert(0, "benchmarks")
 from aggregate_seed_sweep import load_sweep, _jaccard
 
 for dataset in ("ssc", "cd4"):
-    root = Path("benchmark_results/2026-10-16_production-readiness/results") / dataset
+    root = Path("benchmarks/results/2026-10-16_production-readiness/results") / dataset
     arms = {name: load_sweep(root / name)["selections"] for name in ("rust", "python", "pure_r")}
     cells = sorted({(delta, lam) for arm in arms.values() for _, delta, lam in arm})
     for delta, lam in cells:

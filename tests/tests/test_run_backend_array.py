@@ -4,9 +4,9 @@ import subprocess
 
 
 def test_manifest_records_failure_and_stops_ladder(tmp_path):
-    script = Path(__file__).parents[2] / "benchmarks/run_backend_array.sh"
-    (tmp_path / "benchmarks").mkdir()
-    (tmp_path / "benchmarks/benchmark_backends.py").write_text(
+    script = Path(__file__).parents[2] / "benchmarks/scripts/run_backend_array.sh"
+    (tmp_path / "benchmarks/scripts").mkdir(parents=True)
+    (tmp_path / "benchmarks/scripts/benchmark_backends.py").write_text(
         "import json, pathlib, sys\n"
         "out = pathlib.Path(sys.argv[sys.argv.index('--out-dir')+1]) / 'rust'\n"
         "out.mkdir()\n"

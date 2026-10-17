@@ -283,9 +283,9 @@ settings, whose solver/grid differences are intentional. Delta/lambda are 0.1/0.
 | Torok All binary (44 × 15,496) | 1 | 434 / 434 / unavailable | 1,305.27 | 4,817.10 | timeout at 7,200 |
 
 CD4 entries are median [25th–75th percentile], not confidence intervals. Sources:
-[CD4 analysis and provenance](benchmark_results/2026-10-16_production-readiness/README.md),
-[capacity results](benchmark_results/2026-10-16_large-feature-scaling/README.md)
-and [Torok results and provenance](benchmark_results/2026-10-17_torok-all-binary/README.md).
+[CD4 analysis and provenance](benchmarks/results/2026-10-16_production-readiness/README.md),
+[capacity results](benchmarks/results/2026-10-16_large-feature-scaling/README.md)
+and [Torok results and provenance](benchmarks/results/2026-10-17_torok-all-binary/README.md).
 Capacity factor counts come from the corresponding per-backend
 `results/<dataset>/<backend>/seed_20000/benchmark_summary.json` files retained
 on the shared filesystem. The synthetic inputs have planted K=20, far below
@@ -338,11 +338,11 @@ mean cross-run Jaccard scores are descriptive summaries:
 Jaccard is shared selected factors divided by the union. Each mean averages all
 100 combinations of runs from two independently sampled arms. Pairs reuse runs,
 so these are not 100 independent observations or paired-seed comparisons. These summaries do not establish equivalence. See
-the [pilot backend-selection details](benchmark_results/2026-10-16_production-readiness/README.md#backend-selection-details),
-[SSc factor rates](benchmark_results/2026-10-16_production-readiness/ssc/factor_rates.csv)
-and [CD4 factor rates](benchmark_results/2026-10-16_production-readiness/cd4/factor_rates.csv).
+the [pilot backend-selection details](benchmarks/results/2026-10-16_production-readiness/README.md#backend-selection-details),
+[SSc factor rates](benchmarks/results/2026-10-16_production-readiness/ssc/factor_rates.csv)
+and [CD4 factor rates](benchmarks/results/2026-10-16_production-readiness/cd4/factor_rates.csv).
 
-![SSc marginal selection rates](benchmark_results/2026-10-16_production-readiness/ssc/factor_rates.png)
+![SSc marginal selection rates](benchmarks/results/2026-10-16_production-readiness/ssc/factor_rates.png)
 
 *Ten runs; factors shown were selected in at least 20% of runs in any arm. The
 figure encodes no uncertainty; the full CSV reports pointwise Wilson intervals.
@@ -355,10 +355,10 @@ knockoffs (including R SDP and Gaussian draws). `r_knockoffs` uses Python LOVE
 and the Python pipeline with R knockoffs through `rpy2`; neither is the pure-R
 SLIDE pipeline.
 
-The separate [four-arm replicate analysis](benchmark_results/2026-10-16_backend-replicates-four-arms/README.md)
+The [backend replicate analysis](benchmarks/results/2026-10-16_backend-replicates/README.md)
 uses source `c4726e3`, not the latest pilot source `4b32111`; do not pool the
-results. The completed low-delta Python-with-R-knockoffs cells from that same
-run are also retained in the [five-arm status and partial results](benchmark_results/2026-10-16_backend-replicates-all-arms/README.md).
+results. Its five-arm setup and the completed low-delta Python-with-R-knockoffs
+cells are documented in [replicate setup and partial results](benchmarks/results/2026-10-16_backend-replicates/SETUP.md).
 At SSc delta=0.01/lambda=0.1, all five arms completed ten cells:
 
 | Marginal factor | Rust | Python | R | Rust with R knockoffs | Python with R knockoffs |
@@ -386,10 +386,10 @@ Median wall seconds per completed cell (ten repeats unless noted):
 | 0.1 | 1.0 | 14.23 | 12.40 | 23.76 | 14.28 | Not started |
 
 These timing boundaries differ from the latest pilot's fresh-process timings;
-see the [four-arm report](benchmark_results/2026-10-16_backend-replicates-four-arms/README.md)
+see the [replicate report](benchmarks/results/2026-10-16_backend-replicates/README.md)
 for details.
 
-See the [saved SSc analysis summary](benchmark_results/2026-10-16_production-readiness/README.md).
+See the [saved SSc analysis summary](benchmarks/results/2026-10-16_production-readiness/README.md).
 SSc input/response identifiers differ; the benchmark preserves historical positional
 pairing, without verifying biological sample identity. Torok's Rust and Python
 runs both report marginal Z294, but Rust reports six interactions and Python five.
@@ -397,7 +397,7 @@ Matching K or a factor label alone does not establish aligned factor scores.
 
 Ten replicates cannot certify the pilot's narrow equivalence margins. The user
 cancelled the remaining simulations; partial truth results do not establish FDR
-control or production equivalence. See the [readiness pilot](benchmark_results/2026-10-16_production-readiness/README.md)
+control or production equivalence. See the [readiness pilot](benchmarks/results/2026-10-16_production-readiness/README.md)
 for frozen provenance, solver interventions and untested cases. Older speedup
 multipliers in [backend benchmark notes](docs/dev-notes/backend-benchmark.md)
 describe historical code and settings, not current release performance.
@@ -427,8 +427,7 @@ crates/            Rust workspace (slide-cli = `slide` binary; slide-core, -love
 src/slide_py/     Python package
 tests/             Python tests, shared R-reference fixtures, quick-start config
 examples/          R configs and saved outputs; HIV + cytokines dataset and Python notebook
-benchmarks/        Maintained backend comparison, timing and paired-replay tools
-benchmark_results/ Latest runtime, significant-LF and capacity evidence
+benchmarks/        Maintained tools (`scripts/`) and dated evidence (`results/`)
 archive/           Retired benchmark runs and diagnostic scripts
 docs/              User docs (tui-guide.md); docs/dev-notes/ holds design and research notes
 ```

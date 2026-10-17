@@ -40,7 +40,7 @@ with status_path.open('x') as status:
         out = Path(task['out'])
         out.mkdir(parents=True, exist_ok=False)
         with (out / 'harness.log').open('w') as log:
-            result = subprocess.run([sys.executable, 'benchmarks/benchmark_backends.py', *task['args']],
+            result = subprocess.run([sys.executable, 'benchmarks/scripts/benchmark_backends.py', *task['args']],
                                     stdout=log, stderr=subprocess.STDOUT)
         timing_path = out / task['backend'] / 'timings.json'
         timings = json.loads(timing_path.read_text()) if timing_path.exists() else []
@@ -57,8 +57,8 @@ PY
 fi
 
 BACKEND="${1:?Usage: run_backend.sh <python|r_knockoffs|rust>}"
-PROJECT_DIR="/ix/djishnu/Aaron/1_general_use/omni-SLIDE"
-OUT_DIR="${PROJECT_DIR}/benchmark_results/comprehensive"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUT_DIR="${PROJECT_DIR}/benchmarks/results/comprehensive"
 PARAM_GRID="${OUT_DIR}/param_grid.json"
 RUST_BIN="${PROJECT_DIR}/target/release/slide"
 
@@ -72,7 +72,7 @@ LAMBDA=$(python3 -c "import json; p=json.load(open('${PARAM_GRID}'))[${SLURM_ARR
 echo "=== BACKEND=${BACKEND} DELTA=${DELTA} LAMBDA=${LAMBDA} TASK_ID=${SLURM_ARRAY_TASK_ID} ==="
 echo "Started: $(date)"
 
-python3 benchmarks/benchmark_backends.py \
+python3 benchmarks/scripts/benchmark_backends.py \
     --backends "$BACKEND" \
     --delta "$DELTA" \
     --lam "$LAMBDA" \

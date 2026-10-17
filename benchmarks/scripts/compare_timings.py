@@ -2,10 +2,10 @@
 """Parse benchmark timing from SLURM output files and print a comparison table.
 
 Usage:
-    python benchmarks/compare_timings.py [SLURM_OUTPUT_FILES...]
-    python benchmarks/compare_timings.py --manifest first.json --manifest remaining.json --out report
+    python benchmarks/scripts/compare_timings.py [SLURM_OUTPUT_FILES...]
+    python benchmarks/scripts/compare_timings.py --manifest first.json --manifest remaining.json --out report
 
-If no files are given, scans benchmark_results/*.out for timing lines.
+If no files are given, scans benchmarks/results/*.out for timing lines.
 
 Timing lines are expected to match the pattern logged by benchmark_backends.py:
     <timestamp> INFO <backend> delta=<d> lam=<l>: <seconds>s (success|failed)
@@ -185,7 +185,7 @@ def main():
     if len(sys.argv) > 1:
         paths = [Path(p) for p in sys.argv[1:]]
     else:
-        paths = sorted(Path("benchmark_results").glob("*.out"))
+        paths = sorted(Path("benchmarks/results").glob("*.out"))
 
     records = parse_timings(paths)
     if not records:
