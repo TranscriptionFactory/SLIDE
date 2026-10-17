@@ -39,6 +39,10 @@ pub struct RunConfig {
     pub x_path: PathBuf,
     pub y_path: PathBuf,
 
+    /// Export native results and plots; omitted configurations stay checkpoint-only.
+    #[serde(default)]
+    pub out_path: Option<PathBuf>,
+
     pub delta: Vec<Scalar>,
     pub lambda: Vec<Scalar>,
 
@@ -145,7 +149,7 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
     eprintln!("Loading feature matrix from {}", cfg.x_path.display());
     let loaded = read_feature_matrix(&cfg.x_path, &MatrixReadOptions::default())
         .with_context(|| format!("failed to read feature matrix: {}", cfg.x_path.display()))?;
-    let x = loaded.matrix;
+    let x = &loaded.matrix;
 
     eprintln!("Loading response vector from {}", cfg.y_path.display());
     let y = read_response_vector(&cfg.y_path, &ResponseReadOptions::default())
@@ -162,7 +166,7 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
 
     let result = optimize_slide_with_checkpoint_progress(
         checkpoint,
-        &x,
+        x,
         &y,
         &cfg.x_path,
         &cfg.y_path,
@@ -186,6 +190,17 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
         best.interactions.sig_interacts.len(),
     );
     eprintln!("Checkpoint written to: {}", checkpoint.display());
+    if let Some(out_path) = &cfg.out_path {
+        crate::output::export_results(out_path, &loaded, &y, &result, &opt_config).with_context(
+            || {
+                format!(
+                    "result export failed at {}; completed checkpoint retained at {}",
+                    out_path.display(),
+                    checkpoint.display()
+                )
+            },
+        )?;
+    }
 
     Ok(())
 }

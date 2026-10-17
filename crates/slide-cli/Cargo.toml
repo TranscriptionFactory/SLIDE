@@ -17,6 +17,7 @@ name = "slide"
 path = "src/main.rs"
 
 [dependencies]
+cairo-rs = { version = "0.20", default-features = false, features = ["png", "pdf"] }
 anyhow.workspace = true
 csv.workspace = true
 ndarray.workspace = true
