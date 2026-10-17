@@ -13,95 +13,58 @@ except ImportError:
     so = None
 
 
+def _control_density(values):
+    """Gaussian KDE with R density's bw.nrd0, including its constant-data fallback."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size < 2:
+        raise ValueError("Control density requires at least two finite scores")
+    spread = 0.0 if np.ptp(values) == 0 else np.std(values, ddof=1)
+    iqr = np.subtract(*np.percentile(values, [75, 25])) / 1.34
+    scale = min(spread, iqr) or spread or abs(values[0]) or 1.0
+    bandwidth = 0.9 * scale * values.size ** -0.2
+    grid = np.linspace(values.min() - 3 * bandwidth, values.max() + 3 * bandwidth, 512)
+    density = np.exp(-0.5 * ((grid[:, None] - values) / bandwidth) ** 2).mean(axis=1)
+    density /= bandwidth * np.sqrt(2 * np.pi)
+    return grid, density
+
+
 class Plotter:
     def __init__(self):
         pass
     
     @staticmethod
-    def plot_latent_factors(lfs, outdir=None, title='Significant Latent Factors'):
-        """
-        Plot genes for each latent factor, colored by their sign and ordered by absolute loading values.
-
-        Parameters:
-        - lfs: Dictionary of DataFrames, where each key is a latent factor name and value is a DataFrame
-            with 'loading', 'AUC', 'corr', and 'color' columns. Index should be gene names.
-        - outdir: Optional directory to save the plot
-        - title: Title for the plot and output filename
-        """
-
-        # Set up colors and style
-        colors = {'red': '#FF4B4B', 'gray': '#808080', 'blue': '#4B4BFF'}
-        plt.style.use('default')
-
-        # Determine plot dimensions — match R: width = 1.5 * n_lfs, height = 7
-        n_lfs = len(lfs)
+    def plot_latent_factors(lfs, outdir=None, title='plotSigGenes_marginals', marginal_lfs=None):
+        """Render R's feature-list order and sign colors as a native PDF."""
         max_genes = max(len(df) for df in lfs.values())
-
-        fig_width = max(4, n_lfs * 2.5)
-        fig_height = max(5, max_genes * 0.4 + 1)
-
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=300)
-        fig.patch.set_facecolor('white')
-
-        # Plot each latent factor
-        for i, (lf_name, lr_info) in enumerate(lfs.items()):
-            # R ordering: corr-selected at bottom, loading-selected at top.
-            # Within each group, ascending so highest value ends up at the
-            # extreme (top for loading, just-below-loading for corr).
-            if 'group' in lr_info.columns:
-                corr_group = lr_info[lr_info['group'] == 'corr'].sort_values(
-                    by='corr', key=abs, ascending=True)
-                loading_group = lr_info[lr_info['group'] == 'loading'].sort_values(
-                    by='loading', key=abs, ascending=True)
-                lr_info = pd.concat([corr_group, loading_group])
-            else:
-                lr_info = lr_info.sort_values(by='loading', key=abs, ascending=True)
-            n_genes = len(lr_info)
-
-            # Define vertical spacing
-            spacing = fig_height / (max_genes + 2)  # avoid edges
-            start_y = spacing  # bottom padding
-
-            for j, (gene, row) in enumerate(lr_info.iterrows()):
-                y_pos = start_y + j * spacing
-                color = colors.get(row['color'], 'black')  # fallback to black
-
-                ax.text(i, y_pos, gene,
-                        color=color,
-                        fontsize=10,
-                        fontweight='bold',
-                        ha='center',
-                        va='center')
-
-        # Title
-        ax.set_title(title.replace('_', ' '), fontsize=14, weight='bold')
-
-        # Customize appearance
-        ax.set_xlim(-0.5, n_lfs - 0.5)
-        ax.set_ylim(0, fig_height)
-        ax.set_xticks(range(n_lfs))
-        ax.set_xticklabels(lfs.keys(), ha='center', rotation=45, fontsize=12)
+        fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(lfs)), 7), dpi=300)
+        for i, (lf_name, genes) in enumerate(lfs.items()):
+            emphasize = marginal_lfs is not None and lf_name in marginal_lfs
+            for height, (gene, row) in zip(range(len(genes), 0, -1), genes.iterrows()):
+                ax.text(i, height, gene, color=row['color'].lower(), fontsize=10,
+                        fontweight='bold' if emphasize else 'normal',
+                        fontstyle='italic' if emphasize else 'normal', ha='center', va='center')
+        ax.set_title('SLIDE Marginal Variables' if marginal_lfs is None else
+                     'Significant Latent Factors — Marginals (bold/italic) and Interactions')
+        ax.set_xlim(-0.5, len(lfs) - 0.5)
+        ax.set_ylim(0, max_genes + 1)
+        ax.set_xticks(range(len(lfs)), labels=lfs.keys())
         ax.set_yticks([])
-
-        # Remove spines
+        ax.set_xlabel('Significant Latent Factor')
+        ax.set_ylabel('Genes Associated with Significant Latent Factors')
         for spine in ax.spines.values():
             spine.set_visible(False)
-
         ax.grid(False)
-
-        plt.tight_layout()
+        fig.tight_layout()
         if outdir:
             os.makedirs(outdir, exist_ok=True)
-            plt.savefig(os.path.join(outdir, f'{title}.png'),
-                        dpi=300, bbox_inches='tight', facecolor='white')
-
+            fig.savefig(os.path.join(outdir, f'{title}.pdf'), bbox_inches='tight', facecolor='white')
         return fig
 
-    
     @staticmethod
     def plot_corr_network(X, lf_dict, outdir=None, minimum=0.25):
 
-        colors = {'red': '#FF4B4B', 'gray': '#808080', 'blue': '#4B4BFF'}
+        colors = {'red': '#FF0000', 'white': '#FFFFFF', 'blue': '#0000FF'}
 
         for lf, lf_loadings in lf_dict.items():
             lf_genes = lf_loadings.index.tolist()
@@ -145,60 +108,30 @@ class Plotter:
                        dpi=300, bbox_inches='tight', facecolor='white')
 
     @staticmethod
-    def plot_controlplot(scores, outdir=None, title='Control Plot', xlabel='Score'):
-        """
-        Plot control plot for different latent factor configurations.
-
-        Parameters:
-        - scores: Dictionary where keys are latent factor configurations (e.g., 'z_matrix', 'marginals', 'marginals&interactions')
-                 and values are lists of performance scores (e.g., AUC values)
-        - outdir: Optional directory to save the plot
-        - title: Title for the plot and output filename
-        - xlabel: Label for the x-axis (e.g., 'auc' or 'corr')
-        """
-        if sns is None:
-            raise ImportError(
-                "seaborn is required for plot_controlplot. "
-                "Install it with: pip install slide_py[viz]"
-            )
-        # Create figure with white background
-        sns.set_style('whitegrid')
+    def plot_controlplot(scores, outdir=None, title='ControlPerformancePlot', xlabel=None, file_format='png'):
+        """Render the R control comparison independently and save its canonical PNG."""
         fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
-        fig.patch.set_facecolor('white')
-        
-        # Plot density for random baselines
-        for score_type, color in [('full_random', 'blue'), ('partial_random', 'green')]:
-            if score_type not in scores:
+        for key, label, color in [('full_random', 'FullRandom', '#0000FF'),
+                                  ('partial_random', 'PartialRandom', '#00FF00')]:
+            if key not in scores:
                 continue
-            if len(set(scores[score_type])) == 1:  # If all values are the same
-                ax.axvline(x=scores[score_type][0], color=color, label=f'{score_type}', linewidth=2)
-            else:
-                sns.kdeplot(scores[score_type], label=score_type, ax=ax, fill=True, alpha=0.3, color=color)
-            
-        # Plot real model score as vertical line
-        perreal = scores['real']
-        ax.axvline(x=perreal, color='red', linestyle='--', label=f'real: {perreal:.3f}', linewidth=2)
-        
-        # Customize plot appearance
-        ax.set_title(title, fontsize=14, pad=15, fontweight='bold')
-        ax.set_xlabel(xlabel, fontsize=12, labelpad=10)
-        ax.set_ylabel('Density', fontsize=12, labelpad=10)
-        
-        # Customize grid and spines
-        ax.grid(True, linestyle='--', alpha=0.3)
-        for spine in ax.spines.values():
-            spine.set_linewidth(1.5)
-            
-        ax.legend(loc='upper left')
-        plt.tight_layout()
-        plt.title(title)
-        
-        # Save plot if outdir is provided
+            values = np.asarray(scores[key], dtype=float)
+            if np.isfinite(values).sum() < 2:
+                continue
+            grid, density = _control_density(values)
+            ax.fill_between(grid, density, alpha=0.7, color=color, label=label)
+        if np.isfinite(scores['real']):
+            ax.axvline(scores['real'], color='red', linestyle='--', linewidth=2, label='Real')
+        ax.set_xlabel(xlabel or scores.get('condition', 'corr'))
+        ax.set_ylabel('Density')
+        ax.grid(False)
+        ax.spines[['top', 'right']].set_visible(False)
+        ax.legend()
+        fig.tight_layout()
         if outdir:
-            plt.savefig(os.path.join(outdir, f'{title}.png'), 
-                       dpi=300, bbox_inches='tight', facecolor='white')
+            fig.savefig(os.path.join(outdir, f'{title}.{file_format}'), dpi=300, bbox_inches='tight')
         return fig
-    
+
     @staticmethod
     def plot_interactions(interaction_pairs, outdir=None, title='Interaction Pairs'):
         """

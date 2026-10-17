@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from collections import defaultdict
 from typing import Optional
 
 from sklearn.metrics import roc_auc_score, r2_score
@@ -11,7 +10,6 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from tqdm import tqdm
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from scipy.stats import pearsonr
-from .knockoffs import Knockoffs
 
 
 def _mean_valid_scores(scores: np.ndarray) -> float:
@@ -165,95 +163,93 @@ class Estimator():
         estimator = Estimator(model='auto', scaler=scaler)
         return estimator.evaluate(X, y, n_iters, test_size)
     
+def _control_score(X, y, condition):
+    """R calcControlPerformance: in-sample OLS, including binary responses."""
+    design = np.column_stack((np.ones(len(y)), X))
+    if not np.isfinite(design).all():
+        raise ValueError("Control model features must be finite; interaction products may have overflowed")
+    with np.errstate(over='ignore', invalid='ignore'):
+        fitted = design @ np.linalg.lstsq(design, y, rcond=None)[0]
+    if not np.isfinite(fitted).all():
+        raise ValueError("Control model predictions must be finite")
+    if condition == 'auc':
+        levels = np.unique(y)
+        auc = roc_auc_score(y == levels[1], fitted)
+        score = float(auc if np.median(fitted[y == levels[0]]) <=
+                      np.median(fitted[y == levels[1]]) else 1 - auc)
+    else:
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            model_ss = np.sum((fitted - fitted.mean()) ** 2)
+            residual_ss = np.sum((y - fitted) ** 2)
+            total_ss = model_ss + residual_ss
+            if not np.isfinite(total_ss):
+                raise ValueError("Control model score must be finite; sums of squares overflowed")
+            score = float(np.sqrt(model_ss / total_ss))
+    if not np.isfinite(score):
+        raise ValueError("Control model score must be finite")
+    return score
+
+
 class SLIDE_Estimator(Estimator):
 
     @staticmethod
     def score_performance(
             sig_LFs, sig_interacts, y, latent_factors, latent_factors_z2=None,
-            n_iters=100, test_size=0.2, scaler='standard'):
+            n_iters=1000, *,
+            interaction_pairs=None, seed=None, condition=None):
+        """R control scores from in-sample OLS without feature scaling.
+
+        interaction_pairs contains zero-based column positions, shape (2, L).
+        Random streams are local and are not identical to R's random streams.
         """
-        Score the performance of the given latent factors relative to each other and to random
-        selection of marginals and interactions.
-        This visualization is similar to the control plot in original R code.
-
-        s1: standalone LFs 
-        s2: interacting LF terms (marginal * interacting)
-        """
-
-        if latent_factors_z2 is None: # This is only for SLIDE_PLM
-            latent_factors_z2 = latent_factors
-
-        scores = defaultdict(list)
-        n = y.shape[0]
-        
-        s1 = latent_factors.loc[:, sig_LFs] # standalone LFs
-        s2 = Knockoffs.get_interaction_terms(s1, latent_factors_z2.loc[:, sig_interacts]).reshape(n, -1)        # interaction LF terms
-        s3 = np.concatenate([s1, s2], axis=1) if len(s2) > 0 else s1
-        scores['real'] = _mean_valid_scores(
-            Estimator.get_aucs(s3, y, n_iters, test_size, scaler)
-        )
-
-        n_marginals = s1.shape[1]
-        n_interactions = s2.shape[1]
-        sig_terms = np.concatenate([sig_LFs, sig_interacts], axis=0)
-        non_marginal_terms = latent_factors.columns[~latent_factors.columns.isin(sig_LFs)]
-        non_interaction_terms = latent_factors_z2.columns[~latent_factors_z2.columns.isin(sig_terms)]
-
-        # To prevent out of bounds when doing np.random.choice
-        n_interactions = min(n_interactions, len(non_interaction_terms))
-        n_marginals = min(n_marginals, len(non_marginal_terms))
-
-        # Skip random comparison if not enough non-significant terms to sample
-        if n_marginals == 0:
-            scores['full_random'] = np.array([np.nan])
-            scores['partial_random'] = np.array([np.nan])
-            return scores
-
-        for _ in range(n_iters):
-            # Get random marginal terms
-            s1_random = latent_factors.loc[:, np.random.choice(
-                non_marginal_terms, 
-                size=n_marginals, 
-                replace=False
-            )].values
-
-            # Get random interaction terms
-            s2_random = Knockoffs.get_interaction_terms(
-                s1_random,
-                latent_factors_z2.loc[:, np.random.choice(
-                    non_interaction_terms,
-                    size=n_interactions,
-                    replace=False
-                )]
-            ).reshape(n, -1)
-
-            # Combine random terms
-            s3_random = (np.concatenate([s1_random, s2_random], axis=1) 
-                        if len(s2_random) > 0 else s1_random)
-            
-            # Calculate scores for fully random selection
-            scores['full_random'].append(
-                Estimator.get_aucs(s3_random, y, 1, test_size, scaler)
-            )
-
-            # Calculate scores for partial random selection
-            s2_real = Knockoffs.get_interaction_terms(
-                s1,
-                latent_factors_z2.loc[:, np.random.choice(
-                    non_interaction_terms,
-                    size=n_interactions,
-                    replace=False
-                )]
-            ).reshape(n, -1)
-
-            s3_partial = (np.concatenate([s1, s2_real], axis=1) 
-                        if len(s2_real) > 0 else s1)
-            
-            scores['partial_random'].append(
-                Estimator.get_aucs(s3_partial, y, 1, test_size, scaler)
-            )
-
-        scores['partial_random'] = np.array(scores['partial_random']).flatten()
-        scores['full_random'] = np.array(scores['full_random']).flatten()
-
+        z = np.asarray(latent_factors, dtype=float)
+        z2 = z if latent_factors_z2 is None else np.asarray(latent_factors_z2, dtype=float)
+        y = np.asarray(y, dtype=float).reshape(-1)
+        if (z.ndim != 2 or z2.ndim != 2 or z.shape[0] != len(y)
+                or z2.shape[0] != len(y) or len(y) < 2
+                or not all(np.isfinite(a).all() for a in (z, z2, y))):
+            raise ValueError("Control scoring requires finite, row-aligned matrices and response")
+        if np.unique(y).size < 2:
+            raise ValueError("Control scoring requires a nonconstant response")
+        condition = condition or ('auc' if np.unique(y).size == 2 else 'corr')
+        if condition not in ('auc', 'corr') or (condition == 'auc' and np.unique(y).size != 2):
+            raise ValueError("condition must be corr, or auc with a binary response")
+        if not isinstance(n_iters, (int, np.integer)) or n_iters < 1:
+            raise ValueError("n_iters must be a positive integer")
+        marginal_idxs = latent_factors.columns.get_indexer(sig_LFs)
+        if (len(marginal_idxs) == 0 or (marginal_idxs < 0).any()
+                or len(set(marginal_idxs)) != len(marginal_idxs)):
+            raise ValueError("Control scoring requires distinct selected marginal factors")
+        if interaction_pairs is None and len(sig_interacts):
+            raise ValueError("Exact interaction_pairs are required for selected interactions")
+        pairs = np.asarray(interaction_pairs if interaction_pairs is not None else [])
+        if pairs.size == 0:
+            pairs = np.empty((2, 0), dtype=int)
+        if (pairs.ndim != 2 or pairs.shape[0] != 2
+                or not np.issubdtype(pairs.dtype, np.integer)
+                or (pairs < 0).any() or (pairs[0] >= z.shape[1]).any()
+                or (pairs[1] >= z2.shape[1]).any()
+                or not np.isin(pairs[0], marginal_idxs).all()):
+            raise ValueError("interaction_pairs must be valid 2-by-L marginal/partner indices")
+        k, count = len(marginal_idxs), pairs.shape[1]
+        if count > k * z2.shape[1]:
+            raise ValueError("Selected interactions exceed the random interaction pool")
+        with np.errstate(over='ignore', invalid='ignore'):
+            real = np.column_stack((z[:, marginal_idxs], z[:, pairs[0]] * z2[:, pairs[1]]))
+        scores = {'real': _control_score(real, y, condition), 'condition': condition}
+        rng = np.random.default_rng(seed)
+        for group in ('full_random', 'partial_random'):
+            if group == 'partial_random' and count == 0:
+                continue
+            values = []
+            for _ in range(n_iters):
+                selected = (rng.choice(z.shape[1], k, replace=False)
+                            if group == 'full_random' else marginal_idxs)
+                # R expand.grid lists all partners for each selected marginal.
+                terms = rng.choice(k * z2.shape[1], count, replace=False)
+                with np.errstate(over='ignore', invalid='ignore'):
+                    interactions = z[:, selected[terms // z2.shape[1]]] * z2[:, terms % z2.shape[1]]
+                design = np.column_stack((z[:, selected], interactions))
+                values.append(_control_score(design, y, condition))
+            scores[group] = np.asarray(values)
         return scores
