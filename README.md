@@ -66,9 +66,17 @@ cargo build --release          # binary: target/release/slide
 cargo install --path crates/slide-cli   # or install it on your PATH
 ```
 
-On an HPC cluster, load the OpenBLAS, GCC, CMake and LLVM modules first.
-`scripts/cargo-rust-blas` wraps `cargo` with the environment used on the
-Pitt CRC cluster; adapt `scripts/with-rust-blas-env.sh` for other sites.
+On Pitt CRC (RHEL 9), use the setup wrapper; no manual module loads are needed:
+
+```bash
+scripts/cargo-rust-blas build --release --locked
+```
+
+The wrapper loads LLVM, locates libclang, selects system GCC/G++ and binutils
+instead of Linuxbrew tools, and checks OpenBLAS and Cairo availability. It keeps
+compiler temporary files in `.tmpfiles/` and retains the Rust toolchain from your
+original PATH. On other clusters, load the required modules first and adapt
+`scripts/with-rust-blas-env.sh` for local library paths.
 
 ### Rust usage
 
