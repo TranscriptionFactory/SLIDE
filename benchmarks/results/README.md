@@ -23,3 +23,5 @@ inputs. Fixture provenance also points into the archive.
 Independent random draws, small replicate counts, cancelled simulations and
 unverified SSc sample identity limit interpretation. Matching factor counts does
 not establish matching selected sets, FDR control or production equivalence.
+
+- [Five-backend selection heatmap](2026-10-17_hybrid-selection/README.md): native and R-knockoff arms from the October 16 campaign, including partial Python-hybrid coverage.

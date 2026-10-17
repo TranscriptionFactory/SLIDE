@@ -106,6 +106,12 @@ CSV contains the full rates, Wilson intervals and adjusted tests.
 The ten Rust-hybrid summaries retained in the all-arms run directory match
 these frequencies and the per-run values in `timings.csv`.
 
+## Five-arm descriptive heatmap
+
+The [additional heatmap](../2026-10-17_hybrid-selection/README.md) includes
+both R-knockoff hybrids, with completed-run denominators and missing-cell
+labels. It does not change the four-arm statistical analysis below.
+
 ## Outputs
 
 - summary.csv: counts, within-arm overlap and runtime summaries.

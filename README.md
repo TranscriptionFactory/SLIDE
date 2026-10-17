@@ -378,6 +378,11 @@ A timeout does not mean zero selected factors or a 1,200-second per-cell runtime
 The 17 completed Python-hybrid score matrices match the corresponding R
 reference within 1.12×10⁻¹¹, with matching sample and factor order.
 
+![Five-backend marginal selection rates, including R-knockoff hybrids](benchmarks/results/2026-10-17_hybrid-selection/factor_rates.png)
+
+*Counts / completed runs; gray means no completed runs. Colors show no
+uncertainty. [Full rates, limits and reproduction](benchmarks/results/2026-10-17_hybrid-selection/README.md).*
+
 Median wall seconds per completed cell (ten repeats unless noted):
 
 | Delta | Lambda | Rust | Python | R | Rust with R knockoffs | Python with R knockoffs |

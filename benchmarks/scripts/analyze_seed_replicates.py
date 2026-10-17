@@ -313,6 +313,76 @@ def plot(df, factors, order, heatmap_cells, out):
     plt.close(fig)
 
 
+def saved_selection_rates(source):
+    """Describe saved replicate selections, including only successful hybrid cells."""
+    df = pd.read_csv(source / "timings.csv").fillna({"marginal": ""})
+    rows = df[["arm", "cell", "marginal"]].to_dict("records")
+    for path in sorted((source / "results" / "r_knockoffs").glob("seed_*/r_knockoffs/timing_shards/*.json")):
+        shard = json.loads(path.read_text())
+        if shard["status"] != "success":
+            continue
+        delta, lam = shard["delta"], shard["lam"]
+        selections = path.parent.parent / f"{delta}_{lam}_out" / "sig_LFs.txt"
+        rows.append(dict(arm="r_knockoffs", cell=f"d={delta} l={lam}", marginal=selections.read_text()))
+    runs = pd.DataFrame(rows)
+    runs["marginal"] = runs.marginal.map(lambda text: set(text.split()))
+    order = list(df.arm.unique()) + ["r_knockoffs"]
+    rates = []
+    for cell, group in runs.groupby("cell", sort=False):
+        factors = sorted(set().union(*group.marginal), key=lambda f: int(f[1:]))
+        for arm in order:
+            selections = group.loc[group.arm == arm, "marginal"]
+            n = len(selections)
+            for factor in factors:
+                count = sum(factor in selected for selected in selections)
+                lo, hi = wilson(count, n) if n else (np.nan, np.nan)
+                rates.append(dict(cell=cell, factor=factor, arm=arm, selected=count if n else np.nan,
+                                  completed=n, rate=count/n if n else np.nan, lo=lo, hi=hi))
+    return pd.DataFrame(rates), order
+
+
+def plot_saved_selections(source, out):
+    """Five-arm descriptive heatmap; missing cells are not zero selections."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    rates, order = saved_selection_rates(source)
+    rates.to_csv(out / "factor_rates.csv", index=False)
+    labels = {"rust": "Rust", "python": "Python", "pure_r": "R",
+              "rust_r_knockoffs": "Rust + R knockoffs", "r_knockoffs": "Python + R knockoffs"}
+    sns.set_theme(style="white", font_scale=0.9)
+    cells = list(rates.cell.unique())
+    fig, axes = plt.subplots(2, 2, figsize=(13, 13))
+    for ax, cell in zip(axes.flat, cells):
+        group = rates[rates.cell == cell]
+        matrix = group.pivot(index="factor", columns="arm", values="rate").reindex(columns=order)
+        matrix = matrix.loc[matrix.max(axis=1) >= 0.2]
+        matrix = matrix.reindex(sorted(matrix.index, key=lambda f: int(f[1:])))
+        annotations = group.assign(label=group.apply(
+            lambda r: f"{int(r.selected)}/{r.completed}" if r.completed else "N/A", axis=1)
+        ).pivot(index="factor", columns="arm", values="label").reindex(index=matrix.index, columns=order)
+        ax.set_facecolor("#dedede")
+        sns.heatmap(matrix, ax=ax, vmin=0, vmax=1, cmap="viridis", annot=annotations, fmt="",
+                    cbar=ax is axes.flat[-1], cbar_kws={"label": "Selection rate (completed runs)"})
+        for j, arm in enumerate(order):
+            if matrix[arm].isna().all():
+                for i in range(len(matrix)):
+                    ax.text(j + 0.5, i + 0.5, "N/A", ha="center", va="center", fontsize=9)
+        ax.set(title=cell, xlabel="", ylabel="Latent factor")
+        ax.set_xticklabels([labels[a] for a in order], rotation=25, ha="right")
+        ax.tick_params(axis="y", rotation=0)
+    fig.suptitle("Marginal latent-factor selection: native and R-knockoff backends\n"
+                 "Counts / completed runs; factors with rate ≥ 20% in any arm", fontsize=15)
+    fig.text(0.5, 0.01, "Python + R knockoffs: 17/40 cells completed; 7-run cell is completion-biased. Gray = no completed runs.\n"
+             "Descriptive only; colors show no uncertainty (CSV: pointwise Wilson intervals). Factor identities are cell-local.",
+             ha="center", fontsize=10)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.95))
+    fig.savefig(out / "factor_rates.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def match_truth(z, truth, threshold=0.95):
     """Match centered scores without outcomes; dummy columns leave weak matches unassigned."""
     if z.ndim != 2 or truth.ndim != 2 or z.shape[0] != truth.shape[0]:
@@ -506,7 +576,8 @@ def plot_truth(summary, out):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("out", type=Path)
-    p.add_argument("--arm", action="append", required=True, type=parse_arm, help="NAME=BACKEND:DIR[,DIR...]")
+    p.add_argument("--arm", action="append", type=parse_arm, help="NAME=BACKEND:DIR[,DIR...]")
+    p.add_argument("--saved-selection-results", type=Path, help="Plot retained timings and successful R-knockoff shards; no statistical tests")
     p.add_argument("--test", action="append", default=[], type=lambda s: tuple(s.split(":")), help="LEFT:RIGHT")
     p.add_argument("--truth-input-root", type=Path, help="Truth mode: inputs/<regime>/seed_<seed>; arm dirs must end <regime>/<backend>")
     p.add_argument("--min-runs", type=int, default=10, help="Fail if an arm has fewer runs in any cell")
@@ -519,8 +590,12 @@ def main():
     p.add_argument("--bootstrap", type=int, default=10000)
     p.add_argument("--random-seed", type=int, default=0)
     args = p.parse_args()
-    if not args.truth_input_root and not args.test:
-        p.error("--test is required outside truth mode")
+    if args.saved_selection_results:
+        args.out.mkdir(parents=True, exist_ok=True)
+        plot_saved_selections(args.saved_selection_results, args.out)
+        return
+    if not args.arm:
+        p.error("--arm is required outside saved-selection mode")
     if not args.truth_input_root and not args.test:
         p.error("--test is required outside truth mode")
     if args.truth_input_root and (args.equivalence or args.z_reference):

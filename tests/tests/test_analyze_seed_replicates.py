@@ -183,3 +183,21 @@ def test_truth_differences_pair_dataset_seeds_and_report_missing_coverage():
     assert (result.backend_only_seeds == '[3]').all()
     assert (result.reference_only_seeds == '[4]').all()
     assert (result.simultaneous_lo == -1).all() and (result.simultaneous_hi == 1).all()
+
+
+def test_saved_hybrid_rates_preserve_partial_and_missing_cells():
+    source = PATH.parents[1] / "results" / "2026-10-16_backend-replicates"
+    rates, order = analysis.saved_selection_rates(source)
+    assert len(order) == 5
+    hybrid = rates[rates.arm == "r_knockoffs"].set_index(["cell", "factor"])
+    assert hybrid.loc[("d=0.01 l=0.1", "Z74"), "selected"] == 8
+    assert hybrid.loc[("d=0.01 l=1.0", "Z18"), "completed"] == 7
+    assert hybrid.loc[("d=0.01 l=1.0", "Z18"), "rate"] == 6 / 7
+    missing = hybrid.loc["d=0.1 l=0.1"]
+    assert (missing.completed == 0).all()
+    assert missing[["selected", "rate", "lo", "hi"]].isna().all().all()
+    original = pd.read_csv(source / "factor_rates.csv")
+    for arm in order[:-1]:
+        actual = rates[rates.arm == arm].set_index(["cell", "factor"])
+        expected = original.set_index(["cell", "factor"])
+        np.testing.assert_allclose(actual.loc[expected.index, "rate"], expected[f"{arm}_rate"])
