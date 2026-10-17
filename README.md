@@ -65,8 +65,8 @@ Pitt CRC cluster; adapt `scripts/with-rust-blas-env.sh` for other sites.
 From the repository root, save this small smoke-test config as `rust-quick.yaml`:
 
 ```yaml
-x_path: example/HIV+cytokines_X.csv
-y_path: example/HIV+cytokines_y.csv
+x_path: examples/HIV+cytokines_X.csv
+y_path: examples/HIV+cytokines_y.csv
 out_path: out/rust-quick
 delta: [0.1]
 lambda: [0.1]
@@ -98,7 +98,7 @@ slide submit --script job.sh --checkpoint out/checkpoint.json
 ```
 
 Run these from the repository root; Rust resolves relative input paths against
-the working directory. The bundled data live in `example/`. Add `-v` to print per-stage timing.
+the working directory. The bundled data live in `examples/`. Add `-v` to print per-stage timing.
 `slide monitor` exits non-zero if the pipeline fails or you quit the TUI
 before it finishes.
 
@@ -108,8 +108,8 @@ reference and SLURM workflows.
 ### Config
 
 ```yaml
-x_path: example/HIV+cytokines_X.csv   # samples x features, first column = sample IDs
-y_path: example/HIV+cytokines_y.csv   # samples x 1 response
+x_path: examples/HIV+cytokines_X.csv   # samples x features, first column = sample IDs
+y_path: examples/HIV+cytokines_y.csv   # samples x 1 response
 delta: [0.05, 0.1]                    # LOVE thresholds; each (delta, lambda) pair is one grid cell
 lambda: [0.1, 0.5]
 y_factor: true                        # categorical response
@@ -162,8 +162,8 @@ still need release verification.
 Save this as `python-quick.yaml` in the repository root:
 
 ```yaml
-x_path: example/HIV+cytokines_X.csv
-y_path: example/HIV+cytokines_y.csv
+x_path: examples/HIV+cytokines_X.csv
+y_path: examples/HIV+cytokines_y.csv
 out_path: out/python-quick
 delta: [0.1]
 lambda: [0.1]
@@ -193,8 +193,8 @@ config. From Python:
 from slide_py import OptimizeSLIDE
 
 params = {
-    "x_path": "example/HIV+cytokines_X.csv",
-    "y_path": "example/HIV+cytokines_y.csv",
+    "x_path": "examples/HIV+cytokines_X.csv",
+    "y_path": "examples/HIV+cytokines_y.csv",
     "out_path": "results/",
     "delta": [0.01],
     "lambda": [0.5, 0.1],
@@ -343,8 +343,10 @@ DESCRIPTION, NAMESPACE  R package metadata
 crates/            Rust workspace (slide-cli = `slide` binary; slide-core, -love, -knockoff, -glmnet, -sdp, ...)
 src/slide_py/     Python package
 tests/             Python tests, shared R-reference fixtures, quick-start config
-example/           HIV + cytokines example dataset and notebook
-benchmarks/        R/Rust/Python comparison and timing scripts
+examples/          R configs and saved outputs; HIV + cytokines dataset and Python notebook
+benchmarks/        Maintained backend comparison, timing and paired-replay tools
+benchmark_results/ Latest runtime, significant-LF and capacity evidence
+archive/           Retired benchmark runs and diagnostic scripts
 docs/              User docs (tui-guide.md); docs/dev-notes/ holds design and research notes
 ```
 

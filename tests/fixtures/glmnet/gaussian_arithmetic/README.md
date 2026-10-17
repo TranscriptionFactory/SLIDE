@@ -13,3 +13,7 @@ No R-prepared design or lambda grid is supplied to either Rust path.
 The inputs are the saved `z.raw` (24 × 22), `xt_fixed.raw` draw 1,
 `y.raw`, and `swaps.raw` draw 1, exported as round-trip `%.17g` CSVs.
 The existing fixed-draw replay regenerates the R reference on these saved inputs.
+
+The historical `fixed-draws/` inputs above are not bundled in this checkout.
+The retained investigation report is in
+[`archive/2026-10-17_production-cleanup/benchmark_results/2026-10-15_rust-covariance/README.md`](../../../../archive/2026-10-17_production-cleanup/benchmark_results/2026-10-15_rust-covariance/README.md).

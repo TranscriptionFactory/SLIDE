@@ -115,11 +115,11 @@ scripts/with-rust-blas-env.sh cargo build --release -p slide-knockoff --example 
 export R_LIBS="$PWD/.tmpfiles/2026-09-12_r-stability/R-library:/vast/djishnu/Aaron/.tmpfiles/20260902_r-generated-knockoff-backend-evaluation/R-library"
 RSCRIPT=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript
 RESULTS=benchmark_results/2026-09-12_rust-runtime-profile
-scripts/with-rust-blas-env.sh python benchmarks/profile_rust_knockoffs.py \
+scripts/with-rust-blas-env.sh python archive/2026-10-17_production-cleanup/benchmarks/profile_rust_knockoffs.py \
   --manifest "$RESULTS/manifest.json" --out "$TMPDIR/marginal" \
   --binary target/release/examples/profile_voting --rscript "$RSCRIPT" \
   --niter 100 --repeats 3
-scripts/with-rust-blas-env.sh python benchmarks/profile_rust_knockoffs.py \
+scripts/with-rust-blas-env.sh python archive/2026-10-17_production-cleanup/benchmarks/profile_rust_knockoffs.py \
   --manifest "$RESULTS/interaction_manifest.json" --out "$TMPDIR/interaction" \
   --binary target/release/examples/profile_voting --rscript "$RSCRIPT" \
   --niter 100 --repeats 1

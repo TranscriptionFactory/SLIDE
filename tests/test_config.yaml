@@ -1,9 +1,9 @@
 # Test configuration for HIV cytokine pipeline validation
 # Mirrors archive/comparison/build_check_config.yaml with test-local output path
 
-x_path: /ix/djishnu/Aaron/1_general_use/SLIDE_py/example/HIV+cytokines_X.csv
-y_path: /ix/djishnu/Aaron/1_general_use/SLIDE_py/example/HIV+cytokines_y.csv
-out_path: /ix/djishnu/Aaron/1_general_use/SLIDE_py/tests/test_outputs
+x_path: examples/HIV+cytokines_X.csv
+y_path: examples/HIV+cytokines_y.csv
+out_path: tests/test_outputs
 
 delta:
   - 0.1

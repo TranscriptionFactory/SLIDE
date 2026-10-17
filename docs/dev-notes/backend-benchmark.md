@@ -317,9 +317,9 @@ Sig LF variation is expected — knockoff selection is stochastic.
 
 ```bash
 # Submit all 3 backends in parallel + comparison job
-sbatch benchmarks/run_benchmark.sbatch           # array job: tasks 0-2
+sbatch archive/2026-10-17_production-cleanup/benchmarks/run_benchmark.sbatch           # array job: tasks 0-2
 sbatch --dependency=afterok:<ARRAY_JOB_ID> \
-       benchmarks/run_benchmark_compare.sbatch    # comparison + viz
+       archive/2026-10-17_production-cleanup/benchmarks/run_benchmark_compare.sbatch    # comparison + viz
 
 # Timings are persisted to benchmark_results/{backend}/timings.json
 # Plots saved to benchmark_results/figures/

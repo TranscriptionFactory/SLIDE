@@ -40,3 +40,7 @@ PY
 The explicit R call confirms that the saved augmented width is below 500 and
 uses the covariance implementation, rather than relying only on automatic
 dispatch. The expected value is read from R output, never from candidate output.
+
+The historical `fixed-draws/` inputs above are not bundled in this checkout.
+The retained investigation report is in
+[`archive/2026-10-17_production-cleanup/benchmark_results/2026-10-15_rust-covariance/README.md`](../../../../archive/2026-10-17_production-cleanup/benchmark_results/2026-10-15_rust-covariance/README.md).

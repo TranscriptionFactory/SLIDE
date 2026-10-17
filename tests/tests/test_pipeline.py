@@ -32,7 +32,7 @@ import pytest
 # Paths
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_EXAMPLE_DIR = _PROJECT_ROOT / "example"
+_EXAMPLE_DIR = _PROJECT_ROOT / "examples"
 _REFERENCE_BASE = (
     _PROJECT_ROOT
     / "archive"

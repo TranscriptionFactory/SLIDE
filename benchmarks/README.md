@@ -1,5 +1,29 @@
 # Backend benchmark configurations
 
+## Maintained tools and saved results
+
+See the [retained-evidence index](../benchmark_results/README.md) for current
+runtime, memory and significant-LF comparisons. Keep each new run in a dated,
+descriptive directory under `benchmark_results/`, with its command/configuration
+and differences from the preceding run in a `README.md`.
+
+- `benchmark_backends.py`, `run_slide_r.R`, `run_backend_array.sh`: backend
+  execution, including bounded manifest runs. `vendor_slide_opt_iter.patch`
+  supports the optional vendored-R selection mode.
+- `generate_factor_inputs.py`: shared known-truth simulation inputs.
+- `analyze_seed_replicates.py`, `aggregate_seed_sweep.py`: significant-LF/set
+  comparisons and statistical summaries.
+- `compare_timings.py`: runtime/memory summaries and figures from manifests.
+- `prepare_paired_cell.py`, `paired_xtilde.py`, `paired_xtilde.R`,
+  `analyze_paired_xtilde.py`, `replay_paired_xtilde.py`: saved-draw preparation,
+  replay and analysis for investigating selection differences.
+
+One-off diagnostics, old plotting tools and machine-specific launchers moved to
+the [cleanup archive](../archive/2026-10-17_production-cleanup/README.md).
+Use the retained run commands rather than those historical launchers.
+
+## Configuration modes
+
 Use `--configuration parity` for a Gaussian configuration-matched comparison.
 The default, `--configuration native`, preserves backend solver defaults and
 inherited overrides. Neither mode pairs random draws across implementations.

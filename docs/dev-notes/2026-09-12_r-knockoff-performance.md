@@ -88,7 +88,7 @@ export TMPDIR="$PWD/.tmpfiles/2026-09-12_r-knockoff-perf"
 export TMP="$TMPDIR" TEMP="$TMPDIR"
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 Rscript --vanilla tests/test_r_knockoff_performance.R
-Rscript --vanilla benchmarks/profile_r_knockoffs.R \
+Rscript --vanilla archive/2026-10-17_production-cleanup/benchmarks/profile_r_knockoffs.R \
   .tmpfiles/2026-09-12_r-knockoff-perf/repeat-benchmark
 SLIDE_R_OPTIMIZE=1 Rscript --vanilla benchmarks/run_slide_r.R <existing runner arguments>
 ```

@@ -1515,9 +1515,9 @@ mod tests {
     ///   xtilde/xt_<k>.csv                    byte-identical X-tilde draw k
     ///   rust_realized_corr.csv (j,mean_abs_corr)  mean_k |corr(Z_j, X~_j)|
     ///
-    /// Then `benchmarks/attrib_xinject.R` reads sigma/mu/diag_s + each xt_<k> and
+    /// Then `archive/2026-10-17_production-cleanup/benchmarks/attrib_xinject.R` reads sigma/mu/diag_s + each xt_<k> and
     /// emits (c) R-glmnet on rust's X-tilde and (b) R-glmnet on R's own draws, so
-    /// `benchmarks/attrib_report.py` can print H2=(a')-(c), H1=(c)-(b), swap=(a)-(a').
+    /// `archive/2026-10-17_production-cleanup/benchmarks/attrib_report.py` can print H2=(a')-(c), H1=(c)-(b), swap=(a)-(a').
     ///   cargo test -p slide-knockoff emit_knockoff_attribution -- --ignored --nocapture
     #[test]
     #[ignore = "diagnostic: set SLIDE_ATTR_* and run with --ignored"]

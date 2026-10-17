@@ -17,8 +17,8 @@ Usage:
 
     # Quick test on HIV data
     python benchmarks/benchmark_backends.py \\
-        --x-path example/HIV+cytokines_X.csv \\
-        --y-path example/HIV+cytokines_y.csv \\
+        --x-path examples/HIV+cytokines_X.csv \\
+        --y-path examples/HIV+cytokines_y.csv \\
         --y-factor --delta 0.1 --lambda 0.5
 
     # Submit to SLURM

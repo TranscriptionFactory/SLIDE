@@ -25,4 +25,4 @@ The Rust core test checks native votes and pairs against this reference. The
 Python test fits these same saved draws, checks the corrected response and vote
 counts, and replays the production interaction controller's retries. Both use
 an intercept when regressing out Z0, matching R `correctIt` (`lm(y ~ z)`).
-Native capture commands: `benchmark_results/2026-10-16_interaction-cap-reference/README.md`.
+Native capture commands: `archive/2026-10-17_production-cleanup/benchmark_results/2026-10-16_interaction-cap-reference/README.md`.

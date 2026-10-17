@@ -1,6 +1,6 @@
 # Quick test config: small grid + few iterations for visible TUI progress
-x_path: example/HIV+cytokines_X.csv
-y_path: example/HIV+cytokines_y.csv
+x_path: examples/HIV+cytokines_X.csv
+y_path: examples/HIV+cytokines_y.csv
 
 delta:
   - 0.05

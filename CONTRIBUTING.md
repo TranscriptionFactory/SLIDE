@@ -40,7 +40,7 @@ src/slide_py/                  # Python package (`slide-py run`, OptimizeSLIDE)
 └── ...
 
 docs/                          # User docs; docs/dev-notes/ holds design specs and research notes
-example/                       # HIV cytokines example dataset + notebook
+examples/                      # R examples and HIV cytokines dataset + Python notebook
 tests/                         # Configs, fixtures, test scripts
 ```
 
@@ -264,4 +264,4 @@ Ask Aaron, or check:
 - `docs/dev-notes/specs/design.md` — full architectural rationale
 - `docs/dev-notes/specs/tasks.md` — detailed task checklist with completion status
 - `docs/tui-guide.md` — TUI user guide
-- `example/example.ipynb` — Jupyter notebook walkthrough
+- `examples/example.ipynb` — Jupyter notebook walkthrough
