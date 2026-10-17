@@ -134,6 +134,16 @@ in this result directory.
 
 ## Execution checkpoint
 
+The user cancelled the remaining simulations after about 7 hours 14 minutes of
+job 11962087, prioritizing scaling above 5,000 input features. Applied
+`scancel 11962087`; preserve partial outputs and count unrun cells as unrun, not
+successful. The existing `afterany` analysis dependency permits analysis of the
+partial run after cancellation. Scaling job 11962088 had already completed.
+Its 600-second cell cap was a pilot compute guardrail, not a capacity limit;
+R's timeout at p=4,000 caused p=8,000 and p=12,000 to be skipped under the approved
+stop rule. Those larger R cases therefore remain untested, not demonstrated
+failures. Any follow-up should target them directly with an approved larger cap.
+
 | Job | Work | State at checkpoint |
 | --- | --- | --- |
 | 11961811 | Release build + copied optional diagnostic | Binary built; diagnostic lacked sigma.csv |
