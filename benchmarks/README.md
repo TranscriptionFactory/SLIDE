@@ -120,3 +120,23 @@ repeats each arm's first fit, and checks tied-entry statistics and thresholds.
 It saves per-draw fits/W, paired vote differences and Monte Carlo SE,
 prefix/findOptIter summaries, input hashes, and a vote-difference figure.
 This diagnoses fixed-design sensitivity, not full-pipeline parity or FDR control.
+
+## Source revisions after history cleanup
+
+On 2026-10-17, `git-filter-repo` removed root `tmpfiles/` and `.tmpfiles/`
+paths from local history. Measurement files did not change. Run reports retain
+the original revisions that were executed; use these filtered revisions when
+inspecting the corresponding source in this checkout:
+
+| Recorded revision | Filtered revision | Evidence |
+| --- | --- | --- |
+| `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4` | `bdc1054b3c175937f5dd8741a6dc840579da29ad` | Readiness pilot, scaling and Torok production source |
+| `c4726e34fde91e59429f88d2fd228f785ce845dc` | `f241643ae63cf8a2b592eeeb3ed5042f85bc9881` | Five-arm replicate campaign source |
+| `5bcde18f9bef1290239b2d8b429abc50cec34dfc` | `836b0f8774e0ca864b95e503a89a8c0c08b59294` | Readiness analysis source |
+
+The full local mapping is in `.git/filter-repo/commit-map`. The ignored
+`archive/2026-10-17_history-backup/` preserves the unfiltered Git database,
+all three stashes, retired scratch files and a copy of the mapping. Neither
+backup nor local staging data is part of a fresh clone. The retained replay
+helpers now live under `benchmarks/scripts/`; untracked `.tmpfiles/` inputs
+were not deleted. No benchmarks were rerun for this cleanup.
