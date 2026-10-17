@@ -67,5 +67,24 @@ Wall time includes fresh-process startup, I/O and preprocessing. Process-group
 RSS is sampled, can double-count shared pages and can miss short peaks.
 
 Single-run capacity evidence does not establish binary-backend equivalence,
-FDR control or generalization. Output content, costs and plots remain to be
-verified after jobs finish. No automatic retries or algorithm changes.
+FDR control or generalization. The saved numeric results below have been checked against the per-backend
+summaries; plots and patient-level outputs have not been re-inspected. No automatic retries or algorithm changes.
+
+## Saved results (2026-10-17 update)
+
+The retained `results/torok_all_binary/<backend>/seed_20000/benchmark_summary.json`
+files on the shared filesystem report:
+
+| Backend | Status | Fresh-process wall s | Sampled peak RSS, bytes | Sampled peak RSS, GiB | K | Selected marginals | Selected interactions |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Rust | success | 1,305.27 | 4,069,863,424 | 3.79 | 434 | 1 | 6 |
+| Python | success | 4,817.10 | 10,128,908,288 | 9.43 | 434 | 1 | 5 |
+| R | timeout | 7,200.04 (cap) | 7,135,391,744 | 6.65 | unavailable | unavailable | unavailable |
+
+GiB = bytes / 2³⁰. R's RSS describes only its observed partial execution, not
+a completed model's memory cost. Both native summaries report marginal Z294;
+Rust additionally reports interaction Z294:Z214. The other five reported
+interaction pairs coincide after normalizing the pair separator. These labels
+and matching K do not establish score-matrix alignment, selection stability or
+binary-backend equivalence. One run per backend, n=44 and p=15,496 remain the
+scope of this capacity observation; final predictive CV was not run.

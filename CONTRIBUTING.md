@@ -6,7 +6,7 @@ Hey! Thanks for wanting to help out. This doc covers how the project is set up, 
 
 ## What is this?
 
-omni-SLIDE is a Rust rewrite of the SLIDE (Statistical Latent Inference for Discovery and Explanation) pipeline. Given a feature matrix X and a response y, SLIDE:
+omni-SLIDE is a Rust rewrite of the SLIDE pipeline. Given a feature matrix X and a response y, SLIDE:
 
 1. **LOVE decomposition** — finds latent factors (loading matrix A, factor scores Z)
 2. **Knockoff selection** — picks which factors matter using FDR-controlled knockoff voting
@@ -139,7 +139,7 @@ The integration test in `slide-core` loads the HIV cytokines fixture from `tests
 
 ## The TUI
 
-The terminal dashboard (`crates/slide-cli/src/tui.rs`) has four tabs:
+The terminal dashboard (`crates/slide-cli/src/tui.rs`) has five tabs:
 
 | Tab | What it shows |
 |-----|---------------|
@@ -147,6 +147,7 @@ The terminal dashboard (`crates/slide-cli/src/tui.rs`) has four tabs:
 | **LOVE** | Seven sub-views: diagnostics, covariance matrix, loading heatmap, group correlation, block correlation, gamma distribution, interaction network |
 | **Factors** | Per-factor detail: top features by loading weight, score distributions |
 | **SLIDE** | Knockoff frequency bar charts for marginal factor and interaction selection |
+| **Performance** | Final-CV results when available and model-performance diagnostics |
 
 Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` for runs, `PgDn`/`PgUp` for factors, `v` or `1-7` for sub-views, `q` to quit. Full details in `docs/tui-guide.md`.
 

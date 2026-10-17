@@ -55,4 +55,25 @@ This experiment does not establish capacity for n greater than 50.
 
 All nine manifests passed existing runner validation; shell scripts passed
 `bash -n`. Cost plots from `aggregate.sh` must be inspected after jobs finish.
-No results or plots are verified at submission time.
+At submission time, no results or plots had been verified. The update below
+checks saved numeric summaries; it does not claim a new visual inspection.
+
+## Saved results (2026-10-17 update)
+
+`costs/summary.csv` contains six successful native cells and three R timeouts.
+Each R cell reached its 7,200-second harness cap; this is not an observed
+completion time or proof that R cannot complete with a larger budget.
+
+| p | Rust wall s / sampled peak GiB | Python wall s / sampled peak GiB | Estimated K, Rust / Python | Selected marginals, Rust / Python | Selected interactions, Rust / Python |
+| ---: | ---: | ---: | --- | --- | --- |
+| 10,000 | 115.93 / 2.30 | 111.85 / 4.73 | 178 / 178 | 9 / 8 | 36 / 31 |
+| 15,000 | 76.86 / 5.02 | 114.00 / 10.31 | 136 / 136 | 4 / 5 | 17 / 19 |
+| 20,000 | 90.69 / 8.97 | 137.00 / 18.13 | 109 / 109 | 2 / 4 | 7 / 12 |
+
+Factor and selection counts come from the retained
+`results/scale_n50_p<P>/<backend>/seed_20000/benchmark_summary.json` files on
+the shared filesystem. Estimated K differs substantially from planted K=20;
+these runs measure capacity rather than accurate latent-rank recovery. Matching
+K alone does not establish aligned factors or equivalent selections. All rows
+have n=50 and one run per backend. No statistical timing uncertainty follows
+from these single observations. The timing and memory limitations above apply.

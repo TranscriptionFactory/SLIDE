@@ -1,8 +1,11 @@
 # Production-readiness pilot
 
 Approved in conversation on 2026-10-16 after the three read-only audits.
-Status: first 12 cells passed; remaining runs and analysis are queued. No final
-equivalence or production-readiness verdict yet.
+Status update (2026-10-17): saved summaries contain all 120 SSc and 30 CD4
+observations and the bounded scaling results. Statistical and cost summaries
+are available. The user cancelled remaining simulations; preserve unrun cells
+as unrun. These partial results do not establish production readiness or
+backend equivalence. The execution checkpoint below records the original jobs.
 
 Preflight findings: SSc X uses V1…V24 while Y uses subject identifiers. Both
 files match historical/original hashes exactly. Preserve their positional pairing
@@ -150,9 +153,9 @@ failures. Any follow-up should target them directly with an approved larger cap.
 | 11962055 | Ordinary SDP tests, R worker/optimization tests, environment/input preflight | Completed, 61 seconds, 4 CPUs |
 | 11962071 | First SSc seed, three implementations × four cells | Completed, 391 seconds, 4 CPUs; 12/12 success |
 | 11962074 | Controlled native/R-S replay and fresh R fitter check | Completed, 212 seconds, 1 CPU |
-| 11962087 | Remaining 378 regular cells | Running; three bundles completed at this checkpoint |
-| 11962088 | Up to 15 scaling cells | Released from regular-cell dependency at user request, 2026-10-16 20:01 ET |
-| 11962108 | Statistical/cost analysis | Waits for both regular and scaling jobs |
+| 11962087 | Remaining 378 regular cells | User cancelled; SSc/CD4 summaries available, simulations partial |
+| 11962088 | Up to 15 scaling cells | Completed; saved cost summary includes failures and skipped cells |
+| 11962108 | Statistical/cost analysis | Analysis logs and CSV summaries available; scheduler state not rechecked |
 
 Regular benchmark jobs use sequential processes on htc-n73 (AMD EPYC 9575F), four
 allocated CPUs; other users can share the node. The release build ran on htc-n77.
@@ -246,3 +249,20 @@ votes["design"] = votes.chunk.map({1: "Native chunk 1 (Z20)", 4: "Native chunk 4
 plot_sampler_votes(out, votes, title="R-S minus native Rust-S votes on candidate fitter",
                    note="Shared covariance, innovations and swaps; fixed designs only, not full-pipeline equivalence or FDR.")
 ```
+
+## Completed replicate summaries
+
+`cd4-analysis.log` reports n=2,482, p=1,776, K=39 for all three implementations,
+with ten runs per backend. Median fresh-process wall seconds [Q1–Q3] are
+Rust 5.31 [5.03–5.58], Python 22.07 [21.85–22.83], R 93.52 [91.32–98.60].
+All score matrices agree within 9.1×10⁻¹²; Rust/Python select marginal Z7 ten
+times each, while R adds a second marginal in one run. These are profiled
+measurements, not uninstrumented speedups or predictive validation.
+
+`ssc-analysis.log` reports score-matrix agreement within 4.7×10⁻¹¹ across all
+four cells. Nevertheless, `ssc/factor_rates.csv` records substantial selection
+differences at delta=0.01/lambda=0.1 (K=172): Rust/Python/R select Z20 in 10/0/2
+of ten runs and Z74 in 0/8/8. Biological sample identity remains unverified as
+noted above. Agreement in LOVE output does not establish knockoff-selection
+agreement. See `costs/summary.csv` for attempted, successful and unrun counts;
+completed analysis files do not imply that cancelled simulations completed.

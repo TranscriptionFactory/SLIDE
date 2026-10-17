@@ -6,6 +6,13 @@
   package `loveslide` to `slide_py`. The CLI is now `slide-py`. There is no
   compatibility alias; update `import loveslide` and any `loveslide ...`
   invocations.
+- Build both DSDP and glmnet from source when producing Python artifacts;
+  native build failures now stop installation instead of omitting a solver.
+- Add independent Rust PNG/PDF rendering and labelled result export via
+  `out_path`. Align both backends' feature rankings and control plots with R's
+  in-sample OLS diagnostics; these are not cross-validation scores. Rename the
+  summary column to `Control_Performance` and retain full random-control samples.
+- Show initial checkpoint loading errors in the TUI and test narrow layouts.
 
 ## 1.0.0 — 2026-10-13
 
