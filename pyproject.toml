@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools >= 61.0", "numpy >= 1.20.0"]
+requires = ["setuptools >= 77.0.3", "numpy >= 1.20.0", "meson >= 1.2", "ninja"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,7 +15,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
 ]
 license = "MIT"
 
@@ -124,13 +124,19 @@ full = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["*.__pycache__", "*.builddir", "*.builddir.*"]
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"slide_py.knockoff._vendor" = ["**/*"]
-"slide_py.dsdp_solver" = ["*.so", "dsdp/**/*"]
+"slide_py.knockoff._vendor.glmnet" = ["*.pyf", "meson.build", "LICENSE", "README.md", "src/glmnet/*.f90"]
+"slide_py.dsdp_solver" = ["dsdp/C/**/*.c", "dsdp/C/**/*.h", "LICENSE", "README"]
+"slide_py.love_python" = ["LICENSE", "README.md"]
+"slide_py.slide_r" = ["*.R"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.so", "*.pyd", "*.pyc", "**/__pycache__/*", "**/builddir/*"]
 
 [dependency-groups]
 dev = [

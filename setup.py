@@ -1,10 +1,5 @@
 """
-Setup script for slide-py with optional C extension.
-
-The dsdp_solver C extension provides the DSDP SDP solver that knockoff
-construction requires by default (it matches R's Rdsdp). If compilation fails
-(missing BLAS/LAPACK or compiler), the package still installs, but knockoff
-SDPs raise ImportError unless sdp_solver='cvxpy' is selected explicitly.
+Build both native solvers required by the default SLIDE backend.
 
 Environment variables for customization:
     BLAS_LIB_DIR    - Directory containing BLAS library
@@ -15,43 +10,36 @@ Environment variables for customization:
 
 import os
 import sys
-import warnings
+import shutil
+import subprocess
+from pathlib import Path
 from glob import glob
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 
 
-class OptionalBuildExt(build_ext):
-    """
-    Build C extensions, but don't fail if compilation fails.
-
-    This allows the package to install successfully even when
-    BLAS/LAPACK or a C compiler is not available.
-    """
-
+class NativeBuildExt(build_ext):
     def build_extension(self, ext):
-        try:
-            super().build_extension(ext)
-            print(f"\nSuccessfully built {ext.name}: DSDP SDP solver available.\n")
-        except Exception as e:
-            warnings.warn(
-                f"\nCould not build C extension '{ext.name}': {e}\n"
-                "   Knockoff SDPs require DSDP and will raise ImportError at run time\n"
-                "   unless sdp_solver='cvxpy' is selected explicitly (slower, and its\n"
-                "   solutions do not match R's Rdsdp).\n"
-                "\n"
-                "   To build DSDP, install BLAS/LAPACK and a C compiler, then reinstall:\n"
-                "   - On HPC: module load gcc openblas\n"
-                "   - On Ubuntu/Debian: apt install libopenblas-dev\n"
-                "   - On macOS: brew install openblas\n"
-                "   - With conda: conda install openblas\n"
-            )
+        if ext.name != 'slide_py.knockoff._vendor.glmnet._glmnet':
+            return super().build_extension(ext)
 
-    def run(self):
-        try:
-            super().run()
-        except Exception as e:
-            warnings.warn(f"Could not run build_ext: {e}")
+        source = Path('src/slide_py/knockoff/_vendor/glmnet').resolve()
+        build = Path(self.build_temp).resolve() / 'glmnet'
+        build.mkdir(parents=True, exist_ok=True)
+        native_file = build / 'python.ini'
+        native_file.write_text("[binaries]\npython = " + repr(sys.executable) + "\n")
+        subprocess.run(
+            [sys.executable, '-m', 'mesonbuild.mesonmain', 'setup',
+             str(build), str(source), '--native-file', str(native_file)],
+            check=True,
+        )
+        subprocess.run(
+            [sys.executable, '-m', 'mesonbuild.mesonmain', 'compile', '-C', str(build)],
+            check=True,
+        )
+        destination = Path(self.get_ext_fullpath(ext.name))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(build / destination.name, destination)
 
 
 def get_numpy_include():
@@ -164,8 +152,7 @@ def get_dsdp_solverension():
     sources.extend(glob(os.path.join(c_dir, 'allc', '*.c')))
 
     if not sources or len(sources) < 2:
-        warnings.warn("Could not find dsdp_solver C source files")
-        return None
+        raise RuntimeError("Could not find dsdp_solver C source files")
 
     # Get include directories
     include_dirs = [os.path.join(c_dir, 'allinclude')]
@@ -195,14 +182,11 @@ def get_dsdp_solverension():
     )
 
 
-# Build extension list
-ext_modules = []
-dsdp_solver = get_dsdp_solverension()
-if dsdp_solver:
-    ext_modules.append(dsdp_solver)
-
 # Setup (metadata comes from pyproject.toml)
 setup(
-    ext_modules=ext_modules,
-    cmdclass={'build_ext': OptionalBuildExt},
+    ext_modules=[
+        get_dsdp_solverension(),
+        Extension('slide_py.knockoff._vendor.glmnet._glmnet', sources=[]),
+    ],
+    cmdclass={'build_ext': NativeBuildExt},
 )

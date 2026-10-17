@@ -8,7 +8,7 @@ project('glmnet', 'c', 'fortran',
   ])
 
 # Get Python and NumPy for f2py
-py = import('python').find_installation(pure: false)
+py = import('python').find_installation('python', pure: false)
 py_dep = py.dependency()
 
 # Find NumPy include directories for f2py

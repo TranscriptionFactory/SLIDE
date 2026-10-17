@@ -7,6 +7,10 @@ recursive-include src/slide_py/dsdp_solver/dsdp/C *.c *.h
 include src/slide_py/dsdp_solver/README
 include src/slide_py/dsdp_solver/LICENSE
 
-# Pre-built binaries (if present)
-include src/slide_py/dsdp_solver/*.so
-include src/slide_py/dsdp_solver/*.pyd
+# Native glmnet sources, never checkout-specific compiled artifacts.
+recursive-include src/slide_py/knockoff/_vendor/glmnet *.py *.pyf *.f90
+include src/slide_py/knockoff/_vendor/glmnet/meson.build
+include src/slide_py/knockoff/_vendor/glmnet/LICENSE
+global-exclude *.so *.pyd *.pyc
+prune src/slide_py/knockoff/_vendor/glmnet/builddir
+global-exclude __pycache__
