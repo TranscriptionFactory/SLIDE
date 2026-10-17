@@ -51,6 +51,14 @@ jobs:
           python -m pip install -e ".[dev]"
       - name: Check DSDP extension built
         run: python -c "from loveslide.knockoff.pydsdp import dsdp"
+      - name: Build vendored glmnet
+        run: |
+          python -m pip install meson ninja
+          src=src/loveslide/knockoff/_vendor/glmnet
+          meson setup "$src/builddir" "$src"
+          ninja -C "$src/builddir"
+          cp "$src"/builddir/_glmnet*.so "$src/"
+          python -c "from loveslide.knockoff._vendor.glmnet import ElasticNet, LogitNet"
       - name: Test
         run: python -m pytest tests/tests -m "not slow and not requires_r and not requires_rust" -q
       - name: CLI smoke test
