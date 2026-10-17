@@ -141,11 +141,17 @@ in this result directory.
 | 11962071 | First SSc seed, three implementations × four cells | Completed, 391 seconds, 4 CPUs; 12/12 success |
 | 11962074 | Controlled native/R-S replay and fresh R fitter check | Completed, 212 seconds, 1 CPU |
 | 11962087 | Remaining 378 regular cells | Running; three bundles completed at this checkpoint |
-| 11962088 | Up to 15 scaling cells | Queued after regular cells |
-| 11962108 | Statistical/cost analysis | Queued after scaling |
+| 11962088 | Up to 15 scaling cells | Released from regular-cell dependency at user request, 2026-10-16 20:01 ET |
+| 11962108 | Statistical/cost analysis | Waits for both regular and scaling jobs |
 
-Benchmark jobs use sequential processes on htc-n73 (AMD EPYC 9575F), four
+Regular benchmark jobs use sequential processes on htc-n73 (AMD EPYC 9575F), four
 allocated CPUs; other users can share the node. The release build ran on htc-n77.
+At the user's request, scaling can now run alongside the simulations, but excludes
+htc-n73 to prevent competition between these jobs on one node. The `turin`
+hardware constraint, four CPUs, 32 GiB and 2.5-hour limit remain unchanged;
+verify the allocated node's exact CPU model before pooling timings. Applied:
+`scontrol update JobId=11962088 Dependency= ReqNodeList= ExcNodeList=htc-n73`
+and `scontrol update JobId=11962108 Dependency=afterany:11962087:11962088`.
 R runtime is 4.5.3, Python 3.11.15, NumPy 2.4.3, SciPy 1.17.1 and pandas 3.0.2.
 See session files for BLAS and dependency details. First-seed strict Z identity
 checks pass in all four cells; maximum absolute difference is 4.69e-11.
