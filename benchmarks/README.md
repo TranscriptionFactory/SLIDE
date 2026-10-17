@@ -1,4 +1,4 @@
-# Backend benchmark configurations
+# Backend benchmarks
 
 ## Maintained tools and saved results
 
@@ -21,7 +21,7 @@ and differences from the preceding run in a `README.md`.
   `analyze_paired_xtilde.py`, `replay_paired_xtilde.py`: saved-draw preparation,
   replay and analysis for investigating selection differences.
 - `replay_jitter.py`, `replay_gaussian_parity.py`: retained fixture-replay
-  helpers moved from `tmpfiles/`; these still require historical external
+  helpers; these require historical external
   controls and are not self-contained benchmark runs.
 
 One-off diagnostics, old plotting tools and machine-specific launchers moved to
@@ -57,13 +57,13 @@ Parity sets Rust's `SLIDE_KNOCKOFF_TOL`, `SLIDE_KNOCKOFF_MAX_ITER`,
 `SLIDE_KNOCKOFF_MATCH_R_COV`, and `SLIDE_KNOCKOFF_MATCH_R_LAMBDA` explicitly,
 overriding inherited values in child processes. It rejects conflicting Rust
 λ-count/FDR arguments and makes the R selection flag follow `--slide-selection`.
-Both modes now honor pure R's requested worker budget without modifying the
+Both modes honor pure R's requested worker budget without modifying the
 installed R package. SLURM submission rejects a worker budget above its CPU request.
 
 ## Running
 
 **Rebuild the Rust executable from this source before timing.** Older executables
-ignore the new λ-range environment setting; the harness cannot detect that.
+ignore the λ-range environment setting; the harness cannot detect that.
 Build outside the benchmark timer and pass `--rust-bin` for usable timing results.
 Use the existing project BLAS/environment setup as needed.
 
@@ -86,7 +86,7 @@ For native defaults, unset solver override variables before selecting
 `--configuration native`. Native mode deliberately preserves inherited overrides.
 The September 12 frozen executable and run remain native-configuration results.
 
-## Interpretation and next measurement
+## Interpretation and limits
 
 Matching tolerance values does not establish equal work. The Gaussian stopping
 metrics use comparable variance-scaled coefficient updates, but Rust applies its
@@ -94,15 +94,15 @@ iteration cap per λ and candidate-set refit. Fortran glmnet counts sweeps acros
 the whole path. Rust currently returns coefficients on cap exhaustion without a
 convergence error; matching the cap value does not remove this limitation.
 
-Keep the faster Rust defaults available: the tighter tolerance can cost much
-more runtime. Profile the parity path on saved inputs before considering another
-solver dependency. Compare convergence and W statistics as well as time.
+Tighter tolerance can increase runtime. Compare convergence and W statistics
+as well as time when evaluating parity settings.
 
-Remaining benchmark limitations: backend-specific RNG streams and swaps;
+The basic harness has these limitations: backend-specific RNG streams and swaps;
 Python excludes imports from timing while Rust/R include subprocess startup;
 one pass per cell in fixed order. A future equal-work study needs paired saved
 draws, convergence diagnostics, aligned timing boundaries, repeated cells, and
-randomized backend order. No full parity benchmark has been run for this change.
+randomized backend order. The [readiness pilot](results/2026-10-16_production-readiness/README.md#measurement)
+uses fresh processes and repeated cells; consult each campaign for its timing boundaries.
 
 ## Saved-draw S-only selection replay
 
@@ -137,6 +137,6 @@ inspecting the corresponding source in this checkout:
 The full local mapping is in `.git/filter-repo/commit-map`. The ignored
 `archive/2026-10-17_history-backup/` preserves the unfiltered Git database,
 all three stashes, retired scratch files and a copy of the mapping. Neither
-backup nor local staging data is part of a fresh clone. The retained replay
-helpers now live under `benchmarks/scripts/`; untracked `.tmpfiles/` inputs
-were not deleted. No benchmarks were rerun for this cleanup.
+backup nor local staging data is part of a fresh clone. Replay helpers live
+under `benchmarks/scripts/`; historical scratch inputs remain external
+reproduction requirements.

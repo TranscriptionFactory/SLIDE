@@ -1,18 +1,16 @@
 # Five-arm backend statistical repeats
 
-Status: four included arms completed 40 runs / 160 cells. The ten
+Four included arms completed 40 runs / 160 cells. The ten
 Python-with-R-knockoffs tasks hit their 20-minute limits; 17 of their planned
 40 cells finished before timeout. The user excluded that arm from statistical
-analysis. Final four-arm analysis completed in job 11958124; tables and
-figures verified. See
-[final results](README.md).
+analysis. See [four-arm results](README.md) from job 11958124.
 Source: c4726e3 (Gaussian arithmetic and interaction-residual fixes).
 
 ## Design
 
-Reuses the maintained `benchmarks/scripts/benchmark_backends.py` harness and the October 13 `run.sbatch`,
-with the arm list extended and array range changed to 0–49 (10 concurrent).
-No model or analysis code changes.
+The campaign uses the `benchmark_backends.py` harness and the October 13
+`run.sbatch`, with array range 0–49 (10 concurrent). The maintained harness is
+[`benchmarks/scripts/benchmark_backends.py`](../../scripts/benchmark_backends.py).
 
 - Arms: rust, python (DSDP), pure_r, rust_r_knockoffs, r_knockoffs. In the
   harness, `rust_r_knockoffs` is the Rust CLI with R-generated knockoffs (R SDP and Gaussian draws);
@@ -28,8 +26,8 @@ No model or analysis code changes.
   reused from the October 13 run. Fresh Rust build from frozen source.
 - Fresh pure_r runs are the primary reference; no historical pooling.
 
-Staging: .tmpfiles/2026-10-16_backend-replicates-all-arms/
-under the repository root. This preserves all previous runs.
+Recorded staging path: `.tmpfiles/2026-10-16_backend-replicates-all-arms/`
+under the original repository root. See the source location below.
 
 ## Jobs and checks
 
@@ -114,22 +112,29 @@ for cell, runs in sorted(cells.items()):
     print(cell, len(runs), median(seconds for seconds, _ in runs), dict(sorted(counts.items())))
 ```
 
-The original plan was for analyze_seed_replicates.py to compare all four non-reference
+The original plan used `analyze_seed_replicates.py` to compare all four non-reference
 arms with fresh pure_r, plus rust:python, rust:rust_r_knockoffs and
 python:r_knockoffs. It requires ten runs per arm/cell and K/Z agreement
 with R within 1e-8. It writes count tests, factor frequencies and Wilson
 intervals, Fisher BH q-values, Jaccard/permutation comparisons, bootstrap
 runtime intervals, and three figures here. It uses 10,000 permutations
-and 10,000 bootstrap samples. Inspect these outputs after completion.
+and 10,000 bootstrap samples. The [completed analysis](README.md#limits)
+reports the four-arm comparison scope and multiplicity corrections.
 
 ## Reproduction
 
-Set RUN to the absolute staging directory. Environment:
+Set `RUN` to the absolute staging directory. Recorded environment:
+
+```bash
 ENV=/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev
 R_DEPS=/vast/djishnu/Aaron/.tmpfiles/20260902_r-generated-knockoff-backend-evaluation/R-library
+```
 
 Submit the prepared configuration:
+
+```bash
 sbatch --output="$RUN/logs/%A_%a.out" "$RUN/run.sbatch" "$RUN" "$ENV" "$R_DEPS"
+```
 
 The source snapshot, REVISION, inputs, run.sbatch, compiled extensions,
 build logs and job IDs are in staging. SLURM retains the submitted analysis

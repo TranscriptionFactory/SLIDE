@@ -1,13 +1,9 @@
 # Four-arm backend statistical analysis
 
-Completed: analysis job 11958124 (exit 0). Source: c4726e3.
-Verified 40 runs / 160 successful cells, ten repeats per arm and cell.
-Inspected all three figures: labels are legible, without clipping, and agree
-with the tables.
-
-The user excluded Python-with-R-knockoffs after all ten tasks timed out.
-Its partial outputs remain unchanged. Cancelled blocked analysis job 11957810;
-this analysis reuses the existing script without code changes.
+Source: `c4726e3`. Analysis job 11958124 (exit 0) covers 40 runs /
+160 successful cells, ten repeats per arm and cell.
+Python-with-R-knockoffs is excluded from this four-arm analysis after all ten
+tasks timed out; see [completed cells and timeout coverage](SETUP.md#python-with-r-knockoffs-partial-evidence-only).
 
 ## Design and scope
 
@@ -28,7 +24,7 @@ difference 4.69e-11 (check threshold 1e-8).
 
 ## Main findings
 
-At delta 0.01, lambda 0.1, native Rust still selects different factors:
+At delta 0.01, lambda 0.1, native Rust selects different factors:
 
 | Factor | Rust | Python | Pure R | Rust with R knockoffs |
 | --- | ---: | ---: | ---: | ---: |
@@ -125,7 +121,9 @@ these frequencies and the per-run values in `timings.csv`.
 
 ## Reproduction
 
-Run from the repository root with a new output directory:
+These recorded commands require the frozen staging tree and environment below.
+Set `OUT` to a new directory before rerunning from the repository root.
+For source lookup, see the [revision mapping](../../README.md#source-revisions-after-history-cleanup):
 
 ```bash
 RUN="$PWD/.tmpfiles/2026-10-16_backend-replicates-all-arms"
@@ -151,7 +149,7 @@ The analysis uses 10,000 permutations and bootstrap samples. Per-factor
 Fisher BH adjustment covers all five comparisons within each cell; the count
 BH correction covers all 40 count tests. Permutation p-values are unadjusted.
 The inherited count test uses exact Mann–Whitney despite discrete ties;
-treat those p-values cautiously. No statistical method was changed.
+treat those p-values cautiously.
 
 Backend timing boundaries differ and include machine/load variation.
 The script does not extract knockoff-stage timing for the Rust hybrid;

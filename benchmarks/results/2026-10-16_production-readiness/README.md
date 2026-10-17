@@ -1,11 +1,11 @@
 # Production-readiness pilot
 
-Approved in conversation on 2026-10-16 after the three read-only audits.
-Status update (2026-10-17): saved summaries contain all 120 SSc and 30 CD4
-observations and the bounded scaling results. Statistical and cost summaries
-are available. The user cancelled remaining simulations; preserve unrun cells
-as unrun. These partial results do not establish production readiness or
-backend equivalence. The execution checkpoint below records the original jobs.
+As of 2026-10-17, saved summaries contain all 120 SSc and 30 CD4 observations
+and the bounded scaling results. The remaining simulations were cancelled; unrun cells are
+not successes. These partial results do not establish production readiness or
+backend equivalence. See [coverage and jobs](#coverage-and-jobs),
+[replicate summaries](#completed-replicate-summaries), and
+[factor identities and frequencies](#backend-selection-details).
 
 Preflight findings: SSc X uses V1…V24 while Y uses subject identifiers. Both
 files match historical/original hashes exactly. Preserve their positional pairing
@@ -19,6 +19,7 @@ fixture-dependent ignored diagnostic. No model-cell retry follows this correctio
 ## Scope and frozen inputs
 
 Production source: `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4`.
+See the [original-to-rewritten revision mapping](../../README.md#source-revisions-after-history-cleanup).
 Assessment branch: `feat/production-readiness-assessment`. Benchmark-only changes
 are recorded separately from that production snapshot. No statistical defaults
 change. In particular, Clarabel effective `tol_feas` remains `1e-6`.
@@ -33,10 +34,10 @@ versions and installed-package/input/binary hashes identify the executed referen
 The R harness rebinds worker counts and uses the existing
 `SLIDE_R_OPTIMIZE=1` interaction-preparation optimization, as did the historical
 comparison. Thus this is an installed-R reference with documented harness
-adaptations, not an untouched upstream invocation. Those adaptations require
-their existing regression checks.
+adaptations, not an untouched upstream invocation. The regression checks for
+these adaptations passed (see [coverage and jobs](#coverage-and-jobs)).
 
-## Approved cells and limits
+## Planned cells and limits
 
 - SSc: R/Python/Rust × delta {0.01, 0.1} × lambda {0.1, 1.0} × ten runs = 120.
 - CD4: R/Python/Rust × delta 0.1/lambda 0.1 × ten runs = 30, conditional on
@@ -74,12 +75,10 @@ Latent variances are one. The near-degenerate regime correlates factors 0/1
 at 0.999; other factors are independent. Feature noise has standard deviation
 0.3. Sparse response: 2 Z0 + 1.5 Z1 + 2 Z0 Z2 + unit Gaussian noise.
 Null response is independent unit Gaussian noise. Save loadings, latent scores,
-feature noise and response noise with each input. The closest existing generator
-is the fixed p=6/K=2 fixture in `tests/tests/test_love.py`; it has no response or
-truth-export workflow. `benchmarks/scripts/generate_factor_inputs.py` supplies the
-benchmark workflow without changing that fixture.
+feature noise and response noise with each input using
+[`generate_factor_inputs.py`](../../scripts/generate_factor_inputs.py).
 
-## Approved provisional margins and inference
+## Provisional margins and inference
 
 - Factor selection-probability differences: ±0.05.
 - Mean selected-factor count differences: ±1.
@@ -100,12 +99,7 @@ exploratory; degenerate bootstrap intervals do not establish equivalence.
 Ten runs and twenty simulation datasets can detect large problems but cannot
 certify the approved narrow margins. Larger confirmation requires new approval.
 
-## Measurement and ownership
-
-Worker A extends `analyze_seed_replicates.py`; worker B owns measurement changes
-in `benchmark_backends.py`; worker C audits replay/scaling feasibility.
-Coordinator owns configuration, submission, truth evaluation, verification and
-final classification. The generator worker owns only generator/tests.
+## Measurement
 
 Measured mode starts a fresh interpreter for every backend/cell and includes
 startup, imports, input I/O and preprocessing. Build/setup are separate. The first
@@ -114,7 +108,8 @@ caches are not flushed: this is not a certified cold-cache measurement, and late
 runs are not startup-free.
 All pilot cells enable `--profile`. Timings include profiling overhead, which
 has not been measured separately and can differ by backend. Python writes
-per-stage JSON records (`src/loveslide/knockoff/filter.py::_profile_stage`);
+per-stage JSON records (`src/loveslide/knockoff/filter.py::_profile_stage` in
+the frozen source, now `src/slide_py/knockoff/filter.py::_profile_stage`);
 these instrumented costs do not establish uninstrumented production speedups.
 An unprofiled timing confirmation would require a separately approved run.
 Process-group RSS is sampled every 50 ms: shared pages can be double-counted,
@@ -135,17 +130,18 @@ Raw per-cell outputs remain in staging, with
 commands, configurations, summaries, failure rows and inspected plots retained
 in this result directory.
 
-## Execution checkpoint
+## Coverage and jobs
 
 The user cancelled the remaining simulations after about 7 hours 14 minutes of
 job 11962087, prioritizing scaling above 5,000 input features. Applied
 `scancel 11962087`; preserve partial outputs and count unrun cells as unrun, not
-successful. The existing `afterany` analysis dependency permits analysis of the
-partial run after cancellation. Scaling job 11962088 had already completed.
+successful. The `afterany` dependency allowed analysis of the partial run.
+Scaling job 11962088 had already completed.
 Its 600-second cell cap was a pilot compute guardrail, not a capacity limit;
 R's timeout at p=4,000 caused p=8,000 and p=12,000 to be skipped under the approved
 stop rule. Those larger R cases therefore remain untested, not demonstrated
-failures. Any follow-up should target them directly with an approved larger cap.
+failures. The [separate capacity campaign](../2026-10-16_large-feature-scaling/README.md)
+uses a larger cap and different feature counts; do not pool its results with this pilot.
 
 | Job | Work | State at checkpoint |
 | --- | --- | --- |
@@ -159,8 +155,8 @@ failures. Any follow-up should target them directly with an approved larger cap.
 
 Regular benchmark jobs use sequential processes on htc-n73 (AMD EPYC 9575F), four
 allocated CPUs; other users can share the node. The release build ran on htc-n77.
-At the user's request, scaling can now run alongside the simulations, but excludes
-htc-n73 to prevent competition between these jobs on one node. The `turin`
+Scaling was allowed to run alongside simulations, excluding htc-n73 to avoid
+competition between these jobs on one node. The `turin`
 hardware constraint, four CPUs, 32 GiB and 2.5-hour limit remain unchanged;
 verify the allocated node's exact CPU model before pooling timings. Applied:
 `scontrol update JobId=11962088 Dependency= ReqNodeList= ExcNodeList=htc-n73`
@@ -176,9 +172,8 @@ no bootstrap intervals are estimated for these singleton arms.
 
 The measurement/generator/analysis/runner tests pass (45 focused Python tests at
 this checkpoint), as do ordinary SDP and existing R worker/optimization tests.
-Full project suites were not run. Updated benchmark tools are committed; algorithm
-sources remain the frozen production revision. The scaling ladder conservatively
-stops an arm after any failure, not only diagnosed OOM/timeout.
+Full project suites were not run. Algorithm sources use the frozen production
+revision. The scaling ladder stops an arm after any failure, not only diagnosed OOM/timeout.
 
 Rerun preparation and execution use the recorded environment plus existing tools:
 
@@ -214,7 +209,8 @@ than assuming that per-draw guarantees survive aggregation.
 
 ## Completed controlled replay
 
-Both current-candidate native samplers reproduce the saved native draws bitwise.
+Both native samplers at the frozen production revision reproduce the saved
+native draws bitwise.
 Native fitter selections match the saved R controls. On the freshly generated
 R-S draws, fresh R and candidate Rust fitters agree on all 1,000 selected sets
 (500 per chunk). This is a fitter-only result conditional on supplied draws,
@@ -241,7 +237,7 @@ Regenerate the figure with the existing plotting helper, from the project root:
 from pathlib import Path
 import sys
 import pandas as pd
-sys.path.insert(0, "benchmarks")
+sys.path.insert(0, "benchmarks/scripts")
 from replay_paired_xtilde import plot_sampler_votes
 out = Path("benchmarks/results/2026-10-16_production-readiness/replay")
 votes = pd.read_csv(out / "paired_votes.csv")
@@ -265,7 +261,8 @@ four cells. Nevertheless, `ssc/factor_rates.csv` records substantial selection
 differences at delta=0.01/lambda=0.1 (K=172): Rust/Python/R select Z20 in 10/0/2
 of ten runs and Z74 in 0/8/8. Biological sample identity remains unverified as
 noted above. Agreement in LOVE output does not establish knockoff-selection
-agreement. See `costs/summary.csv` for attempted, successful and unrun counts;
+agreement. The external `costs/summary.csv` (not bundled here) records
+attempted, successful and unrun counts;
 completed analysis files do not imply that cancelled simulations completed.
 
 ## Backend selection details
@@ -394,7 +391,7 @@ loader and Jaccard helper (the raw results are required):
 ```python
 from pathlib import Path
 import sys
-sys.path.insert(0, "benchmarks")
+sys.path.insert(0, "benchmarks/scripts")
 from aggregate_seed_sweep import load_sweep, _jaccard
 
 for dataset in ("ssc", "cd4"):

@@ -2,7 +2,7 @@
 
 Reference outputs from the canonical R LOVE package, R `glmnet`, and R `knockoff` for parity testing of the Rust implementation.
 
-See `generate/README.md` for regeneration instructions.
+See [fixture generation](generate/README.md) for regeneration instructions.
 
 Current fixture groups:
 - `love/` — R LOVE outputs on the portable SSc snapshot

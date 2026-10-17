@@ -1,6 +1,6 @@
 # Large-feature capacity benchmark
 
-User-approved follow-up to the readiness pilot, submitted 2026-10-16.
+Follow-up to the readiness pilot, submitted 2026-10-16.
 Nine independent cells: Rust, Python and R at p=10,000, 15,000 and 20,000;
 n=50 and planted K=20. This is capacity screening, not a truth-validation sweep.
 One run per cell; actual estimated K can differ from planted K.
@@ -12,7 +12,7 @@ An 8 GiB, one-CPU, 15-minute cost-analysis job follows. See `jobs.csv`.
 Each cell checks for the pilot's AMD EPYC 9575F model and records hardware.
 The node is shared with other users; this is not an exclusive-node benchmark.
 
-Reuse frozen source 4b321116fde6b92d5eb7bd771e0357cfb8dd72c4, release Rust binary,
+The run uses frozen source `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4`, release Rust binary,
 installed R SLIDE 0.1.1 and the pilot's environment. No algorithm defaults changed.
 Gaussian parity, homogeneous LOVE, delta=.1, lambda=.1, 500 knockoff draws,
 specificity=.1, SLIDE selection, four workers and one BLAS thread remain fixed.
@@ -41,26 +41,28 @@ new run, use a new dated directory and update manifest paths; do not overwrite.
 `manifests/` holds exact per-cell harness arguments; `cell.sh` reuses the existing
 manifest runner. `inputs.sha256` identifies input content. Each job verifies the
 pilot's source/binary/package manifest and this run's inputs before benchmarking.
-Raw inputs/results remain at this path on the shared filesystem.
+Raw inputs/results remain at this path on the shared filesystem. See the
+[revision mapping](../../README.md#source-revisions-after-history-cleanup)
+to locate the frozen source in rewritten Git history.
 
-## Interpretation and verification
+## Measurement and limits
 
-Measure fresh-process wall time including startup, I/O and preprocessing.
+Wall time includes fresh-process startup, I/O and preprocessing.
 Profiling remains enabled for comparability; its overhead is unquantified.
 Peak RSS is a 50-ms sample of process-group RSS, not an exact cgroup peak;
 shared pages can be counted more than once and short peaks can be missed.
-Retain timeout/OOM/failed cells and scheduler accounting alongside successes.
+Timeout/OOM/failed cells and scheduler accounting accompany successes.
 Single runs do not support timing uncertainty or statistical-equivalence claims.
 This experiment does not establish capacity for n greater than 50.
 
-All nine manifests passed existing runner validation; shell scripts passed
-`bash -n`. Cost plots from `aggregate.sh` must be inspected after jobs finish.
-At submission time, no results or plots had been verified. The update below
-checks saved numeric summaries; it does not claim a new visual inspection.
+All nine manifests passed runner validation; shell scripts passed `bash -n`.
+Saved numeric summaries were checked; that check did not include a new visual
+inspection of cost plots.
 
-## Saved results (2026-10-17 update)
+## Saved results (2026-10-17)
 
-`costs/summary.csv` contains six successful native cells and three R timeouts.
+The external `costs/summary.csv` (not bundled here) records six successful
+native cells and three R timeouts.
 Each R cell reached its 7,200-second harness cap; this is not an observed
 completion time or proof that R cannot complete with a larger budget.
 
@@ -76,4 +78,4 @@ the shared filesystem. Estimated K differs substantially from planted K=20;
 these runs measure capacity rather than accurate latent-rank recovery. Matching
 K alone does not establish aligned factors or equivalent selections. All rows
 have n=50 and one run per backend. No statistical timing uncertainty follows
-from these single observations. The timing and memory limitations above apply.
+from these single observations.

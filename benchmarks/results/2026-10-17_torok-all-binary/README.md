@@ -1,6 +1,6 @@
 # Torok All: real-data binary-response capacity benchmark
 
-User-approved three-cell run, submitted 2026-10-17. Rust, Python and installed
+Three-cell run submitted 2026-10-17. Rust, Python and installed
 R SLIDE 0.1.1 use all 44 samples and 15,496 cluster-specific expression features.
 These are processed expression summaries, not raw single-cell counts.
 
@@ -22,7 +22,8 @@ the frozen copies. Do not publish patient-level inputs without authorization.
 ## Configuration and submission
 
 Frozen production source remains `4b321116fde6b92d5eb7bd771e0357cfb8dd72c4`.
-Reuse the prior release Rust binary, Python/R environments and manifest runner.
+Reproduction requires the prior release Rust binary, Python/R environments
+and manifest runner. See the [revision mapping](../../README.md#source-revisions-after-history-cleanup).
 Use `--configuration native --y-factor`: the Gaussian-only parity guard remains
 intact. Native backend solver/grid differences are intentional, not certified
 matched settings. Existing pilot environment variables are retained as recorded
@@ -43,9 +44,9 @@ Exact harness arguments are in `manifests/`; submission command:
 bash benchmarks/results/2026-10-17_torok-all-binary/submit.sh
 ```
 
-Already submitted: see `jobs.csv`. Submission and output creation refuse
+Job IDs are in `jobs.csv`. Submission and output creation refuse
 existing records. For a rerun, use a new dated output directory and update paths,
-not an overwrite. Existing cost analysis can run after completion:
+not an overwrite. Recorded cost-analysis command:
 
 ```bash
 OUT="$PWD/benchmarks/results/2026-10-17_torok-all-binary"
@@ -68,9 +69,10 @@ RSS is sampled, can double-count shared pages and can miss short peaks.
 
 Single-run capacity evidence does not establish binary-backend equivalence,
 FDR control or generalization. The saved numeric results below have been checked against the per-backend
-summaries; plots and patient-level outputs have not been re-inspected. No automatic retries or algorithm changes.
+summaries; plots and patient-level outputs have not been re-inspected.
+The run used no automatic retries or algorithm changes.
 
-## Saved results (2026-10-17 update)
+## Saved results (2026-10-17)
 
 The retained `results/torok_all_binary/<backend>/seed_20000/benchmark_summary.json`
 files on the shared filesystem report:

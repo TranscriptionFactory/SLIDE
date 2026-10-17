@@ -8,8 +8,8 @@ an outcome, with false discovery rate control.
 
 This repository holds three independently installable implementations. They use backend-specific
 YAML keys and path rules; their configuration files are not interchangeable.
-We plan separate distributions (`slide-py` and `slide-rs`) from this repository.
-Use the source installs below until publication; no `loveslide` import alias remains.
+Use the source installs below for `slide-py` and `slide-rs`.
+The Python import is `slide_py`; there is no `loveslide` alias.
 
 **Navigate:** [R install and usage](#r-install-and-usage) ·
 [Rust install and build](#rust-install-and-build) · [Rust usage](#rust-usage) ·
@@ -47,9 +47,9 @@ library(SLIDE)
 The upstream installation remains `remotes::install_github("jishnu-lab/SLIDE")`;
 that repository changes only when its maintainers integrate this fork.
 See [R vignettes](vignettes/) and [R examples](examples/) for usage.
-R keeps its own version (`DESCRIPTION`), dependencies and release process;
-installing R SLIDE does not require Python or Rust. Backend-specific versions
-and output differences remain explicit; integration does not certify equivalence.
+R has its own version (`DESCRIPTION`) and dependencies; installing R SLIDE
+does not require Python or Rust. See [backend comparisons](#measured-backend-comparisons)
+for measured differences.
 
 ## Rust CLI and TUI
 
@@ -286,6 +286,8 @@ CD4 entries are median [25th–75th percentile], not confidence intervals. Sourc
 [CD4 analysis and provenance](benchmarks/results/2026-10-16_production-readiness/README.md),
 [capacity results](benchmarks/results/2026-10-16_large-feature-scaling/README.md)
 and [Torok results and provenance](benchmarks/results/2026-10-17_torok-all-binary/README.md).
+For original-to-rewritten source revisions, see the
+[revision mapping](benchmarks/README.md#source-revisions-after-history-cleanup).
 Capacity factor counts come from the corresponding per-backend
 `results/<dataset>/<backend>/seed_20000/benchmark_summary.json` files retained
 on the shared filesystem. The synthetic inputs have planted K=20, far below
@@ -356,7 +358,7 @@ and the Python pipeline with R knockoffs through `rpy2`; neither is the pure-R
 SLIDE pipeline.
 
 The [backend replicate analysis](benchmarks/results/2026-10-16_backend-replicates/README.md)
-uses source `c4726e3`, not the latest pilot source `4b32111`; do not pool the
+uses source `c4726e3`, not the pilot source `4b32111`; do not pool the
 results. Its five-arm setup and the completed low-delta Python-with-R-knockoffs
 cells are documented in [replicate setup and partial results](benchmarks/results/2026-10-16_backend-replicates/SETUP.md).
 At SSc delta=0.01/lambda=0.1, all five arms completed ten cells:
@@ -385,11 +387,10 @@ Median wall seconds per completed cell (ten repeats unless noted):
 | 0.1 | 0.1 | 14.49 | 12.35 | 25.49 | 15.85 | No completed cells |
 | 0.1 | 1.0 | 14.23 | 12.40 | 23.76 | 14.28 | Not started |
 
-These timing boundaries differ from the latest pilot's fresh-process timings;
+These timing boundaries differ from the pilot's fresh-process timings;
 see the [replicate report](benchmarks/results/2026-10-16_backend-replicates/README.md)
 for details.
 
-See the [saved SSc analysis summary](benchmarks/results/2026-10-16_production-readiness/README.md).
 SSc input/response identifiers differ; the benchmark preserves historical positional
 pairing, without verifying biological sample identity. Torok's Rust and Python
 runs both report marginal Z294, but Rust reports six interactions and Python five.
@@ -414,9 +415,8 @@ describe historical code and settings, not current release performance.
 - Reconcile lockfiles with declared dependencies (notably optional `rpy2`), and
   repair/test Python rerun state restoration before advertising that workflow.
 
-The existing five TUI tabs cover the release monitoring workflow; no additional
-view is required for this batch. Checkpoint-error reporting and narrow-terminal
-rendering have regression tests. A live-terminal usability pass remains pending.
+Checkpoint-error reporting and narrow-terminal rendering have regression tests;
+live-terminal usability remains unverified.
 
 ## Repository layout
 
