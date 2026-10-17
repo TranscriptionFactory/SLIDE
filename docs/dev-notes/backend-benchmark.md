@@ -1,5 +1,18 @@
 # SLIDE Backend Runtime Benchmark
 
+## Evidence status (2026-10-17)
+
+The August and May measurements below describe historical revisions and settings.
+Do not use their 6–15× multipliers as current release claims. The
+[README comparison](../../README.md#measured-backend-comparisons) summarizes the
+[2026-10-16 frozen-candidate pilot](../../benchmark_results/2026-10-16_production-readiness/README.md),
+[large-feature capacity run](../../benchmark_results/2026-10-16_large-feature-scaling/README.md),
+and [Torok binary run](../../benchmark_results/2026-10-17_torok-all-binary/README.md).
+Those runs include profiling overhead and do not establish statistical equivalence.
+The historical `loveslide` name below identifies the package used at run time;
+the current distribution is `slide-py`, imported as `slide_py`.
+
+
 Comparison of Python, R (rpy2), and Rust backends on the SSc UnTx dataset.
 
 **Status (2026-08-20):** Rust remains substantially faster. Switching every
@@ -148,7 +161,7 @@ needs a separately scoped numerical investigation rather than a special case.
 
 Every backend ends each knockoff stage with a choice of two rules:
 
-- **stability rule (default)** — report the frequency set: every factor whose
+- **stability rule (opt-in)** — report the frequency set: every factor whose
   selection count reaches `ceil(niter * spec)`.
 - **`findOptIter`** — R SLIDE's original rule. Discard the frequency table and
   report a *single* draw out of `niter`: the one with maximal overlap with the

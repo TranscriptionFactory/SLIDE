@@ -6,25 +6,34 @@ SLIDE finds latent factors with LOVE (overlapping clustering) and then
 uses knockoffs to select the standalone and interacting factors that predict
 an outcome, with false discovery rate control.
 
-This repository holds two implementations that share one config format:
+This repository holds two independent implementations. They use backend-specific
+YAML keys and path rules; their configuration files are not interchangeable.
+We plan separate distributions (`slide-py` and `slide-rs`) from this repository.
+Use the source installs below until publication; no `loveslide` import alias remains.
 
 | Component | What it is | Entry point |
 | --- | --- | --- |
-| `slide` (Rust, `crates/`) | Native pipeline with a terminal dashboard (TUI) and SLURM helpers. Recommended for production runs. | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
+| `slide` (Rust, `crates/`) | Native pipeline with a terminal dashboard (TUI) and SLURM helpers. Native Rust computation. | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
 | `slide-py` (Python, `src/slide_py`) | Python library with the same pipeline, plotting, and optional R backends via `rpy2`. | `slide-py run`, `slide_py.OptimizeSLIDE` |
 
 The original R package is at <https://github.com/jishnu-lab/SLIDE>. Both
-implementations are tested against R reference outputs (`tests/fixtures/`).
+implementations have R-reference tests (`tests/fixtures/`), but selected factors
+can differ. Each backend renders its own R-style red/blue factor text plots and
+model-score-versus-randomized-baseline density plot, without invoking the other
+backend. See [result files and plots](#result-files-and-plots) for the shared
+outputs and remaining backend-specific artifacts.
 
 ## Rust CLI and TUI
 
 ### Build
 
-Requirements: Rust 1.79+, a C toolchain, CMake, libclang, and system
-OpenBLAS/LAPACK with gfortran. On Debian/Ubuntu:
+Requirements: a current stable Rust toolchain, a C toolchain, CMake, libclang,
+system OpenBLAS/LAPACK with gfortran, and Cairo for native PNG/PDF output.
+The workspace declares Rust 1.79 as its minimum, but release verification of that
+minimum remains pending. On Debian/Ubuntu:
 
 ```bash
-sudo apt-get install libopenblas-dev liblapack-dev gfortran cmake clang libclang-dev
+sudo apt-get install libopenblas-dev liblapack-dev gfortran cmake clang libclang-dev libcairo2-dev pkg-config
 cargo build --release          # binary: target/release/slide
 cargo install --path crates/slide-cli   # or install it on your PATH
 ```
@@ -35,12 +44,33 @@ Pitt CRC cluster; adapt `scripts/with-rust-blas-env.sh` for other sites.
 
 ### Run
 
+From the repository root, save this small smoke-test config as `rust-quick.yaml`:
+
+```yaml
+x_path: example/HIV+cytokines_X.csv
+y_path: example/HIV+cytokines_y.csv
+out_path: out/rust-quick
+delta: [0.1]
+lambda: [0.1]
+y_factor: true
+pure_homo: true
+spec: 0.1
+fdr: 0.1
+thresh_fdr: 0.2
+SLIDE_iter: 10
+do_interacts: true
+knockoff_backend: rust
+```
+
+Ten draws exercise the pipeline, not a scientific analysis. After installing the
+CLI on your PATH, choose either the headless run or the monitored run:
+
 ```bash
 # Pipeline only (headless; good for batch jobs)
-slide run --config tests/test_config_quick.yaml --checkpoint out/checkpoint.json
+slide run --config rust-quick.yaml --checkpoint out/checkpoint.json
 
 # Pipeline and live dashboard together
-slide monitor --config tests/test_config_quick.yaml --checkpoint out/checkpoint.json
+slide monitor --config rust-quick.yaml --checkpoint out/checkpoint.json
 
 # Dashboard for an existing or running checkpoint
 slide tui --checkpoint out/checkpoint.json
@@ -49,9 +79,8 @@ slide tui --checkpoint out/checkpoint.json
 slide submit --script job.sh --checkpoint out/checkpoint.json
 ```
 
-Run these from the repository root: `tests/test_config_quick.yaml` points at
-the bundled HIV example data in `example/`, and relative paths in a config
-resolve against the working directory. Add `-v` to print per-stage timing.
+Run these from the repository root; Rust resolves relative input paths against
+the working directory. The bundled data live in `example/`. Add `-v` to print per-stage timing.
 `slide monitor` exits non-zero if the pipeline fails or you quit the TUI
 before it finishes.
 
@@ -79,6 +108,11 @@ Unknown keys are rejected, so a typo fails at load time instead of being
 ignored. The checkpoint JSON is rewritten after each grid cell, so an
 interrupted run resumes where it stopped.
 
+Set optional `out_path` to export result tables and plots after the pipeline.
+Without it, Rust retains checkpoint-only execution. Use a fresh output path:
+Rust refuses existing result directories rather than mixing old and new plots.
+An export failure does not remove the completed checkpoint.
+
 `SLIDE_KNOCKOFF_TOL`, `SLIDE_KNOCKOFF_MAX_ITER`, `SLIDE_KNOCKOFF_MATCH_R_LAMBDA`
 and `SLIDE_KNOCKOFF_MATCH_R_COV` override knockoff fitting for R-parity
 experiments. When any is set, `slide` warns and stores it under
@@ -89,23 +123,48 @@ experiments. When any is set, `slide` warns and stores it under
 ### Install
 
 ```bash
-sudo apt-get install libopenblas-dev liblapack-dev gfortran   # for the DSDP extension
-pip install .                 # core
-pip install ".[r]"            # optional R backends via rpy2
+sudo apt-get install build-essential gfortran python3-dev python3-venv libopenblas-dev liblapack-dev
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .       # native Python backend, including plots
+# python -m pip install ".[r]"  # optional R bridge; also needs R and R packages
 ```
 
-Or with [pixi](https://pixi.sh): `pixi install && pixi run test`.
-
-The knockoff SDP uses a bundled C extension (DSDP), built at install time. If
-it fails to build, knockoffs raise an `ImportError` explaining how to fix
-the build; pass `sdp_solver='cvxpy'` to opt into the slower, less
-R-faithful cvxpy solver instead.
+Source installation builds the bundled C DSDP and Fortran glmnet extensions.
+It needs C/Fortran compilers and BLAS/LAPACK; the isolated Python build environment
+installs its build dependencies, including Meson/Ninja. R is not needed for the
+native Python backend. Installation fails if either native extension cannot
+build; it does not silently install a different fitting backend. Local artifact
+checks cover Linux and Python 3.11; portable wheels and the other CI interpreter
+still need release verification.
 
 ### Run
 
-```bash
-slide-py run --config config.yaml --out-path results/
+Save this as `python-quick.yaml` in the repository root:
+
+```yaml
+x_path: example/HIV+cytokines_X.csv
+y_path: example/HIV+cytokines_y.csv
+out_path: out/python-quick
+delta: [0.1]
+lambda: [0.1]
+y_factor: true
+pure_homo: true
+spec: 0.1
+fdr: 0.1
+thresh_fdr: 0.2
+niter: 10
+knockoff_backend: python
+do_interacts: true
+n_workers: 1
 ```
+
+```bash
+slide-py run --config python-quick.yaml
+```
+
+As with the Rust example, ten draws are for a smoke test only.
 
 The YAML is a flat mapping of the keys in the parameter table below.
 Unlike `slide`, `slide-py run` resolves relative paths against the config
@@ -126,6 +185,7 @@ params = {
     "thresh_fdr": 0.1,
     "y_factor": True,
     "niter": 500,
+    "knockoff_backend": "python",
 }
 OptimizeSLIDE(params).run_pipeline(verbose=True, n_workers=1)
 ```
@@ -136,17 +196,126 @@ OptimizeSLIDE(params).run_pipeline(verbose=True, n_workers=1)
 | --- | --- | --- | --- |
 | `x_path` | str | Feature matrix CSV | required |
 | `y_path` | str | Response CSV | required |
-| `out_path` | str | Output directory | required |
-| `delta` | list | LOVE thresholds | `[0.01]` |
-| `lambda` | list | LOVE penalty values | `[0.5, 0.1]` |
+| `out_path` | str | Output directory | current working directory |
+| `delta` | list | LOVE thresholds | `[0.05, 0.1]` |
+| `lambda` | list | LOVE penalty values | `[0.1]` |
 | `fdr` | float | Knockoff FDR target | 0.1 |
-| `thresh_fdr` | float | FDR threshold for LOVE correlations | 0.1 |
+| `thresh_fdr` | float | FDR threshold for LOVE correlations | 0.2 |
 | `spec` | float | Minimum selection frequency for a factor | 0.2 |
 | `y_factor` | bool | Treat `y` as categorical | True |
-| `niter` | int | Knockoff iterations | 500 |
+| `niter` | int | Knockoff iterations | 100 |
 | `SLIDE_top_feats` | int | Top features per factor to plot | 20 |
-| `rep_CV` | int | Cross-validation repeats | 50 |
 | `pure_homo` | bool | Pure variables have loading 1 | True |
+
+## Result files and plots
+
+Both backends export per-cell `<delta>_<lambda>_out/` directories with labelled
+`A.csv`, `z_matrix.csv`, `sig_LFs.txt`, `sig_interacts.txt`, `scores.txt`, and
+`run_params.txt`. Factor labels use zero-based `Z0`, `Z1`, etc.; interaction
+labels use `Z0.Z1`. A label match alone does not establish factor alignment.
+
+For selected factors, both produce:
+
+- `feature_list_Zi.txt`: tab-separated R-style feature names, absolute loadings,
+  Spearman correlations, colors, and raw-feature AUC for binary responses.
+- `plotSigGenes_marginals.pdf`: marginal-factor feature names in red/blue.
+  With interactions enabled, `plotSigGenes.pdf` includes interaction partners
+  and emphasizes marginal factors.
+- `ControlPerformance.csv`: `group,value` rows for the real model and random
+  controls. `ControlPerformancePlot.png` renders these when interactions are
+  enabled; disabling interactions uses PDF, following R's format choice. The
+  filename spelling is consistent across branches.
+
+The control plot follows R's in-sample OLS calculation, including binary
+responses, with 1,000 full-random fits and 1,000 partial-random fits when selected
+interactions exist. It is **not held-out predictive performance**. The shared
+`summary_table.csv` names this value `Control_Performance`; final CV is separate.
+No selected marginals means empty selection files and no invented control plot.
+
+Independent random streams and near-singular least-squares rank decisions can
+produce different scores. KDE uses R's Gaussian kernel and `bw.nrd0` bandwidth,
+not identical FFT discretization or pixel layout. Python also exports network
+plots and pickled state; Rust retains checkpoints instead. Those additional
+artifacts are not yet a shared output contract.
+
+## Measured backend comparisons
+
+These are profiled measurements of frozen source `4b32111`, not benchmarks of
+every subsequent change. All rows use 500 knockoff draws, four workers, one BLAS
+thread and homogeneous LOVE; final predictive CV is excluded. CD4 and synthetic
+capacity runs use Gaussian parity settings. Torok uses native binary-response
+settings, whose solver/grid differences are intentional. Delta/lambda are 0.1/0.1.
+
+| Dataset (samples n × features p) | Runs per backend | Estimated factors K (Rust / Python / R) | Rust wall seconds | Python wall seconds | R wall seconds |
+| --- | ---: | --- | ---: | ---: | ---: |
+| CD4 (2,482 × 1,776) | 10 | 39 / 39 / 39 | 5.31 [5.03–5.58] | 22.07 [21.85–22.83] | 93.52 [91.32–98.60] |
+| Synthetic (50 × 10,000) | 1 | 178 / 178 / unavailable | 115.93 | 111.85 | timeout at 7,200 |
+| Synthetic (50 × 15,000) | 1 | 136 / 136 / unavailable | 76.86 | 114.00 | timeout at 7,200 |
+| Synthetic (50 × 20,000) | 1 | 109 / 109 / unavailable | 90.69 | 137.00 | timeout at 7,200 |
+| Torok All binary (44 × 15,496) | 1 | 434 / 434 / unavailable | 1,305.27 | 4,817.10 | timeout at 7,200 |
+
+CD4 entries are median [25th–75th percentile], not confidence intervals. Sources:
+[CD4 analysis and provenance](benchmark_results/2026-10-16_production-readiness/README.md),
+[capacity results](benchmark_results/2026-10-16_large-feature-scaling/README.md)
+and [Torok results and provenance](benchmark_results/2026-10-17_torok-all-binary/README.md).
+Capacity factor counts come from the corresponding per-backend
+`results/<dataset>/<backend>/seed_20000/benchmark_summary.json` files retained
+on the shared filesystem. The synthetic inputs have planted K=20, far below
+estimated K=109–178: successful execution does not establish factor recovery.
+Different p values use nonnested datasets, so runtime need not increase with p.
+
+Peak sampled process-group RSS for Rust/Python was 2.30/4.73 GiB at p=10,000,
+5.02/10.31 GiB at p=15,000, 8.97/18.13 GiB at p=20,000, and 3.79/9.43 GiB for
+Torok (bytes divided by 2³⁰). Sampling every 50 ms can miss peaks and double-count
+shared pages; these are not exact cgroup peaks. Timings include fresh-process
+startup, imports, input I/O and preprocessing. Profiling overhead is unmeasured;
+caches were not flushed. Shared AMD EPYC 9575F nodes can experience interference.
+Singleton rows provide capacity observations, not timing uncertainty or universal
+speedup claims. R timeouts are bounded observations, not completed runtimes.
+
+### Latent-factor agreement and remaining differences
+
+For CD4, all three implementations estimated K=39 with maximum absolute latent-score
+matrix difference below 9.1×10⁻¹². Rust and Python selected marginal Z7 in all ten
+runs; R selected it in all ten and one extra marginal in one run. Median selected
+interaction count was two for each backend; equal counts do not prove equal sets.
+
+For SSc (n=24, p=804), score matrices agree within 4.7×10⁻¹¹ across the four
+parameter cells, but selection differs. At delta=0.01/lambda=0.1, K=172:
+
+| Marginal factor | Rust selections / 10 runs | Python selections / 10 runs | R selections / 10 runs |
+| --- | ---: | ---: | ---: |
+| Z20 | 10 | 0 | 2 |
+| Z74 | 0 | 8 | 8 |
+
+See the [saved SSc analysis summary](benchmark_results/2026-10-16_production-readiness/README.md).
+SSc input/response identifiers differ; the benchmark preserves historical positional
+pairing, without verifying biological sample identity. Torok's Rust and Python
+runs both report marginal Z294, but Rust reports six interactions and Python five.
+Matching K or a factor label alone does not establish aligned factor scores.
+
+Ten replicates cannot certify the pilot's narrow equivalence margins. The user
+cancelled the remaining simulations; partial truth results do not establish FDR
+control or production equivalence. See the [readiness pilot](benchmark_results/2026-10-16_production-readiness/README.md)
+for frozen provenance, solver interventions and untested cases. Older speedup
+multipliers in [backend benchmark notes](docs/dev-notes/backend-benchmark.md)
+describe historical code and settings, not current release performance.
+
+## Before publication
+
+- Resolve remaining statistical-selection differences before claiming backend
+  equivalence; matching output formats does not establish matching selections.
+- Choose one duplicate-feature-name policy. The bundled example contains repeated
+  CSV headers: Python adds suffixes such as `.1`, while Rust preserves duplicates.
+  Use unique feature names for unambiguous cross-backend exports meanwhile.
+- Review vendored licenses and distribution metadata; verify clean installations,
+  portable wheels, supported Python versions and the declared Rust minimum version.
+- Reconcile lockfiles with declared dependencies (notably optional `rpy2`), and
+  repair/test Python rerun state restoration before advertising that workflow.
+
+The existing five TUI tabs cover the release monitoring workflow; no additional
+view is required for this batch. Checkpoint-error reporting and narrow-terminal
+rendering have regression tests. A live-terminal usability pass remains pending.
 
 ## Repository layout
 
@@ -171,6 +340,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## License and citation
 
-MIT; see [LICENSE](LICENSE). If you use SLIDE, cite the SLIDE paper (Rahimikollu et al.,
+Project code uses MIT; see [LICENSE](LICENSE). Bundled components have their own
+terms, including the [DSDP wrapper](src/slide_py/dsdp_solver/LICENSE) and
+[glmnet wrapper](src/slide_py/knockoff/_vendor/glmnet/LICENSE). Redistribution
+review and distribution-license metadata remain publication gates; do not treat
+the combined Python artifact as MIT-only.
+
+If you use SLIDE, cite the SLIDE paper (Rahimikollu et al.,
 *Nature Methods*) and this repository.
 Issues: <https://github.com/TranscriptionFactory/SLIDE-rs/issues>.
