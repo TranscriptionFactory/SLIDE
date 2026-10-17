@@ -34,3 +34,9 @@ python benchmarks/scripts/analyze_seed_replicates.py \
 Inputs are the retained four-arm `timings.csv` and successful Python-hybrid
 `results/r_knockoffs/seed_*/r_knockoffs/timing_shards/*.json` files with their
 corresponding `sig_LFs.txt` files. No benchmark jobs or statistical tests reran.
+
+## Extended-limit rerun
+
+A [fresh ten-task Python/R-knockoff rerun](../2026-10-17_python-r-knockoffs-extended/README.md)
+was submitted as array 11967812 with two hours per task. This figure still
+shows the original results until the rerun completes and passes validation.
