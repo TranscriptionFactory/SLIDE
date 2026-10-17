@@ -2,8 +2,8 @@
 
 ## Maintained tools and saved results
 
-The entrypoints below live in [`scripts/`](scripts/). Saved measurements live
-in [`results/`](results/).
+Use the tools in [`scripts/`](scripts/) and find saved measurements in
+[`results/`](results/).
 
 See the [retained-evidence index](results/README.md) for current
 runtime, memory and significant-LF comparisons. Keep each new run in a dated,
@@ -43,8 +43,8 @@ interaction count was two for each backend; equal counts do not prove equal sets
 For SSc (n=24, p=804), latent-score matrices agree within 4.7×10⁻¹¹
 across four parameter cells, but marginal selections differ. At delta=0.01,
 lambda=0.1, Rust selected Z20 in 10/10 runs, Python in 0/10 and R in 2/10;
-Z74 appeared in 0/10, 8/10 and 8/10 respectively. These are observed
-frequencies, not a claim that each difference is statistically significant.
+Rust selected Z74 in 0/10 runs; Python and R each selected it in 8/10.
+Selection frequencies alone do not establish statistical significance.
 
 The [pilot selection report](results/2026-10-16_production-readiness/README.md#backend-selection-details)
 contains full selection-count tables, marginal and interaction Jaccard
@@ -59,8 +59,8 @@ The separate `c4726e3` campaign compares native Rust, native Python, pure R,
 Rust with R-generated knockoffs and Python with R knockoffs through `rpy2`.
 Do not pool it with the pilot. At delta=0.01, lambda=0.1, native Rust selected
 Z20 in 10/10 runs versus 0/10 for Python and R, 1/10 for the Rust hybrid and
-0/10 for the Python hybrid. Z74 appeared in 0/10, 8/10, 9/10, 6/10 and 8/10,
-respectively.
+0/10 for the Python hybrid. For Z74, the counts were Rust 0/10, Python 8/10,
+R 9/10, Rust hybrid 6/10 and Python hybrid 8/10.
 
 - [Four-arm statistical analysis](results/2026-10-16_backend-replicates/README.md):
   adjusted per-factor tests, overlap comparisons and complete Rust-hybrid counts.
@@ -71,8 +71,8 @@ respectively.
   cell has completion bias; missing cells are not zero selections. The 17
   completed score matrices match R within 1.12×10⁻¹¹ with matching row/column order.
 - [Extended-limit rerun](results/2026-10-17_python-r-knockoffs-extended/README.md):
-  all ten Python-hybrid tasks resubmitted with two hours each. Published figures
-  still describe the original results until the rerun passes validation.
+  we resubmitted ten Python-hybrid tasks with two hours each. Use the original
+  figures until we validate the rerun.
 
 ### Interpretation limits
 
@@ -81,7 +81,7 @@ pairing, without verifying biological sample identity. Torok's Rust and Python
 runs both report marginal Z294, but Rust reports six interactions and Python five.
 Matching K or a factor label alone does not establish aligned factor scores.
 
-Factor labels compare only within an aligned dataset/parameter cell. Equal
+Compare factor labels within an aligned dataset/parameter cell. Equal
 selection counts do not imply equal factor sets, and matching scores does not
 establish selection equivalence or FDR control. See the
 [pilot limits and controlled replay](results/2026-10-16_production-readiness/README.md)
@@ -139,7 +139,7 @@ variables, Rust solver overrides, λ counts, and worker budgets. It records
 configuration, not a measurement of achieved convergence.
 
 For native defaults, unset solver override variables before selecting
-`--configuration native`. Native mode deliberately preserves inherited overrides.
+`--configuration native`. Native mode preserves inherited overrides.
 The September 12 frozen executable and run remain native-configuration results.
 
 ## Interpretation and limits

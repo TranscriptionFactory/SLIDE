@@ -6,8 +6,8 @@ SLIDE finds latent factors with LOVE (overlapping clustering) and then
 uses knockoffs to select the standalone and interacting factors that predict
 an outcome, with false discovery rate control.
 
-This repository holds three independently installable implementations. They use backend-specific
-YAML keys and path rules; their configuration files are not interchangeable.
+You can install each implementation on its own. Each uses different YAML keys
+and path rules; configuration files are not interchangeable.
 Use the source installs below for `slide-py` and `slide-rs`.
 The Python import is `slide_py`; there is no `loveslide` alias.
 
@@ -22,7 +22,7 @@ The Python import is `slide_py`; there is no `loveslide` alias.
 | Component | What it is | Entry point |
 | --- | --- | --- |
 | `SLIDE` (R, `R/`) | Original R package; root package layout retained. | `library(SLIDE)` |
-| `slide` (Rust, `crates/`) | Native pipeline with a terminal dashboard (TUI) and SLURM helpers. Native Rust computation. | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
+| `slide` (Rust, `crates/`) | Native Rust pipeline with a terminal dashboard (TUI) and SLURM helpers. | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
 | `slide-py` (Python, `src/slide_py`) | Python library with the same pipeline, plotting, and optional R backends via `rpy2`. | `slide-py run`, `slide_py.OptimizeSLIDE` |
 
 This fork integrates the R package from <https://github.com/jishnu-lab/SLIDE>.
@@ -132,9 +132,8 @@ SLIDE_iter: 500
 knockoff_backend: rust                # or "r" (needs Rscript with knockoff + corpcor; set rscript:)
 ```
 
-Unknown keys are rejected, so a typo fails at load time instead of being
-ignored. The checkpoint JSON is rewritten after each grid cell, so an
-interrupted run resumes where it stopped.
+Rust rejects unknown config keys at load time and writes the checkpoint JSON
+after each grid cell. You can resume an interrupted run from that checkpoint.
 
 Set optional `out_path` to export result tables and plots after the pipeline.
 Without it, Rust retains checkpoint-only execution. Use a fresh output path:
@@ -258,13 +257,14 @@ The control plot follows R's in-sample OLS calculation, including binary
 responses, with 1,000 full-random fits and 1,000 partial-random fits when selected
 interactions exist. It is **not held-out predictive performance**. The shared
 `summary_table.csv` names this value `Control_Performance`; final CV is separate.
-No selected marginals means empty selection files and no invented control plot.
+If no marginal factors pass selection, both backends write empty selection
+files and omit the control plot.
 
 Independent random streams and near-singular least-squares rank decisions can
 produce different scores. KDE uses R's Gaussian kernel and `bw.nrd0` bandwidth,
 not identical FFT discretization or pixel layout. Python also exports network
-plots and pickled state; Rust retains checkpoints instead. Those additional
-artifacts are not yet a shared output contract.
+plots and pickled state; Rust retains checkpoints instead. These extra
+outputs differ between backends.
 
 ## Measured backend comparisons
 
@@ -305,17 +305,18 @@ speedup claims. R timeouts are bounded observations, not completed runtimes.
 
 ### Latent-factor agreement and remaining differences
 
-Rust, Python and R produce closely aligned latent scores in the SSc and CD4
-pilot, but can select different factors. Matching scores does not establish
+In the SSc and CD4 pilot, Rust, Python and R produce latent-score matrices
+that agree within 4.7×10⁻¹¹, but can select different factors. Matching scores does not establish
 selection equivalence. See the [latent-factor benchmark comparisons](benchmarks/README.md#latent-factor-comparisons)
 for selection counts, marginal/interaction overlap, statistical tests and
 R-knockoff hybrid results.
 
 ![SSc marginal selection rates](benchmarks/results/2026-10-16_production-readiness/ssc/factor_rates.png)
 
-*Ten runs; factors shown were selected in at least 20% of runs in any arm. The
-figure encodes no uncertainty; the full CSV reports pointwise Wilson intervals.
-Factor identities compare only within a dataset/parameter cell.*
+*Ten runs per backend. The heatmap shows factors with selection rates of at
+least 20% in any arm. See the benchmark CSVs for pointwise Wilson intervals;
+the colors show no uncertainty. Compare factor identities within a
+dataset/parameter cell, not across cells.*
 
 ### R-knockoff hybrid benchmarks
 
@@ -327,8 +328,8 @@ SLIDE pipeline.
 The table below comes from the `c4726e3` replicate campaign, separate from
 the `4b32111` pilot above. Python with R knockoffs completed only 17/40 cells
 under the original task limit; the seven-run timing is completion-conditioned.
-An [extended-limit rerun](benchmarks/results/2026-10-17_python-r-knockoffs-extended/README.md)
-has been submitted. These timings still describe the original run.
+We submitted an [extended-limit rerun](benchmarks/results/2026-10-17_python-r-knockoffs-extended/README.md).
+The table retains the original timings pending validation of that rerun.
 
 Median wall seconds per completed cell (ten repeats unless noted):
 
@@ -393,9 +394,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 Project code uses MIT; see [LICENSE](LICENSE). Bundled components have their own
 terms, including the [DSDP wrapper](src/slide_py/dsdp_solver/LICENSE) and
-[glmnet wrapper](src/slide_py/knockoff/_vendor/glmnet/LICENSE). Redistribution
-review and distribution-license metadata remain publication gates; do not treat
-the combined Python artifact as MIT-only.
+[glmnet wrapper](src/slide_py/knockoff/_vendor/glmnet/LICENSE). Before publication, review redistribution terms and distribution-license
+metadata. Do not treat the combined Python artifact as MIT-only.
 
 If you use SLIDE, cite the SLIDE paper (Rahimikollu et al.,
 *Nature Methods*) and this repository.
