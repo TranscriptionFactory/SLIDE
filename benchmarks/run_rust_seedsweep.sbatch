@@ -69,7 +69,7 @@ fi
 mkdir -p "$BENCH_PARENT"
 exec > "${BENCH_PARENT}/seedsweep-${SLURM_JOB_ID}.out" 2>&1
 
-# ── pixi dev env (python/yaml/loveslide/numpy) ──
+# ── pixi dev env (python/yaml/slide-py/numpy) ──
 export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH"
 export CONDA_PREFIX="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1

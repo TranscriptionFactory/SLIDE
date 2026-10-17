@@ -24,7 +24,7 @@ mkdir -p "$OUT"
 exec > "${OUT}/probe-${SLURM_JOB_ID}.out" 2>&1
 echo "=== rust thread/BLAS probe :: node=$(hostname) job=${SLURM_JOB_ID} ==="
 
-# pixi dev env (python/yaml/loveslide)
+# pixi dev env (python/yaml/slide-py)
 export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH"
 export CONDA_PREFIX="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1

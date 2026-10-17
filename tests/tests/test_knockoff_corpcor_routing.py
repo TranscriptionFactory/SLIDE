@@ -3,15 +3,15 @@ from unittest.mock import patch
 
 import numpy as np
 
-from loveslide.knockoff.create import create_second_order
-from loveslide.knockoff.filter import (
+from slide_py.knockoff.create import create_second_order
+from slide_py.knockoff.filter import (
     _cov_shrink_corpcor,
     _prepare_knockoff_cache,
     knockoff_filter_voting,
 )
-from loveslide.knockoff.solve import create_solve_asdp
-from loveslide.knockoff._parallel import _precompute_knockoff_params
-from loveslide.knockoffs import Knockoffs
+from slide_py.knockoff.solve import create_solve_asdp
+from slide_py.knockoff._parallel import _precompute_knockoff_params
+from slide_py.knockoffs import Knockoffs
 
 
 FIXTURE = (
@@ -49,7 +49,7 @@ def test_low_n_cache_uses_corpcor_and_never_ledoit_wolf():
     fixture = np.load(FIXTURE)
 
     with patch(
-        "loveslide.knockoff.filter._cov_shrink_corpcor",
+        "slide_py.knockoff.filter._cov_shrink_corpcor",
         wraps=_cov_shrink_corpcor,
     ) as corpcor, patch(
         "sklearn.covariance.LedoitWolf",
@@ -65,7 +65,7 @@ def test_direct_second_order_uses_corpcor_and_never_ledoit_wolf():
     fixture = np.load(FIXTURE)
 
     with patch(
-        "loveslide.knockoff.filter._cov_shrink_corpcor",
+        "slide_py.knockoff.filter._cov_shrink_corpcor",
         wraps=_cov_shrink_corpcor,
     ) as corpcor, patch(
         "sklearn.covariance.LedoitWolf",
@@ -80,7 +80,7 @@ def test_parallel_precompute_uses_corpcor_and_never_ledoit_wolf():
     fixture = np.load(FIXTURE)
 
     with patch(
-        "loveslide.knockoff.filter._cov_shrink_corpcor",
+        "slide_py.knockoff.filter._cov_shrink_corpcor",
         wraps=_cov_shrink_corpcor,
     ) as corpcor, patch(
         "sklearn.covariance.LedoitWolf",
@@ -97,13 +97,13 @@ def test_legacy_iterative_python_uses_corpcor_and_never_ledoit_wolf():
     y = np.zeros(fixture["z"].shape[0])
 
     with patch(
-        "loveslide.knockoff.filter._cov_shrink_corpcor",
+        "slide_py.knockoff.filter._cov_shrink_corpcor",
         wraps=_cov_shrink_corpcor,
     ) as corpcor, patch(
         "sklearn.covariance.LedoitWolf",
         side_effect=AssertionError("native Python routing must not use LedoitWolf"),
     ), patch(
-        "loveslide.knockoffs._single_knockoff_iteration_python",
+        "slide_py.knockoffs._single_knockoff_iteration_python",
         return_value=[],
     ):
         Knockoffs.filter_knockoffs_iterative_python(
@@ -118,7 +118,7 @@ def test_well_conditioned_cache_keeps_sample_covariance():
     z = rng.normal(size=(80, 8))
 
     with patch(
-        "loveslide.knockoff.filter._cov_shrink_corpcor",
+        "slide_py.knockoff.filter._cov_shrink_corpcor",
         wraps=_cov_shrink_corpcor,
     ) as corpcor:
         cache = _prepare_knockoff_cache(z, method="asdp")
@@ -162,7 +162,7 @@ def test_slide_knockoffs_receive_raw_latent_factors_like_r_secondko():
     np.testing.assert_array_equal(machop.z1, z[:, [0]])
 
     with patch(
-        "loveslide.knockoffs.knockoff_filter_voting_slide",
+        "slide_py.knockoffs.knockoff_filter_voting_slide",
         side_effect=AssertionError("captured"),
     ) as voting:
         try:

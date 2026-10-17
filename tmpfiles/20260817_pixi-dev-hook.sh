@@ -6,11 +6,11 @@ export PIXI_EXE=/ihome/djishnu/aar126/.pixi/bin/pixi
 export PIXI_PROJECT_VERSION=1.0.0
 export PIXI_IN_SHELL=1
 export PIXI_PROJECT_MANIFEST=/ix/djishnu/Aaron/1_general_use/omni-SLIDE/pixi.toml
-export PIXI_PROJECT_NAME=loveslide
-export CONDA_DEFAULT_ENV=loveslide:dev
+export PIXI_PROJECT_NAME=slide-py
+export CONDA_DEFAULT_ENV=slide-py:dev
 export PIXI_ENVIRONMENT_NAME=dev
 export PIXI_ENVIRONMENT_PLATFORMS=linux-64
-export PIXI_PROMPT='(loveslide:dev) '
+export PIXI_PROMPT='(slide-py:dev) '
 . /ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/etc/conda/activate.d/activate-r-base.sh
 . /ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/etc/conda/activate.d/libglib_activate.sh
 . /ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/etc/conda/activate.d/libxml2-split_activate.sh
@@ -35,4 +35,4 @@ pixi() {
     return 0
 }
 
-export PS1="(loveslide:dev) ${PS1:-}"
+export PS1="(slide-py:dev) ${PS1:-}"

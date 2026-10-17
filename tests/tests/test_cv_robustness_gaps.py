@@ -8,7 +8,7 @@ import pandas as pd
 from unittest.mock import Mock, patch
 from sklearn.model_selection import StratifiedKFold
 
-from loveslide import SLIDEcv
+from slide_py import SLIDEcv
 
 
 class TestCVFoldGenerationEdgeCases:

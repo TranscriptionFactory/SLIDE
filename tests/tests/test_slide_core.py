@@ -16,7 +16,7 @@ import tempfile
 import os
 from pathlib import Path
 
-from loveslide import SLIDE, OptimizeSLIDE
+from slide_py import SLIDE, OptimizeSLIDE
 
 
 class TestSLIDEInit:

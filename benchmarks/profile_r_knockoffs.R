@@ -6,7 +6,7 @@ if (length(args) != 1L) stop("provide a dated output directory")
 out <- args[[1]]
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 script <- sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE)[[1]])
-helper <- file.path(dirname(dirname(normalizePath(script))), "src", "loveslide",
+helper <- file.path(dirname(dirname(normalizePath(script))), "src", "slide_py",
                     "slide_r", "knockoffPerformance.R")
 perf <- new.env(parent = globalenv())
 sys.source(helper, perf)

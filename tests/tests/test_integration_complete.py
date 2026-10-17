@@ -18,7 +18,7 @@ import gc
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from loveslide import (
+from slide_py import (
     SLIDE, OptimizeSLIDE, SLIDEcv, Knockoffs, VotingResult,
     call_love, Plotter, Estimator, SLIDE_Estimator,
     init_data, show_params, check_params, calc_default_fsize

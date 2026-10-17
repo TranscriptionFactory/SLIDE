@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 SDP_SOLVERS = ("dsdp", "cvxpy")
 
 _DSDP_MISSING_MESSAGE = (
-    "The DSDP C extension (loveslide.dsdp_solver.pydsdp5) is not available, "
+    "The DSDP C extension (slide_py.dsdp_solver.pydsdp5) is not available, "
     "and knockoff SDPs require it by default to match R's Rdsdp solver.\n"
     "Build it from the repository root with a C compiler and BLAS/LAPACK:\n"
     "  pip install -e .            (or: python setup.py build_ext --inplace)\n"

@@ -6,7 +6,7 @@ Reproduces the examples from the R package README.
 import numpy as np
 import pytest
 
-from loveslide.love_python.love import LOVE, Screen_X
+from slide_py.love_python.love import LOVE, Screen_X
 
 
 def generate_synthetic_data(n=100, seed=42):
@@ -154,7 +154,7 @@ class TestUtilities:
 
     def test_recover_group(self):
         """Test recoverGroup function."""
-        from loveslide.love_python.love.utilities import recoverGroup
+        from slide_py.love_python.love.utilities import recoverGroup
 
         A = np.array([
             [1, 0],
@@ -173,7 +173,7 @@ class TestUtilities:
 
     def test_offSum(self):
         """Test offSum function."""
-        from loveslide.love_python.love.utilities import offSum
+        from slide_py.love_python.love.utilities import offSum
 
         M = np.array([
             [1, 2, 3],
@@ -193,7 +193,7 @@ class TestScoreMatrix:
 
     def test_score_mat(self):
         """Test Score_mat function."""
-        from loveslide.love_python.love.score import Score_mat
+        from slide_py.love_python.love.score import Score_mat
 
         np.random.seed(42)
         X = np.random.randn(50, 5)

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
-from loveslide import Plotter
+from slide_py import Plotter
 
 
 class TestPlotGenerationEdgeCases:

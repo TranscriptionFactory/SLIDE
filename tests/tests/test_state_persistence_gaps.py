@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from loveslide import SLIDE, OptimizeSLIDE
+from slide_py import SLIDE, OptimizeSLIDE
 
 
 class TestStatePersistenceCorruption:

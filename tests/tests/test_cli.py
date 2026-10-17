@@ -1,11 +1,11 @@
-"""Tests for the ``loveslide`` command-line entry point."""
+"""Tests for the ``slide-py`` command-line entry point."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from loveslide import __version__
-from loveslide.cli import load_config, main
+from slide_py import __version__
+from slide_py.cli import load_config, main
 
 
 def _write_dataset(tmp_path, n=40, k=3, per=5):
@@ -30,7 +30,9 @@ def test_version(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
-    assert __version__ in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert out.startswith("slide-py ")
+    assert __version__ in out
 
 
 def test_run_help(capsys):
@@ -38,6 +40,7 @@ def test_run_help(capsys):
         main(["run", "--help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
+    assert "slide-py run" in out
     assert "--config" in out and "--out-path" in out
 
 

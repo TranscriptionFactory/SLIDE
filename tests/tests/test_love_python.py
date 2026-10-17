@@ -14,25 +14,25 @@ import pytest
 import numpy as np
 from typing import Dict, List, Union, Optional
 
-from loveslide.love_python.love.love import LOVE
-from loveslide.love_python.love.prescreen import Screen_X
-from loveslide.love_python.love.score import Score_mat, LP_Score
-from loveslide.love_python.love.utilities import (
+from slide_py.love_python.love.love import LOVE
+from slide_py.love_python.love.prescreen import Screen_X
+from slide_py.love_python.love.score import Score_mat, LP_Score
+from slide_py.love_python.love.utilities import (
     recoverGroup, singleton, threshA, offSum, partition, extract
 )
-from loveslide.love_python.love.cv import (
+from slide_py.love_python.love.cv import (
     CV_delta, CalFittedSigma, KfoldCV_delta, CV_lbd
 )
-from loveslide.love_python.love.est_pure_homo import (
+from slide_py.love_python.love.est_pure_homo import (
     EstAI, EstC, FindRowMax, FindPureNode, TestPure, FindSignPureNode
 )
-from loveslide.love_python.love.est_pure_hetero import (
+from slide_py.love_python.love.est_pure_hetero import (
     Est_Pure, Est_BI_C, Re_Est_Pure, Post_Est_Pure, Est_K
 )
-from loveslide.love_python.love.est_nonpure import (
+from slide_py.love_python.love.est_nonpure import (
     EstY, EstAJInv, LP, EstAJDant, Dantzig
 )
-from loveslide.love_python.love.est_omega import estOmega, solve_row
+from slide_py.love_python.love.est_omega import estOmega, solve_row
 
 
 class TestLOVECore:
@@ -92,7 +92,7 @@ class TestLOVEPreprocessing:
         """Cutoff-based FDR filter keeps exactly what full BH adjustment keeps."""
         from scipy import stats
         from statsmodels.stats.multitest import multipletests
-        from loveslide.love_python.love.love import _apply_fdr_threshold
+        from slide_py.love_python.love.love import _apply_fdr_threshold
 
         rng = np.random.default_rng(7)
         factors = rng.uniform(-1, 1, (n, 3))

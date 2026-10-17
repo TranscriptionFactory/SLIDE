@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from loveslide.knockoff.filter import knockoff_threshold
+from slide_py.knockoff.filter import knockoff_threshold
 
 
 class TestKnockoffThresholdEdgeCases:

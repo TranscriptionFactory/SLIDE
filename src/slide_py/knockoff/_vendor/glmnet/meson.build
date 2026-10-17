@@ -47,5 +47,5 @@ py.extension_module('_glmnet',
   include_directories: inc_np,
   dependencies: py_dep,
   install: true,
-  subdir: 'loveslide/knockoff/_vendor/glmnet'
+  subdir: 'slide_py/knockoff/_vendor/glmnet'
 )

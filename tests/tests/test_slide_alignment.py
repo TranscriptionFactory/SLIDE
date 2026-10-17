@@ -143,7 +143,7 @@ def _get_find_opt_iter():
     Helper to import find_opt_iter, returning None if not implemented.
     """
     try:
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
         return find_opt_iter
     except (ImportError, AttributeError):
         return None
@@ -158,7 +158,7 @@ def _get_slide_voting():
     Helper to import knockoff_filter_voting_slide, returning None if not implemented.
     """
     try:
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
         return knockoff_filter_voting_slide
     except (ImportError, AttributeError):
         return None
@@ -169,7 +169,7 @@ def _get_chunk_boundaries():
     Helper to import _compute_chunk_boundaries, returning None if not implemented.
     """
     try:
-        from loveslide.knockoff.filter import _compute_chunk_boundaries
+        from slide_py.knockoff.filter import _compute_chunk_boundaries
         return _compute_chunk_boundaries
     except (ImportError, AttributeError):
         return None
@@ -195,7 +195,7 @@ class TestFindOptIter:
         Given freq_vars = [0, 1, 2] and selected_list where iteration 2
         has all three, find_opt_iter should return iteration 2's selections.
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([0, 1, 2])
         selected_list = [
@@ -218,7 +218,7 @@ class TestFindOptIter:
 
         This matches R's findOptIter behavior.
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([0, 1])
         selected_list = [
@@ -241,7 +241,7 @@ class TestFindOptIter:
         When no variables pass the frequency threshold, return empty
         (nothing to intersect with).
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([], dtype=int)
         selected_list = [
@@ -262,7 +262,7 @@ class TestFindOptIter:
 
         Should return that iteration's selections.
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([0, 1, 2])
         selected_list = [
@@ -282,7 +282,7 @@ class TestFindOptIter:
         This makes sense: if no iteration has any overlap with the frequent
         variables, we fall back to the frequent variables themselves.
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([0, 1, 2])
         selected_list = [
@@ -301,7 +301,7 @@ class TestFindOptIter:
 
         Should return that common selection from first iteration (all tie).
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([0, 1, 2, 3])
         common_selection = np.array([0, 1, 2])
@@ -319,7 +319,7 @@ class TestFindOptIter:
 
         Empty selections should have overlap=0 but size=0.
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         freq_vars = np.array([0, 1])
         selected_list = [
@@ -338,7 +338,7 @@ class TestFindOptIter:
         """
         Verify function handles both list and array inputs for freq_vars.
         """
-        from loveslide.knockoff.filter import find_opt_iter
+        from slide_py.knockoff.filter import find_opt_iter
 
         selected_list = [
             np.array([0, 1, 2]),
@@ -369,7 +369,7 @@ class TestFeatureChunking:
 
         With p=50 and f_size=100, should be equivalent to single knockoff run.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, _ = simple_data
         p = X.shape[1]
@@ -385,7 +385,7 @@ class TestFeatureChunking:
         )
 
         # Import regular voting for comparison
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         result_regular = knockoff_filter_voting(
             X, y,
@@ -407,7 +407,7 @@ class TestFeatureChunking:
 
         p=300, f_size=100 should create 3 chunks: [0:100], [100:200], [200:300]
         """
-        from loveslide.knockoff.filter import _compute_chunk_boundaries
+        from slide_py.knockoff.filter import _compute_chunk_boundaries
 
         X, y, _ = large_feature_data
         p = X.shape[1]  # 300
@@ -431,7 +431,7 @@ class TestFeatureChunking:
         p=250, f_size=100 should create chunks: [0:84], [84:168], [168:250]
         (R uses ceiling division to balance chunk sizes)
         """
-        from loveslide.knockoff.filter import _compute_chunk_boundaries
+        from slide_py.knockoff.filter import _compute_chunk_boundaries
 
         p = 250
         f_size = 100
@@ -457,7 +457,7 @@ class TestFeatureChunking:
 
         When chunk 2 (100-200) selects local index 20, global index should be 120.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, beta = large_feature_data
         p = X.shape[1]
@@ -500,7 +500,7 @@ class TestTwoStageScreening:
         After first stage screens variables from each chunk, second stage
         should run on the union of all screened variables.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, _ = large_feature_data
 
@@ -528,7 +528,7 @@ class TestTwoStageScreening:
 
         With p=50 and f_size=100, no second stage should run.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, _ = simple_data
 
@@ -552,7 +552,7 @@ class TestTwoStageScreening:
         If all chunks find zero variables, second stage should be skipped
         and empty selection returned.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         # Create noise-only data (no true signals)
         np.random.seed(789)
@@ -586,7 +586,7 @@ class TestBackwardCompatibility:
 
         No new features should affect existing API.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         X, y, _ = simple_data
 
@@ -614,7 +614,7 @@ class TestBackwardCompatibility:
         """
         Verify VotingResult dataclass has expected attributes.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting, VotingResult
+        from slide_py.knockoff.filter import knockoff_filter_voting, VotingResult
 
         X, y, _ = simple_data
 
@@ -647,7 +647,7 @@ class TestBackwardCompatibility:
         """
         Verify all existing parameters still work correctly.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         X, y, _ = simple_data
 
@@ -673,8 +673,8 @@ class TestBackwardCompatibility:
         """
         Verify custom knockoff functions still work.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
-        from loveslide.knockoff.create import create_second_order
+        from slide_py.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.create import create_second_order
 
         X, y, _ = simple_data
 
@@ -711,7 +711,7 @@ class TestKnockoffFilterVotingSlide:
         - niter=500
         - f_size based on n,K formula
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, _ = simple_data
 
@@ -739,7 +739,7 @@ class TestKnockoffFilterVotingSlide:
         """
         import math
 
-        from loveslide import Knockoffs
+        from slide_py import Knockoffs
 
         X, y, _ = simple_data
         niter, spec = 20, 0.1
@@ -767,7 +767,7 @@ class TestKnockoffFilterVotingSlide:
 
         Should detect at least some of the 5 true signals.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, beta = simple_data
         true_signals = set(np.where(beta != 0)[0])  # {0, 1, 2, 3, 4}
@@ -800,7 +800,7 @@ class TestKnockoffFilterVotingSlide:
 
         With p=300 and f_size=100, should use 3 chunks.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, beta = large_feature_data
         true_signals = set(np.where(beta != 0)[0])
@@ -824,7 +824,7 @@ class TestKnockoffFilterVotingSlide:
         """
         Verify SLIDE wrapper produces reproducible results with same seed.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         X, y, _ = simple_data
 
@@ -857,7 +857,7 @@ class TestEdgeCases:
         """
         Edge case: p=1 (single feature).
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         np.random.seed(42)
         n = 100
@@ -880,7 +880,7 @@ class TestEdgeCases:
 
         Should handle gracefully with shrinkage.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         X, y, _ = boundary_data  # n=100, p=80
 
@@ -901,7 +901,7 @@ class TestEdgeCases:
         """
         Edge case: spec=0 should raise error or select nothing.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         np.random.seed(42)
         X = np.random.randn(100, 20)
@@ -914,7 +914,7 @@ class TestEdgeCases:
         """
         Edge case: spec=1.0 means variable must be selected in ALL iterations.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         np.random.seed(42)
         n, p = 100, 20
@@ -941,7 +941,7 @@ class TestEdgeCases:
 
         Should select more variables than strict FDR.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         np.random.seed(42)
         n, p = 100, 30
@@ -969,7 +969,7 @@ class TestEdgeCases:
 
         Voting degenerates to single knockoff run.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         np.random.seed(42)
         X = np.random.randn(100, 20)
@@ -998,7 +998,7 @@ class TestHelperFunctions:
         """
         Test knockoff_threshold function computes correct thresholds.
         """
-        from loveslide.knockoff.filter import knockoff_threshold
+        from slide_py.knockoff.filter import knockoff_threshold
 
         # Simple case: clear separation
         W = np.array([3.0, 2.5, 2.0, -0.5, -1.0, -1.5])
@@ -1022,7 +1022,7 @@ class TestHelperFunctions:
         """
         Test _prepare_knockoff_cache creates valid cache.
         """
-        from loveslide.knockoff.filter import _prepare_knockoff_cache
+        from slide_py.knockoff.filter import _prepare_knockoff_cache
 
         X, _, _ = simple_data
 
@@ -1048,7 +1048,7 @@ class TestHelperFunctions:
         """
         Test _sample_knockoffs_from_cache produces valid knockoffs.
         """
-        from loveslide.knockoff.filter import (
+        from slide_py.knockoff.filter import (
             _prepare_knockoff_cache,
             _sample_knockoffs_from_cache
         )
@@ -1089,7 +1089,7 @@ class TestParametrized:
         """
         Test voting works across various n, p ratios.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         np.random.seed(42)
         X = np.random.randn(n, p)
@@ -1112,8 +1112,8 @@ class TestParametrized:
         """
         Test voting with different knockoff construction methods.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
-        from loveslide.knockoff.create import create_second_order
+        from slide_py.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.create import create_second_order
 
         X, y, _ = simple_data
 
@@ -1140,7 +1140,7 @@ class TestParametrized:
 
         Higher spec should yield fewer selected variables.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         X, y, _ = simple_data
 
@@ -1169,7 +1169,7 @@ class TestPerformance:
         Verify caching provides speedup over uncached version.
         """
         import time
-        from loveslide.knockoff.filter import knockoff_filter_voting
+        from slide_py.knockoff.filter import knockoff_filter_voting
 
         X, y, _ = simple_data
         niter = 20
@@ -1209,7 +1209,7 @@ class TestPerformance:
         """
         Test stability with larger scale data.
         """
-        from loveslide.knockoff.filter import knockoff_filter_voting_slide
+        from slide_py.knockoff.filter import knockoff_filter_voting_slide
 
         np.random.seed(42)
         n, p = 200, 500

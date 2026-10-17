@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata
-from loveslide.knockoff.filter import find_opt_iter, knockoff_threshold
+from slide_py.knockoff.filter import find_opt_iter, knockoff_threshold
 
 
 def jaccard(left: set[int], right: set[int]) -> float:

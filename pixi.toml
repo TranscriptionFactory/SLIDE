@@ -1,5 +1,5 @@
 [workspace]
-name = "loveslide"
+name = "slide-py"
 version = "1.0.0"
 description = "Python implementation of SLIDE (LOVE + Knockoffs)"
 channels = ["conda-forge"]
@@ -28,7 +28,7 @@ gfortran = "*"
 gcc = "*"
 
 [pypi-dependencies]
-loveslide = { path = ".", editable = true }
+slide-py = { path = ".", editable = true }
 pqdm = "*"
 easydict = "*"
 rpy2 = ">=3.6.7"
@@ -80,13 +80,13 @@ env = { PYTHONNOUSERSITE = "1", RPY2_CFFI_MODE = "ABI" }
 test = "pytest -c tests/pytest.ini tests/tests -m \"not slow\""
 lint = "ruff check src/"
 fmt = "ruff format src/"
-check = "python -c \"import loveslide; print('loveslide', loveslide.__version__ if hasattr(loveslide, '__version__') else 'OK')\""
+check = "python -c \"import slide_py; print('slide-py', slide_py.__version__ if hasattr(slide_py, '__version__') else 'OK')\""
 # Build the vendored Fortran glmnet extension (same glmnet5.f90 as R's glmnet package).
 # This provides ~5-10x speedup over sklearn fallback and identical tie-breaking to R.
 # If this fails, the package still works (falls back to sklearn's lasso_path).
 build-glmnet = """python -c "
 import subprocess, sys, os, shutil
-src = 'src/loveslide/knockoff/_vendor/glmnet'
+src = 'src/slide_py/knockoff/_vendor/glmnet'
 bdir = os.path.join(src, 'builddir')
 if os.path.exists(bdir): shutil.rmtree(bdir)
 subprocess.check_call(['meson', 'setup', bdir, src])

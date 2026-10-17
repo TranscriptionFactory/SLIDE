@@ -31,7 +31,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   python:
-    name: Python (loveslide)
+    name: Python (slide-py)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -50,16 +50,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
       - name: Check DSDP extension built
-        run: python -c "from loveslide.knockoff.pydsdp import dsdp"
+        run: python -c "from slide_py.knockoff.pydsdp import dsdp"
       - name: Build vendored glmnet
         run: |
           python -m pip install meson ninja
-          src=src/loveslide/knockoff/_vendor/glmnet
+          src=src/slide_py/knockoff/_vendor/glmnet
           meson setup "$src/builddir" "$src"
           ninja -C "$src/builddir"
           cp "$src"/builddir/_glmnet*.so "$src/"
-          python -c "from loveslide.knockoff._vendor.glmnet import ElasticNet, LogitNet"
+          python -c "from slide_py.knockoff._vendor.glmnet import ElasticNet, LogitNet"
       - name: Test
         run: python -m pytest tests/tests -m "not slow and not requires_r and not requires_rust" -q
       - name: CLI smoke test
-        run: loveslide --version
+        run: slide-py --version

@@ -1,5 +1,5 @@
 """
-Test coverage for loveslide.score module - Estimator and SLIDE_Estimator classes.
+Test coverage for slide_py.score module - Estimator and SLIDE_Estimator classes.
 
 Major gaps:
 - Estimator model initialization and auto-selection
@@ -15,7 +15,7 @@ import pandas as pd
 from sklearn.datasets import make_classification, make_regression
 from unittest.mock import Mock, patch
 
-from loveslide.score import Estimator, SLIDE_Estimator, _mean_valid_scores
+from slide_py.score import Estimator, SLIDE_Estimator, _mean_valid_scores
 
 
 def test_mean_valid_scores_ignores_undefined_resamples():

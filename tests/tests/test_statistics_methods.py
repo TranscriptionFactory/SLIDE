@@ -15,13 +15,13 @@ import numpy as np
 import scipy.stats as stats
 from typing import Dict, List, Union, Optional
 
-from loveslide import Knockoffs, VotingResult
-from loveslide.knockoff.stats.lasso import stat_lasso_lambdadiff, stat_lasso_coefdiff
-from loveslide.knockoff.stats.forward import stat_forward_selection
-from loveslide.knockoff.stats.base import compute_difference_stat, compute_signed_max_stat
-from loveslide.knockoff.filter import knockoff_threshold, knockoff_filter_voting
-from loveslide.love_python.love.score import Score_mat, LP_Score
-from loveslide.love_python.love.cv import CV_delta, KfoldCV_delta
+from slide_py import Knockoffs, VotingResult
+from slide_py.knockoff.stats.lasso import stat_lasso_lambdadiff, stat_lasso_coefdiff
+from slide_py.knockoff.stats.forward import stat_forward_selection
+from slide_py.knockoff.stats.base import compute_difference_stat, compute_signed_max_stat
+from slide_py.knockoff.filter import knockoff_threshold, knockoff_filter_voting
+from slide_py.love_python.love.score import Score_mat, LP_Score
+from slide_py.love_python.love.cv import CV_delta, KfoldCV_delta
 
 
 class TestKnockoffStatisticalCorrectness:
@@ -97,7 +97,7 @@ class TestLOVEStatisticalCorrectness:
 
     def test_love_correlation_structure_preservation(self):
         """Test that LOVE preserves correlation structure."""
-        from loveslide.love_python.love.love import LOVE
+        from slide_py.love_python.love.love import LOVE
 
         np.random.seed(123)
         X = np.random.randn(150, 12)
@@ -130,7 +130,7 @@ class TestEstimationStatistics:
 
     def test_estimation_robustness(self):
         """Test robustness of estimation to outliers."""
-        from loveslide.love_python.love.est_pure_homo import EstC
+        from slide_py.love_python.love.est_pure_homo import EstC
 
         p, K = 8, 2
         Sigma_clean = np.eye(p) + 0.3 * np.ones((p, p))
@@ -241,7 +241,7 @@ class TestConvergenceAndNumericalStability:
 
     def test_iterative_algorithm_convergence(self):
         """Test convergence of iterative algorithms."""
-        from loveslide.love_python.love.est_nonpure import LP
+        from slide_py.love_python.love.est_nonpure import LP
 
         # Test LP optimization convergence
         y = np.random.randn(10)

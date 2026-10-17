@@ -16,8 +16,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from loveslide.knockoff.stats.glmnet import HAS_GLMNET, stat_glmnet_lambdasmax
-from loveslide.knockoff.filter import knockoff_threshold
+from slide_py.knockoff.stats.glmnet import HAS_GLMNET, stat_glmnet_lambdasmax
+from slide_py.knockoff.filter import knockoff_threshold
 
 
 ROOT = Path(__file__).resolve().parents[1]

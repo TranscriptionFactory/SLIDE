@@ -7,11 +7,11 @@ import numpy as np
 import scipy.sparse as sp
 from unittest.mock import Mock, patch, MagicMock
 
-from loveslide.knockoff.solve import (
+from slide_py.knockoff.solve import (
     create_solve_sdp, create_solve_asdp, _get_sdp_solver
 )
 pydsdp5 = pytest.importorskip(
-    "loveslide.dsdp_solver.pydsdp5", reason="DSDP C extension not built (pip install . or python setup.py build_ext --inplace)"
+    "slide_py.dsdp_solver.pydsdp5", reason="DSDP C extension not built (pip install . or python setup.py build_ext --inplace)"
 )
 
 

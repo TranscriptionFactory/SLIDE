@@ -1,5 +1,5 @@
 """
-Test coverage for error handling and edge cases across loveslide modules.
+Test coverage for error handling and edge cases across slide_py modules.
 
 Major gaps:
 - Memory management with large datasets
@@ -18,7 +18,7 @@ import gc
 from unittest.mock import Mock, patch, mock_open
 from pathlib import Path
 
-from loveslide import SLIDE, OptimizeSLIDE, Knockoffs, call_love, Estimator
+from slide_py import SLIDE, OptimizeSLIDE, Knockoffs, call_love, Estimator
 
 
 class TestMemoryManagement:
@@ -206,7 +206,7 @@ class TestRecoveryFromFailures:
 
     def test_sdp_solver_fallback(self):
         """Test SDP solver fallback mechanisms."""
-        from loveslide.knockoff.solve import _get_sdp_solver
+        from slide_py.knockoff.solve import _get_sdp_solver
 
         # Test that solver detection works
         solver = _get_sdp_solver()

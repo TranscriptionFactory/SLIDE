@@ -13,7 +13,7 @@ import multiprocessing
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
-from loveslide import (
+from slide_py import (
     SLIDE, OptimizeSLIDE, Knockoffs, Estimator, SLIDE_Estimator,
     init_data, show_params, check_params, calc_default_fsize
 )

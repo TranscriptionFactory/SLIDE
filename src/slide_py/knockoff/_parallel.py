@@ -6,7 +6,7 @@ the parallel loop.
 
 Example
 -------
->>> from loveslide.knockoff import knockoff_filter_voting
+>>> from slide_py.knockoff import knockoff_filter_voting
 >>> result = knockoff_filter_voting(X, y, niter=500, n_jobs=-1)  # Auto-parallel
 """
 

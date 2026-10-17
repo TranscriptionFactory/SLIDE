@@ -5,8 +5,8 @@ Runs each backend on the same dataset/parameters, times them, and compares
 correctness (sig LFs, Z-matrix correlations, A-matrix agreement).
 
 Backends:
-  - python:       loveslide OptimizeSLIDE with Python LOVE + Python knockoffs
-  - r_knockoffs:  loveslide OptimizeSLIDE with Python LOVE + R knockoffs (rpy2)
+  - python:       slide-py OptimizeSLIDE with Python LOVE + Python knockoffs
+  - r_knockoffs:  slide-py OptimizeSLIDE with Python LOVE + R knockoffs (rpy2)
   - rust:         slide-cli with native Rust knockoff SDP solver
   - rust_r_knockoffs: slide-cli with R knockoff SDP solver
   - pure_r:       native R SLIDE
@@ -216,7 +216,7 @@ def submit_slurm(args: argparse.Namespace) -> int:
     """Re-invoke this script as a SLURM job, minus the --slurm flag.
 
     Pre-computes a pixi shell-hook activation snippet on the login node
-    so that inside SLURM the full pixi environment (numpy, loveslide,
+    so that inside SLURM the full pixi environment (numpy, slide-py,
     rpy2, cargo, R, etc.) is available without pixi lockfile contention.
     Requires: ``pixi install -e dev`` has been run at least once.
     """
@@ -460,8 +460,8 @@ def _merge_cell_summaries(out_dir: Path) -> None:
 def run_python_backend(
     args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
 ) -> TimingRecord:
-    """Run Python or R-knockoffs backend via loveslide API."""
-    from loveslide import OptimizeSLIDE
+    """Run Python or R-knockoffs backend via slide_py API."""
+    from slide_py import OptimizeSLIDE
 
     if args.profile:
         run_id = dt.datetime.now().strftime("%Y%m%dT%H%M%S%f")
@@ -696,12 +696,12 @@ def _measurement_child(config_path: Path) -> int:
     start = time.perf_counter()
     try:
         if backend in ("python", "python_serial"):
-            from loveslide.knockoff.stats.glmnet import HAS_GLMNET
+            from slide_py.knockoff.stats.glmnet import HAS_GLMNET
             available = bool(HAS_GLMNET)
             if not available:
                 raise RuntimeError("Measured Python requires compiled glmnet; sklearn fallback is forbidden")
             if args.configuration == "parity":
-                from loveslide.knockoff.solve import _get_sdp_solver
+                from slide_py.knockoff.solve import _get_sdp_solver
                 _get_sdp_solver("dsdp")
         record = _run_cell(args, backend, delta, lam)
     except Exception as exc:
@@ -1054,7 +1054,7 @@ def main(argv: list[str] | None = None) -> int:
             backend in ("python", "python_serial", "r_knockoffs")
             for backend in args.backends
         ):
-            from loveslide.knockoff.stats.glmnet import HAS_GLMNET
+            from slide_py.knockoff.stats.glmnet import HAS_GLMNET
             if not HAS_GLMNET:
                 log.error("Parity requires compiled Python glmnet; sklearn fallback is not matched")
                 return 1

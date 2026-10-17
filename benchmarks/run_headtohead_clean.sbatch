@@ -27,7 +27,7 @@ module load r/4.4.0 2>/dev/null || true
 export R_LIBS="/ihome/djishnu/aar126/R/x86_64-pc-linux-gnu-library/4.4:${R_LIBS:-}"
 RSCRIPT_BIN="/software/rhel9/manual/install/r/4.4.0/bin/Rscript"
 
-# ── pixi dev env (python/yaml/loveslide) ──
+# ── pixi dev env (python/yaml/slide-py) ──
 export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH"
 export CONDA_PREFIX="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1

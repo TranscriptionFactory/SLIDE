@@ -32,7 +32,7 @@ for bk in python r_knockoffs pure_r; do
     cp -r "$BASELINE/$bk" "$OUT/$bk"
 done
 
-# ── pixi dev env (python/yaml/loveslide/numpy) ──
+# ── pixi dev env (python/yaml/slide-py/numpy) ──
 export PATH="$REPO/.pixi/envs/dev/bin:$PATH"
 export CONDA_PREFIX="$REPO/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1

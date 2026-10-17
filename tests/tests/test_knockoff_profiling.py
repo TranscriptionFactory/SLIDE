@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 from joblib.externals.loky import get_reusable_executor
 
-from loveslide.knockoff.filter import (
+from slide_py.knockoff.filter import (
     VotingResult,
     _partition_iteration_seeds,
     knockoff_filter_voting,
     knockoff_filter_voting_slide,
 )
-from loveslide.knockoff.stats.glmnet import stat_glmnet_lambdasmax
+from slide_py.knockoff.stats.glmnet import stat_glmnet_lambdasmax
 
 
 def _sampler(x, _cache, seed):
@@ -21,7 +21,7 @@ def _run(monkeypatch, n_jobs):
     x = np.random.RandomState(3).normal(size=(24, 4))
     y = x[:, 0] - x[:, 2] + np.random.RandomState(4).normal(size=24)
     monkeypatch.setattr(
-        "loveslide.knockoff.filter._prepare_knockoff_cache", lambda *args, **kwargs: {}
+        "slide_py.knockoff.filter._prepare_knockoff_cache", lambda *args, **kwargs: {}
     )
     return knockoff_filter_voting(
         x, y, statistic=stat_glmnet_lambdasmax, niter=2, n_jobs=n_jobs,
@@ -86,7 +86,7 @@ def test_chunk_and_screen_stages_use_disjoint_seed_ranges(monkeypatch):
             min_selections=1, selected_list=[np.array([0])], optimal_iter=0,
         )
 
-    monkeypatch.setattr("loveslide.knockoff.filter.knockoff_filter_voting", fake_voting)
+    monkeypatch.setattr("slide_py.knockoff.filter.knockoff_filter_voting", fake_voting)
     x = np.random.RandomState(1).normal(size=(4, 6))
     y = np.random.RandomState(2).normal(size=4)
 

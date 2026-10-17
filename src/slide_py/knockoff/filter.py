@@ -859,7 +859,7 @@ def knockoff_filter_voting(
     Examples
     --------
     >>> import numpy as np
-    >>> from loveslide.knockoff import knockoff_filter_voting
+    >>> from slide_py.knockoff import knockoff_filter_voting
     >>> n, p = 100, 50
     >>> X = np.random.randn(n, p)
     >>> beta = np.zeros(p)
@@ -1206,7 +1206,7 @@ def knockoff_filter_voting_slide(
     Examples
     --------
     >>> import numpy as np
-    >>> from loveslide.knockoff import knockoff_filter_voting_slide
+    >>> from slide_py.knockoff import knockoff_filter_voting_slide
     >>> n, p = 100, 200
     >>> X = np.random.randn(n, p)
     >>> beta = np.zeros(p)

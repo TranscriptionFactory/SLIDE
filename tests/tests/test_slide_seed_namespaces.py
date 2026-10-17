@@ -7,13 +7,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from loveslide.knockoffs import Knockoffs
-from loveslide.slide import OptimizeSLIDE, _format_interaction_pairs
+from slide_py.knockoffs import Knockoffs
+from slide_py.slide import OptimizeSLIDE, _format_interaction_pairs
 
 
 def test_interaction_cap_matches_r_on_fixed_draws(monkeypatch):
-    from loveslide.knockoff.stats import glmnet
-    from loveslide.knockoff.filter import knockoff_threshold
+    from slide_py.knockoff.stats import glmnet
+    from slide_py.knockoff.filter import knockoff_threshold
 
     if not glmnet.HAS_GLMNET:
         pytest.skip("R parity requires the vendored glmnet extension")
@@ -82,7 +82,7 @@ def test_interaction_chunks_match_r_default(monkeypatch, backend, n_lfs, expecte
         calls.append((X.shape[1], kwargs["base_seed"]))
         return SimpleNamespace(selected=np.array([], dtype=int))
 
-    module = importlib.import_module("loveslide.knockoff.filter")
+    module = importlib.import_module("slide_py.knockoff.filter")
     monkeypatch.setattr(module, "knockoff_filter_voting", fake_voting)
     slide = OptimizeSLIDE.__new__(OptimizeSLIDE)
     rng = np.random.default_rng(42)
@@ -108,7 +108,7 @@ def test_marginal_chunks_still_use_supplied_size(monkeypatch):
         widths.append(X.shape[1])
         return SimpleNamespace(selected=np.array([], dtype=int))
 
-    module = importlib.import_module("loveslide.knockoff.filter")
+    module = importlib.import_module("slide_py.knockoff.filter")
     monkeypatch.setattr(module, "knockoff_filter_voting", fake_voting)
     rng = np.random.default_rng(42)
     Knockoffs.select_short_freq(

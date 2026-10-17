@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import vendored glmnet (Fortran-based) for better performance
 try:
-    from loveslide.knockoff._vendor.glmnet import ElasticNet, LogitNet
+    from slide_py.knockoff._vendor.glmnet import ElasticNet, LogitNet
     HAS_GLMNET = True
 except ImportError as e:
     HAS_GLMNET = False

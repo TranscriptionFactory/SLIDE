@@ -45,7 +45,7 @@ exec > "${BENCH_OUT_DIR}/allbk-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.out"
 CD4_X="/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/CD4_Expansion/x.csv"
 CD4_Y="/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/CD4_Expansion/y.csv"
 
-# ── pixi dev env (python/yaml/loveslide/rpy2/numpy) ──
+# ── pixi dev env (python/yaml/slide-py/rpy2/numpy) ──
 export PATH="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev/bin:$PATH"
 export CONDA_PREFIX="/ix/djishnu/Aaron/1_general_use/omni-SLIDE/.pixi/envs/dev"
 export PYTHONNOUSERSITE=1

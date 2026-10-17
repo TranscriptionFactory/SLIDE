@@ -26,7 +26,7 @@ const COVARIANCE_EPSILON: Scalar = 1.0e-10;
 const DEFAULT_MAX_BLOCK_SIZE: usize = 500;
 /// Minimum eigenvalue a sample covariance must exceed to be treated as positive
 /// definite. R's `knockoff:::is_posdef` defaults to `tol=1e-9` but compares
-/// against `tol * 10`, as does Python's `loveslide.knockoff.utils.is_posdef`.
+/// against `tol * 10`, as does Python's `slide_py.knockoff.utils.is_posdef`.
 const POSDEF_EIGENVALUE_TOL: Scalar = 1.0e-8;
 /// Maximum 2-norm condition number (largest/smallest eigenvalue) for the raw
 /// sample covariance to be used directly in native-performance mode. Python/R
