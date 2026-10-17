@@ -305,44 +305,11 @@ speedup claims. R timeouts are bounded observations, not completed runtimes.
 
 ### Latent-factor agreement and remaining differences
 
-For CD4, all three implementations estimated K=39 with maximum absolute latent-score
-matrix difference below 9.1×10⁻¹². Rust and Python selected marginal Z7 in all ten
-runs; R selected it in all ten and one extra marginal in one run. Median selected
-interaction count was two for each backend; equal counts do not prove equal sets.
-
-For SSc (n=24, p=804), score matrices agree within 4.7×10⁻¹¹ across the four
-parameter cells, but selected marginal identities differ. The table gives
-selection counts across ten runs per backend in the frozen 4b32111 pilot:
-
-| Dataset, delta/lambda | Factor | Rust | Python | R |
-| --- | --- | ---: | ---: | ---: |
-| SSc, 0.01/0.1 | Z18, Z27, Z45, Z136 (each) | 10 | 10 | 10 |
-| SSc, 0.01/0.1 | Z20 | 10 | 0 | 2 |
-| SSc, 0.01/0.1 | Z73 | 2 | 0 | 0 |
-| SSc, 0.01/0.1 | Z74 | 0 | 8 | 8 |
-| CD4, 0.1/0.1 | Z7 | 10 | 10 | 10 |
-| CD4, 0.1/0.1 | Z26 | 0 | 0 | 1 |
-| SSc, 0.1/0.1 | Z25 | 10 | 4 | 10 |
-| SSc, 0.1/0.1 | Z53 | 8 | 3 | 8 |
-| SSc, 0.1/0.1 | Z61 | 4 | 8 | 2 |
-
-These are observed differences, not all statistically significant. Marginal
-mean cross-run Jaccard scores are descriptive summaries:
-
-| Dataset, delta/lambda | Rust/Python | Rust/R | Python/R |
-| --- | ---: | ---: | ---: |
-| SSc, 0.01/0.1 | 0.673 | 0.705 | 0.904 |
-| SSc, 0.01/1 | 0.788 | 0.750 | 0.819 |
-| SSc, 0.1/0.1 | 0.322 | 0.523 | 0.310 |
-| SSc, 0.1/1 | 0.533 | 0.589 | 0.533 |
-| CD4, 0.1/0.1 | 1.000 | 0.950 | 0.950 |
-
-Jaccard is shared selected factors divided by the union. Each mean averages all
-100 combinations of runs from two independently sampled arms. Pairs reuse runs,
-so these are not 100 independent observations or paired-seed comparisons. These summaries do not establish equivalence. See
-the [pilot backend-selection details](benchmarks/results/2026-10-16_production-readiness/README.md#backend-selection-details),
-[SSc factor rates](benchmarks/results/2026-10-16_production-readiness/ssc/factor_rates.csv)
-and [CD4 factor rates](benchmarks/results/2026-10-16_production-readiness/cd4/factor_rates.csv).
+Rust, Python and R produce closely aligned latent scores in the SSc and CD4
+pilot, but can select different factors. Matching scores does not establish
+selection equivalence. See the [latent-factor benchmark comparisons](benchmarks/README.md#latent-factor-comparisons)
+for selection counts, marginal/interaction overlap, statistical tests and
+R-knockoff hybrid results.
 
 ![SSc marginal selection rates](benchmarks/results/2026-10-16_production-readiness/ssc/factor_rates.png)
 
@@ -357,31 +324,11 @@ knockoffs (including R SDP and Gaussian draws). `r_knockoffs` uses Python LOVE
 and the Python pipeline with R knockoffs through `rpy2`; neither is the pure-R
 SLIDE pipeline.
 
-The [backend replicate analysis](benchmarks/results/2026-10-16_backend-replicates/README.md)
-uses source `c4726e3`, not the pilot source `4b32111`; do not pool the
-results. Its five-arm setup and the completed low-delta Python-with-R-knockoffs
-cells are documented in [replicate setup and partial results](benchmarks/results/2026-10-16_backend-replicates/SETUP.md).
-At SSc delta=0.01/lambda=0.1, all five arms completed ten cells:
-
-| Marginal factor | Rust | Python | R | Rust with R knockoffs | Python with R knockoffs |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Z18, Z27, Z45, Z136 (each) | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Z20 | 10/10 | 0/10 | 0/10 | 1/10 | 0/10 |
-| Z74 | 0/10 | 8/10 | 9/10 | 6/10 | 8/10 |
-
-All ten Python-with-R-knockoffs **tasks** timed out at the 20-minute budget
-spanning four cells per task. However, 17 of its 40 planned **cells** finished:
-10 at delta/lambda=0.01/0.1 and 7 at 0.01/1. No high-delta cells completed.
-The seven-run cell has timeout-related selection bias; neither its frequencies
-nor its successful-only runtime estimates represent the full ten-run plan.
-A timeout does not mean zero selected factors or a 1,200-second per-cell runtime.
-The 17 completed Python-hybrid score matrices match the corresponding R
-reference within 1.12×10⁻¹¹, with matching sample and factor order.
-
-![Five-backend marginal selection rates, including R-knockoff hybrids](benchmarks/results/2026-10-17_hybrid-selection/factor_rates.png)
-
-*Counts / completed runs; gray means no completed runs. Colors show no
-uncertainty. [Full rates, limits and reproduction](benchmarks/results/2026-10-17_hybrid-selection/README.md).*
+The table below comes from the `c4726e3` replicate campaign, separate from
+the `4b32111` pilot above. Python with R knockoffs completed only 17/40 cells
+under the original task limit; the seven-run timing is completion-conditioned.
+An [extended-limit rerun](benchmarks/results/2026-10-17_python-r-knockoffs-extended/README.md)
+has been submitted. These timings still describe the original run.
 
 Median wall seconds per completed cell (ten repeats unless noted):
 
@@ -395,11 +342,6 @@ Median wall seconds per completed cell (ten repeats unless noted):
 These timing boundaries differ from the pilot's fresh-process timings;
 see the [replicate report](benchmarks/results/2026-10-16_backend-replicates/README.md)
 for details.
-
-SSc input/response identifiers differ; the benchmark preserves historical positional
-pairing, without verifying biological sample identity. Torok's Rust and Python
-runs both report marginal Z294, but Rust reports six interactions and Python five.
-Matching K or a factor label alone does not establish aligned factor scores.
 
 Ten replicates cannot certify the pilot's narrow equivalence margins. The user
 cancelled the remaining simulations; partial truth results do not establish FDR

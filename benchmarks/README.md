@@ -31,6 +31,62 @@ Commands recorded inside frozen runs may use the original `benchmarks/<script>`
 layout after entering a frozen source tree; maintained current-checkout tools
 live under `benchmarks/scripts/`.
 
+## Latent-factor comparisons
+
+### Rust, Python and R pilot
+
+For CD4, all three implementations estimated K=39 with maximum absolute latent-score
+matrix difference below 9.1×10⁻¹². Rust and Python selected marginal Z7 in all ten
+runs; R selected it in all ten and one extra marginal in one run. Median selected
+interaction count was two for each backend; equal counts do not prove equal sets.
+
+For SSc (n=24, p=804), latent-score matrices agree within 4.7×10⁻¹¹
+across four parameter cells, but marginal selections differ. At delta=0.01,
+lambda=0.1, Rust selected Z20 in 10/10 runs, Python in 0/10 and R in 2/10;
+Z74 appeared in 0/10, 8/10 and 8/10 respectively. These are observed
+frequencies, not a claim that each difference is statistically significant.
+
+The [pilot selection report](results/2026-10-16_production-readiness/README.md#backend-selection-details)
+contains full selection-count tables, marginal and interaction Jaccard
+comparisons, CSVs, heatmaps and provenance for source `4b32111`.
+Mean cross-run Jaccard averages all 100 combinations of ten runs from two arms.
+Those pairs reuse runs; they are neither 100 independent observations nor
+paired-seed comparisons. Ten repeats do not establish equivalence.
+
+### R-knockoff hybrid comparisons
+
+The separate `c4726e3` campaign compares native Rust, native Python, pure R,
+Rust with R-generated knockoffs and Python with R knockoffs through `rpy2`.
+Do not pool it with the pilot. At delta=0.01, lambda=0.1, native Rust selected
+Z20 in 10/10 runs versus 0/10 for Python and R, 1/10 for the Rust hybrid and
+0/10 for the Python hybrid. Z74 appeared in 0/10, 8/10, 9/10, 6/10 and 8/10,
+respectively.
+
+- [Four-arm statistical analysis](results/2026-10-16_backend-replicates/README.md):
+  adjusted per-factor tests, overlap comparisons and complete Rust-hybrid counts.
+- [Five-arm heatmap and rates](results/2026-10-17_hybrid-selection/README.md):
+  includes both hybrids, with selected/completed denominators and missing cells.
+- [Python-hybrid coverage and alignment](results/2026-10-16_backend-replicates/SETUP.md#python-with-r-knockoffs-partial-evidence-only):
+  17/40 cells completed before the original ten tasks timed out. The seven-run
+  cell has completion bias; missing cells are not zero selections. The 17
+  completed score matrices match R within 1.12×10⁻¹¹ with matching row/column order.
+- [Extended-limit rerun](results/2026-10-17_python-r-knockoffs-extended/README.md):
+  all ten Python-hybrid tasks resubmitted with two hours each. Published figures
+  still describe the original results until the rerun passes validation.
+
+### Interpretation limits
+
+SSc input/response identifiers differ; the benchmark preserves historical positional
+pairing, without verifying biological sample identity. Torok's Rust and Python
+runs both report marginal Z294, but Rust reports six interactions and Python five.
+Matching K or a factor label alone does not establish aligned factor scores.
+
+Factor labels compare only within an aligned dataset/parameter cell. Equal
+selection counts do not imply equal factor sets, and matching scores does not
+establish selection equivalence or FDR control. See the
+[pilot limits and controlled replay](results/2026-10-16_production-readiness/README.md)
+for solver interventions and incomplete simulation coverage.
+
 ## Configuration modes
 
 Use `--configuration parity` for a Gaussian configuration-matched comparison.
