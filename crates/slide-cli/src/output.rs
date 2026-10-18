@@ -7,7 +7,7 @@ use slide_data_io::{write_params_json, LoadedMatrix, OutputWriteOptions};
 use slide_score::{auc_score, control_performance, pearson_correlation, ResponseType};
 use slide_types::{Matrix, Vector};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Feature {
     pub name: String,
     pub loading: f64,
@@ -42,26 +42,49 @@ fn ranks(values: &Array1<f64>) -> Array1<f64> {
     result
 }
 
-fn top_features(
-    loaded: &LoadedMatrix,
+pub(crate) fn top_features(
+    x: &Matrix,
+    feature_names: &[String],
     y: &Vector,
     a: &Matrix,
     lf: usize,
     binary: bool,
 ) -> Result<Vec<Feature>> {
+    ensure!(
+        x.nrows() == y.len()
+            && x.ncols() == a.nrows()
+            && feature_names.len() == x.ncols()
+            && lf < a.ncols(),
+        "feature plot dimensions do not match"
+    );
     let yr = ranks(y.as_ndarray());
+    let high = y
+        .as_ndarray()
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let low = y.as_ndarray().iter().copied().fold(f64::INFINITY, f64::min);
+    ensure!(
+        !binary
+            || (low.is_finite()
+                && high.is_finite()
+                && low < high
+                && y.as_ndarray().iter().all(|&v| v == low || v == high)),
+        "binary feature plot requires exactly two finite response levels"
+    );
+    let binary_y = y.as_ndarray().mapv(|v| if v == high { 1.0 } else { 0.0 });
     let mut features = Vec::new();
-    for (i, name) in loaded.feature_names.iter().enumerate() {
+    for (i, name) in feature_names.iter().enumerate() {
         let loading = a.as_ndarray()[[i, lf]].abs();
         if loading == 0.0 {
             continue;
         }
-        let x = loaded.matrix.as_ndarray().column(i).to_owned();
+        let x = x.as_ndarray().column(i).to_owned();
         features.push(Feature {
             name: name.clone(),
             loading,
             auc: if binary {
-                Some(auc_score(y.as_ndarray(), &x)?)
+                Some(auc_score(&binary_y, &x)?)
             } else {
                 None
             },
@@ -208,7 +231,14 @@ pub(crate) fn export_results(
         selected.dedup();
         let mut columns = Vec::new();
         for lf in selected {
-            let features = top_features(loaded, y, &result.love.a, lf, binary)?;
+            let features = top_features(
+                &loaded.matrix,
+                &loaded.feature_names,
+                y,
+                &result.love.a,
+                lf,
+                binary,
+            )?;
             let mut writer = csv::WriterBuilder::new()
                 .delimiter(b'\t')
                 .from_path(out.join(format!("feature_list_Z{lf}.txt")))?;
@@ -341,13 +371,35 @@ mod tests {
             sample_ids: None,
         };
         let y = Vector::from_ndarray(Array1::from_vec(vec![0.0, 0.0, 1.0, 1.0]));
-        let features = top_features(&loaded, &y, &a, 0, true)?;
+        let features = top_features(&loaded.matrix, &loaded.feature_names, &y, &a, 0, true)?;
         assert_eq!(features.len(), 3);
         assert_eq!(features[0].loading, 0.8);
         assert_eq!(features[0].auc, Some(1.0));
         assert_eq!(features[0].color(), "red");
         assert_eq!(features[1].color(), "blue");
         assert_eq!(features[2].color(), "white");
+        let shifted_y = Vector::from_ndarray(y.as_ndarray().mapv(|v| v + 2.0));
+        let shifted = top_features(
+            &loaded.matrix,
+            &loaded.feature_names,
+            &shifted_y,
+            &a,
+            0,
+            true,
+        )?;
+        assert_eq!(shifted[0].auc, features[0].auc);
+        assert_eq!(shifted[1].color(), features[1].color());
+        let invalid_y = Vector::from_ndarray(Array1::from_vec(vec![0.0, 1.0, 2.0, 2.0]));
+        assert!(top_features(
+            &loaded.matrix,
+            &loaded.feature_names,
+            &invalid_y,
+            &a,
+            0,
+            true
+        )
+        .is_err());
+        assert!(top_features(&loaded.matrix, &loaded.feature_names, &y, &a, 1, true).is_err());
         assert_eq!(
             ranks(&Array1::from_vec(vec![2.0, 1.0, 1.0])).to_vec(),
             vec![3.0, 1.5, 1.5]

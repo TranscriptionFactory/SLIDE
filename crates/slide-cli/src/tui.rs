@@ -19,8 +19,8 @@ use ratatui::symbols;
 use ratatui::text::Text;
 use ratatui::widgets::canvas::Canvas;
 use ratatui::widgets::{
-    Bar, BarChart, BarGroup, Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table, Tabs,
-    Wrap,
+    Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, Gauge, GraphType,
+    Paragraph, Row, Sparkline, Table, Tabs, Wrap,
 };
 use ratatui::{DefaultTerminal, Frame};
 use slide_core::{
@@ -80,6 +80,7 @@ fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
                     KeyCode::Char('r') => app.reload()?,
                     KeyCode::Char('v') => match app.tab {
                         Tab::Love => app.love_sub_view = app.love_sub_view.next(),
+                        Tab::Factors => app.factor_sub_view = app.factor_sub_view.next(),
                         Tab::Slide => {
                             app.selection_sub_view = app.selection_sub_view.next();
                         }
@@ -137,13 +138,32 @@ impl Tab {
 enum SelectionSubView {
     Marginal,
     Interactions,
+    Network,
 }
 
 impl SelectionSubView {
     fn next(self) -> Self {
         match self {
             Self::Marginal => Self::Interactions,
-            Self::Interactions => Self::Marginal,
+            Self::Interactions => Self::Network,
+            Self::Network => Self::Marginal,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FactorSubView {
+    Tables,
+    TextPlot,
+    Network,
+}
+
+impl FactorSubView {
+    fn next(self) -> Self {
+        match self {
+            Self::Tables => Self::TextPlot,
+            Self::TextPlot => Self::Network,
+            Self::Network => Self::Tables,
         }
     }
 }
@@ -224,6 +244,7 @@ enum LoadingRowMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PerformanceSubView {
     Summary,
+    Controls,
     FoldScores,
     Predictions,
     RocPr,
@@ -233,7 +254,8 @@ enum PerformanceSubView {
 impl PerformanceSubView {
     fn next(self, response_type: OptimizeResponseType) -> Self {
         match (self, response_type) {
-            (Self::Summary, _) => Self::FoldScores,
+            (Self::Summary, _) => Self::Controls,
+            (Self::Controls, _) => Self::FoldScores,
             (Self::FoldScores, _) => Self::Predictions,
             (Self::Predictions, OptimizeResponseType::Binary) => Self::RocPr,
             (Self::Predictions, OptimizeResponseType::Continuous) => Self::Residuals,
@@ -244,6 +266,7 @@ impl PerformanceSubView {
     fn label(self) -> &'static str {
         match self {
             Self::Summary => "Summary",
+            Self::Controls => "SLIDE / Permuted CV",
             Self::FoldScores => "Fold Scores",
             Self::Predictions => "Predictions",
             Self::RocPr => "ROC / PR",
@@ -283,6 +306,7 @@ struct App {
     love_sub_view: LoveSubView,
     loading_row_mode: LoadingRowMode,
     selection_sub_view: SelectionSubView,
+    factor_sub_view: FactorSubView,
     grid_metric: GridMetric,
     performance_sub_view: PerformanceSubView,
     feature_search_input: String,
@@ -374,6 +398,7 @@ impl App {
             love_sub_view: LoveSubView::Diagnostics,
             loading_row_mode: LoadingRowMode::TopWindow,
             selection_sub_view: SelectionSubView::Marginal,
+            factor_sub_view: FactorSubView::Tables,
             grid_metric: GridMetric::Score,
             performance_sub_view: PerformanceSubView::Summary,
             feature_search_input: String::new(),
@@ -864,7 +889,7 @@ impl App {
             " | / feat".dark_gray(),
         ];
         match self.tab {
-            Tab::Factors => footer_spans.push(" | pgup/pgdn factor".dark_gray()),
+            Tab::Factors => footer_spans.push(" | v view | pgup/pgdn factor".dark_gray()),
             Tab::Love => {
                 if self.love_sub_view.is_advanced() {
                     footer_spans.push(" | adv | 1-5 primary | v diag".dark_gray());
@@ -875,7 +900,7 @@ impl App {
                     footer_spans.push(" | m row mode".dark_gray());
                 }
             }
-            Tab::Slide => footer_spans.push(" | v sub-view".dark_gray()),
+            Tab::Slide => footer_spans.push(" | v view | pgup/pgdn factor".dark_gray()),
             Tab::Performance => footer_spans.push(" | v sub-view".dark_gray()),
             Tab::Overview => footer_spans.push(" | g grid metric".dark_gray()),
         }
@@ -962,6 +987,17 @@ impl App {
     }
 
     fn render_factors(&self, frame: &mut Frame, area: Rect) {
+        match self.factor_sub_view {
+            FactorSubView::TextPlot => {
+                self.render_feature_text(frame, area);
+                return;
+            }
+            FactorSubView::Network => {
+                self.render_feature_network(frame, area);
+                return;
+            }
+            FactorSubView::Tables => {}
+        }
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(4), Constraint::Min(10)])
@@ -1021,6 +1057,212 @@ impl App {
             body[2],
         );
         self.render_factor_histogram(frame, body[3]);
+    }
+
+    fn render_feature_text(&self, frame: &mut Frame, area: Rect) {
+        let title = format!(
+            "Feature text plot | Z{} | v view | PgUp/PgDn factor",
+            self.selected_factor
+        );
+        let result = (|| -> Result<Vec<crate::output::Feature>> {
+            self.ensure_x()?;
+            self.ensure_y()?;
+            let run = self.current_run().context("No run available")?;
+            let mut derived = self.data().derived.borrow_mut();
+            let key = (self.selected_run, self.selected_factor);
+            if !derived.feature_plots.contains_key(&key) {
+                let features = crate::output::top_features(
+                    derived
+                        .standardized_x
+                        .as_ref()
+                        .context("No feature matrix")?,
+                    derived
+                        .feature_names
+                        .as_ref()
+                        .unwrap_or(&self.data().feature_names),
+                    derived.y.as_ref().context("No response vector")?,
+                    &run.love.a,
+                    self.selected_factor,
+                    self.data().response_type == OptimizeResponseType::Binary,
+                )
+                .map_err(|error| error.to_string());
+                derived.feature_plots.insert(key, features);
+            }
+            derived.feature_plots[&key]
+                .clone()
+                .map_err(|error| anyhow!(error))
+        })();
+        let lines = match result {
+            Ok(features) => {
+                let mut lines = vec![
+                    Line::from("Red (+) / blue (-): Spearman association with response"),
+                    Line::from("Union of top 10 by |loading| and response association; rho shown"),
+                ];
+                if features.is_empty() {
+                    lines.push(Line::from("No nonzero feature loadings for this factor."));
+                }
+                for feature in features {
+                    let color = match feature.color() {
+                        "red" => Color::Red,
+                        "blue" => Color::Blue,
+                        _ => Color::Gray,
+                    };
+                    let rho = feature
+                        .corr
+                        .map_or_else(|| "n/a".to_owned(), |v| format!("{v:+.3}"));
+                    lines.push(Line::styled(
+                        format!(
+                            "{rho:>6}  {}  |loading|={:.3}",
+                            feature.name, feature.loading
+                        ),
+                        Style::default().fg(color),
+                    ));
+                }
+                lines
+            }
+            Err(error) => vec![Line::from(error.to_string())],
+        };
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(Block::default().borders(Borders::ALL).title(title))
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+    }
+
+    fn render_feature_network(&self, frame: &mut Frame, area: Rect) {
+        let title = format!(
+            "Feature correlation network | Z{} | top 10 | |r| >= 0.5 | strongest 20 edges",
+            self.selected_factor
+        );
+        let result = (|| -> Result<_> {
+            self.ensure_x()?;
+            let run = self.current_run().context("No run available")?;
+            let derived = self.data().derived.borrow();
+            let x = derived
+                .standardized_x
+                .as_ref()
+                .context("No feature matrix")?;
+            anyhow::ensure!(
+                x.ncols() == run.love.a.nrows(),
+                "Feature matrix does not match loadings"
+            );
+            anyhow::ensure!(
+                self.selected_factor < run.love.a.ncols(),
+                "No factor available"
+            );
+            let a = run.love.a.as_ndarray();
+            let mut indices: Vec<_> = (0..a.nrows())
+                .filter(|&i| a[(i, self.selected_factor)] != 0.0)
+                .collect();
+            indices.sort_by(|&i, &j| {
+                a[(j, self.selected_factor)]
+                    .abs()
+                    .total_cmp(&a[(i, self.selected_factor)].abs())
+            });
+            indices.truncate(TOP_FEATURE_COUNT);
+            let names = derived
+                .feature_names
+                .as_ref()
+                .unwrap_or(&self.data().feature_names);
+            let labels: Vec<_> = indices.iter().map(|&i| names[i].clone()).collect();
+            let columns: Vec<_> = indices
+                .iter()
+                .map(|&i| x.as_ndarray().column(i).to_vec())
+                .collect();
+            let mut edges = Vec::new();
+            for i in 0..columns.len() {
+                for j in i + 1..columns.len() {
+                    let r = pearson_correlation(&columns[i], &columns[j])?;
+                    if r.abs() >= 0.5 {
+                        edges.push((i, j, r));
+                    }
+                }
+            }
+            edges.sort_by(|a, b| b.2.abs().total_cmp(&a.2.abs()));
+            edges.truncate(20);
+            Ok((labels, edges))
+        })();
+        match result {
+            Ok((labels, edges)) => {
+                let colors: Vec<_> = edges
+                    .iter()
+                    .map(|&(i, j, r)| (i, j, if r > 0.0 { Color::Red } else { Color::Blue }))
+                    .collect();
+                render_network(
+                    frame,
+                    area,
+                    &title,
+                    &labels,
+                    &colors,
+                    "Pearson r: red + / blue -; no direction or causality",
+                );
+            }
+            Err(error) => frame.render_widget(
+                Paragraph::new(error.to_string())
+                    .block(Block::default().borders(Borders::ALL).title(title)),
+                area,
+            ),
+        }
+    }
+
+    fn render_interaction_network(&self, frame: &mut Frame, area: Rect) {
+        let Some(run) = self.current_run() else {
+            frame.render_widget(empty_widget("Selected interaction network"), area);
+            return;
+        };
+        let factor = self.selected_factor;
+        let pairs: Vec<_> = run
+            .interactions
+            .sig_interacts
+            .iter()
+            .copied()
+            .filter(|&(i, j)| i == factor || j == factor)
+            .collect();
+        let mut nodes = vec![factor];
+        for &(i, j) in &pairs {
+            for node in [i, j] {
+                if !nodes.contains(&node) && nodes.len() < 12 {
+                    nodes.push(node);
+                }
+            }
+        }
+        let labels: Vec<_> = nodes
+            .iter()
+            .map(|i| {
+                format!(
+                    "Z{i}{}",
+                    if run.marginal.sig_lfs.contains(i) {
+                        " (marginal)"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .collect();
+        let edges: Vec<_> = pairs
+            .iter()
+            .filter_map(|(i, j)| {
+                Some((
+                    nodes.iter().position(|n| n == i)?,
+                    nodes.iter().position(|n| n == j)?,
+                    Color::Cyan,
+                ))
+            })
+            .collect();
+        let title = format!(
+            "Selected interaction network | Z{factor} | {}/{} pairs | PgUp/PgDn factor",
+            edges.len(),
+            pairs.len()
+        );
+        render_network(
+            frame,
+            area,
+            &title,
+            &labels,
+            &edges,
+            "Cyan: selected LF product, not correlation; up to 12 nodes",
+        );
     }
 
     fn render_love(&self, frame: &mut Frame, area: Rect) {
@@ -2114,6 +2356,10 @@ impl App {
     }
 
     fn render_slide(&self, frame: &mut Frame, area: Rect) {
+        if self.selection_sub_view == SelectionSubView::Network {
+            self.render_interaction_network(frame, area);
+            return;
+        }
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -2126,16 +2372,22 @@ impl App {
             SelectionSubView::Interactions => {
                 self.render_interaction_frequency(frame, sections[0]);
             }
+            SelectionSubView::Network => unreachable!(),
         }
         frame.render_widget(self.factor_response_corr_widget(), sections[1]);
     }
 
     fn render_performance(&self, frame: &mut Frame, area: Rect) {
+        if self.performance_sub_view == PerformanceSubView::Controls {
+            self.render_controls(frame, area);
+            return;
+        }
         let Some(cv) = self.data().final_cv.as_ref() else {
             frame.render_widget(
                 Paragraph::new(Text::from(vec![
                     Line::from("Final CV is not available for this checkpoint."),
                     Line::from("Enable it in the run YAML with cv.enabled: true."),
+                    Line::from("Press v for SLIDE / Permuted CV exported control scores."),
                 ]))
                 .block(Block::default().borders(Borders::ALL).title("Performance"))
                 .wrap(Wrap { trim: true }),
@@ -2165,6 +2417,7 @@ impl App {
         );
 
         match self.performance_sub_view {
+            PerformanceSubView::Controls => unreachable!(),
             PerformanceSubView::Summary => {
                 let body = Layout::default()
                     .direction(Direction::Vertical)
@@ -2192,6 +2445,163 @@ impl App {
             PerformanceSubView::RocPr => self.render_roc_pr(frame, sections[1], cv),
             PerformanceSubView::Residuals => self.render_residuals(frame, sections[1], cv),
         }
+    }
+
+    fn render_controls(&self, frame: &mut Frame, area: Rect) {
+        let title = "SLIDE / Permuted CV | selected run | v view";
+        let mut derived = self.data().derived.borrow_mut();
+        let scores = derived
+            .control_scores
+            .entry(self.selected_run)
+            .or_insert_with(|| {
+                (|| -> Result<ControlScores> {
+                    let config_path =
+                        self.args.config.as_ref().context(
+                            "Pass --config with out_path to read exported control scores",
+                        )?;
+                    let config: crate::run::RunConfig =
+                        serde_yaml::from_str(&fs::read_to_string(config_path)?)?;
+                    let out = config
+                        .out_path
+                        .context("Set out_path in the run YAML to export control scores")?;
+                    let run = self.current_run().context("No run available")?;
+                    let path = out.join(format!(
+                        "{}_{}_out/ControlPerformance.csv",
+                        run.delta, run.lambda
+                    ));
+                    fs::File::open(&path)
+                        .map_err(anyhow::Error::from)
+                        .and_then(read_control_scores)
+                        .with_context(|| {
+                            format!(
+                                "Controls unavailable at {}; wait for export, then reload (r)",
+                                path.display()
+                            )
+                        })
+                })()
+                .map_err(|error| format!("{error:#}"))
+            });
+        let scores = match scores {
+            Ok(scores) => scores,
+            Err(error) => {
+                frame.render_widget(
+                    Paragraph::new(error.as_str())
+                        .block(Block::default().borders(Borders::ALL).title(title))
+                        .wrap(Wrap { trim: true }),
+                    area,
+                );
+                return;
+            }
+        };
+        let mean = |values: &[f64]| {
+            if values.is_empty() {
+                None
+            } else {
+                Some(values.iter().sum::<f64>() / values.len() as f64)
+            }
+        };
+        let cv = self.data().final_cv.as_ref().map_or_else(
+            || "Held-out CV (best model): unavailable".to_owned(),
+            |cv| {
+                format!(
+                    "Held-out CV (best model): {:?} {} | SE {}",
+                    cv.metric,
+                    format_optional_scalar(cv.mean),
+                    format_optional_scalar(cv.standard_error)
+                )
+            },
+        );
+        let lines = vec![
+            Line::from("In-sample controls; Permuted CV is NOT held-out CV."),
+            Line::from(format!(
+                "SLIDE: {:.4} | Permuted CV mean: {} (n={})",
+                scores.real,
+                format_optional_scalar(mean(&scores.full_random)),
+                scores.full_random.len()
+            )),
+            Line::from(format!(
+                "Partial random mean: {} (n={})",
+                format_optional_scalar(mean(&scores.partial_random)),
+                scores.partial_random.len()
+            )),
+            Line::from(cv),
+        ];
+        let sections = Layout::vertical([Constraint::Length(6), Constraint::Min(0)]).split(area);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: true })
+                .block(Block::default().borders(Borders::ALL).title(title)),
+            sections[0],
+        );
+        let full: Vec<_> = scores
+            .full_random
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (i as f64 + 1.0, v))
+            .collect();
+        let partial: Vec<_> = scores
+            .partial_random
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (i as f64 + 1.0, v))
+            .collect();
+        let n = full.len().max(partial.len()).max(2) as f64;
+        let real = [(1.0, scores.real), (n, scores.real)];
+        let mut datasets = vec![
+            Dataset::default()
+                .name("Permuted CV (full)")
+                .data(&full)
+                .marker(symbols::Marker::Dot)
+                .style(Style::default().fg(Color::Blue)),
+            Dataset::default()
+                .name("SLIDE (in-sample)")
+                .data(&real)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::Red)),
+        ];
+        if !partial.is_empty() {
+            datasets.push(
+                Dataset::default()
+                    .name("Partial random")
+                    .data(&partial)
+                    .marker(symbols::Marker::Dot)
+                    .style(Style::default().fg(Color::Cyan)),
+            );
+        }
+        let min = full
+            .iter()
+            .chain(&partial)
+            .chain(&real)
+            .map(|p| p.1)
+            .fold(scores.real, f64::min);
+        let max = full
+            .iter()
+            .chain(&partial)
+            .chain(&real)
+            .map(|p| p.1)
+            .fold(scores.real, f64::max);
+        let pad = ((max - min) * 0.05).max(0.01);
+        frame.render_widget(
+            Chart::new(datasets)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Exported OLS controls | AUC (binary) / correlation (continuous)"),
+                )
+                .x_axis(
+                    Axis::default()
+                        .title("Random draw")
+                        .bounds([1.0, n])
+                        .labels(["1".to_owned(), format!("{n:.0}")]),
+                )
+                .y_axis(
+                    Axis::default()
+                        .title("Score")
+                        .bounds([min - pad, max + pad])
+                        .labels([format!("{:.3}", min - pad), format!("{:.3}", max + pad)]),
+                ),
+            sections[1],
+        );
     }
 
     fn performance_summary_widget(&self, cv: &slide_cv::FinalCvResult) -> Paragraph<'static> {
@@ -2819,6 +3229,123 @@ struct LoadingRowSelection {
     total_candidates: usize,
 }
 
+fn render_network(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    labels: &[String],
+    edges: &[(usize, usize, Color)],
+    legend: &str,
+) {
+    let sections = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
+    frame.render_widget(
+        Paragraph::new(legend)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().borders(Borders::ALL).title(title)),
+        sections[0],
+    );
+    let body = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(sections[1]);
+    let positions: Vec<_> = (0..labels.len())
+        .map(|i| {
+            let angle = std::f64::consts::TAU * i as f64 / labels.len() as f64;
+            (65.0 * angle.cos(), 65.0 * angle.sin())
+        })
+        .collect();
+    let canvas = Canvas::default()
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "{} nodes / {} edges",
+            labels.len(),
+            edges.len()
+        )))
+        .marker(symbols::Marker::Braille)
+        .x_bounds([-100.0, 100.0])
+        .y_bounds([-100.0, 100.0])
+        .paint(|ctx| {
+            for &(i, j, color) in edges {
+                let (x1, y1) = positions[i];
+                let (x2, y2) = positions[j];
+                if i == j {
+                    ctx.draw(&ratatui::widgets::canvas::Circle {
+                        x: x1,
+                        y: y1 + 6.0,
+                        radius: 6.0,
+                        color,
+                    });
+                } else {
+                    ctx.draw(&ratatui::widgets::canvas::Line {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        color,
+                    });
+                }
+            }
+            ctx.layer();
+            for (i, &(x, y)) in positions.iter().enumerate() {
+                ctx.print(
+                    x,
+                    y,
+                    Line::styled(format!("[{}]", i + 1), Style::default().fg(Color::White)),
+                );
+            }
+        });
+    frame.render_widget(canvas, body[0]);
+    let mut lines: Vec<_> = labels
+        .iter()
+        .enumerate()
+        .map(|(i, label)| Line::from(format!("[{}] {label}", i + 1)))
+        .collect();
+    if edges.is_empty() {
+        lines.push(Line::from("No edges in this view."));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().borders(Borders::ALL).title("Nodes")),
+        body[1],
+    );
+}
+
+#[derive(Debug)]
+struct ControlScores {
+    real: f64,
+    full_random: Vec<f64>,
+    partial_random: Vec<f64>,
+}
+
+fn read_control_scores(input: impl io::Read) -> Result<ControlScores> {
+    let mut reader = csv::Reader::from_reader(input);
+    anyhow::ensure!(
+        reader.headers()?.iter().eq(["group", "value"]),
+        "Expected control CSV header: group,value"
+    );
+    let mut real = None;
+    let mut full_random = Vec::new();
+    let mut partial_random = Vec::new();
+    for row in reader.records() {
+        let row = row?;
+        let value: f64 = row[1].parse()?;
+        anyhow::ensure!(value.is_finite(), "Non-finite control score");
+        match &row[0] {
+            "Real" => {
+                anyhow::ensure!(real.is_none(), "Duplicate Real control score");
+                real = Some(value);
+            }
+            "FullRandom" => full_random.push(value),
+            "PartialRandom" => partial_random.push(value),
+            group => anyhow::bail!("Unknown control score group: {group}"),
+        }
+    }
+    anyhow::ensure!(!full_random.is_empty(), "No full-random control scores");
+    Ok(ControlScores {
+        real: real.context("No Real control score")?,
+        full_random,
+        partial_random,
+    })
+}
+
 fn empty_widget(title: &'static str) -> Paragraph<'static> {
     Paragraph::new("No data")
         .alignment(Alignment::Center)
@@ -2861,6 +3388,9 @@ struct DerivedDashboardData {
     group_correlations: Vec<Option<Option<Array2<Scalar>>>>,
     factor_response_corr: Vec<Option<Vec<Scalar>>>,
     block_correlations: Vec<Option<Option<(Array2<Scalar>, Vec<usize>)>>>,
+    control_scores: BTreeMap<usize, std::result::Result<ControlScores, String>>,
+    feature_plots:
+        BTreeMap<(usize, usize), std::result::Result<Vec<crate::output::Feature>, String>>,
     load_error: Option<String>,
 }
 
@@ -4072,6 +4602,134 @@ mod tests {
             .collect()
     }
 
+    fn plot_app() -> App {
+        let mut app = fixture_app("../../tests/test_config_checkpoint.json");
+        let data = app.data.as_mut().unwrap();
+        let run = &mut data.runs[0];
+        run.love.k = 2;
+        run.love.a =
+            super::Matrix::from_rows(vec![vec![0.9, 0.1], vec![0.8, 0.2], vec![0.7, 0.3]]).unwrap();
+        run.marginal.sig_lfs = vec![0];
+        run.interactions.sig_interacts = vec![(0, 1)];
+        let derived = data.derived.get_mut();
+        derived.feature_names = Some(vec![
+            "positive".into(),
+            "negative".into(),
+            "constant".into(),
+        ]);
+        derived.standardized_x = Some(
+            super::Matrix::from_rows(vec![
+                vec![1.0, 4.0, 1.0],
+                vec![2.0, 3.0, 1.0],
+                vec![3.0, 2.0, 1.0],
+                vec![4.0, 1.0, 1.0],
+            ])
+            .unwrap(),
+        );
+        derived.y = Some(super::Vector::from_ndarray(ndarray::array![
+            0.0, 0.0, 1.0, 1.0
+        ]));
+        derived.control_scores.insert(
+            0,
+            Ok(super::ControlScores {
+                real: 0.8,
+                full_random: vec![0.4, 0.6],
+                partial_random: vec![0.5, 0.7],
+            }),
+        );
+        app
+    }
+
+    #[test]
+    fn control_csv_checks_schema_groups_and_finite_scores() {
+        let scores = super::read_control_scores(
+            b"group,value\nFullRandom,-0.2\nPartialRandom,0.1\nReal,0.8\n".as_slice(),
+        )
+        .unwrap();
+        assert_eq!(scores.real, 0.8);
+        assert_eq!(scores.full_random, [-0.2]);
+        assert_eq!(scores.partial_random, [0.1]);
+        for csv in [
+            "group,value\nReal,0.8\n",
+            "group,value\nFullRandom,0.5\n",
+            "group,value\nFullRandom,NaN\nReal,0.8\n",
+            "group,value\nFullRandom,0.5\nReal,0.8\nReal,0.9\n",
+            "group,value\nUnknown,0.5\nReal,0.8\n",
+            "value,group\n0.5,FullRandom\n",
+            "group,value\nReal\n",
+        ] {
+            assert!(
+                super::read_control_scores(csv.as_bytes()).is_err(),
+                "accepted {csv}"
+            );
+        }
+    }
+
+    #[test]
+    fn feature_plots_use_signed_response_colors_and_real_edges() {
+        let mut app = plot_app();
+        app.tab = Tab::Factors;
+        app.factor_sub_view = super::FactorSubView::TextPlot;
+        let mut terminal = Terminal::new(TestBackend::new(140, 45)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(buffer.content.iter().any(|c| c.fg == super::Color::Red));
+        assert!(buffer.content.iter().any(|c| c.fg == super::Color::Blue));
+        let features = app.data().derived.borrow().feature_plots[&(0, 0)]
+            .clone()
+            .unwrap();
+        assert_eq!(features[0].name, "positive");
+        assert_eq!(features[0].color(), "red");
+        assert_eq!(features[1].name, "negative");
+        assert_eq!(features[1].color(), "blue");
+        app.factor_sub_view = super::FactorSubView::Network;
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("3 nodes / 1 edges"));
+        assert!(text.contains("negative"));
+        app.tab = Tab::Slide;
+        app.selection_sub_view = super::SelectionSubView::Network;
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("2 nodes / 1 edges"));
+        assert!(text.contains("Z0 (marginal)"));
+        assert!(text.contains("Z1"));
+    }
+
+    #[test]
+    fn populated_plots_render_narrow_and_controls_work_without_final_cv() {
+        let mut app = plot_app();
+        app.tab = Tab::Performance;
+        app.performance_sub_view = PerformanceSubView::Controls;
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("NOT held-out CV"));
+        assert!(text.contains("Permuted CV mean: 0.5000"));
+        assert!(text.contains("SLIDE: 0.8000"));
+        assert!(text.contains("best model): unavailable"));
+        app.data.as_mut().unwrap().final_cv = Some(slide_cv::FinalCvResult {
+            metric: slide_score::ScoreMetric::Auc,
+            mean: Some(0.75),
+            standard_error: Some(0.02),
+            folds: Vec::new(),
+            predictions: Vec::new(),
+        });
+        let text = render_text(&app, 60, 20);
+        assert!(text.contains("best model): Auc 0.7500 | SE 0.0200"));
+        for (width, height) in [(140, 45), (60, 20), (20, 8), (1, 1)] {
+            render_text(&app, width, height);
+            app.tab = Tab::Factors;
+            for view in [
+                super::FactorSubView::TextPlot,
+                super::FactorSubView::Network,
+            ] {
+                app.factor_sub_view = view;
+                render_text(&app, width, height);
+            }
+            app.tab = Tab::Slide;
+            app.selection_sub_view = super::SelectionSubView::Network;
+            render_text(&app, width, height);
+            app.tab = Tab::Performance;
+        }
+    }
+
     #[test]
     fn dashboard_views_render_at_normal_and_narrow_sizes() {
         for checkpoint in [
@@ -4100,12 +4758,23 @@ mod tests {
                     app.love_sub_view = LoveSubView::from_number(key).unwrap();
                     render_text(&app, width, height);
                 }
+                app.tab = Tab::Factors;
+                for view in [
+                    super::FactorSubView::TextPlot,
+                    super::FactorSubView::Network,
+                ] {
+                    app.factor_sub_view = view;
+                    render_text(&app, width, height);
+                }
                 app.tab = Tab::Slide;
+                app.selection_sub_view = super::SelectionSubView::Network;
+                render_text(&app, width, height);
                 app.selection_sub_view = app.selection_sub_view.next();
                 render_text(&app, width, height);
                 app.tab = Tab::Performance;
                 for view in [
                     PerformanceSubView::Summary,
+                    PerformanceSubView::Controls,
                     PerformanceSubView::FoldScores,
                     PerformanceSubView::Predictions,
                     PerformanceSubView::RocPr,
@@ -4296,6 +4965,14 @@ mod tests {
 
     #[test]
     fn performance_subview_cycle_respects_response_type() {
+        assert_eq!(
+            PerformanceSubView::Summary.next(OptimizeResponseType::Binary),
+            PerformanceSubView::Controls
+        );
+        assert_eq!(
+            PerformanceSubView::Controls.next(OptimizeResponseType::Continuous),
+            PerformanceSubView::FoldScores
+        );
         assert_eq!(
             PerformanceSubView::Predictions.next(OptimizeResponseType::Binary),
             PerformanceSubView::RocPr

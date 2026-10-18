@@ -245,20 +245,36 @@ Per-factor detail for the selected run:
 - Top features by loading weight
 - Factor score distributions rendered as sparkline histograms (`▁▂▃▅▆▇█`)
 
-Use `PgDn` / `PgUp` to cycle through factors.
+Use `PgDn` / `PgUp` to cycle through factors. Press `v` to cycle through
+these tables, a red/blue feature text plot, and a feature-correlation network.
+
+The text plot uses the same top-feature selection as the exported gene plots:
+the union of the top 10 by absolute loading and response association. Red (+)
+and blue (-) show the sign of the feature's Spearman correlation with the
+response, not the sign of its loading. Gray means zero or unavailable.
+
+The network shows the selected factor's top 10 nonzero-loading features.
+Edges show Pearson correlations with |r| ≥ 0.5, limited to the 20 strongest
+edges. Red means positive and blue means negative. These are descriptive
+correlations, not causal links or significance tests. Both views need the
+feature matrix; the text plot also needs the response vector. Use a tall
+terminal to see all feature labels.
 
 ### SLIDE tab
 
-Two sub-views (toggle with `v`):
+Three sub-views (cycle with `v`):
 
 | Sub-view | What it shows |
 |----------|---------------|
 | Marginal | SLIDE knockoff frequency bars for marginal (standalone) LOVE factors |
 | Interactions | SLIDE knockoff frequency bars for interaction terms |
+| Network | Selected interaction pairs involving the current factor; up to 12 nodes |
 
-Both sub-views also display factor-response correlation beneath the frequency
-bars. Response-association data is computed on demand when the response vector
-is available.
+The frequency sub-views also display factor-response correlation beneath the
+bars. In the network, cyan edges mean selected LF products, not positive
+correlations. Use `PgUp` / `PgDn` to change the focus factor; the title reports
+how many of its selected pairs are visible. The TUI computes response
+associations on demand when the response vector is available.
 
 ### Performance tab
 
@@ -281,7 +297,19 @@ JSON. Cycle Performance sub-views with `v`. It shows:
 - ROC/PR threshold summary for binary responses
 - Residual histogram for continuous responses
 
-If final CV was not enabled for the run, the tab displays a short
+The **SLIDE / Permuted CV** sub-view reads the selected run's exported
+`ControlPerformance.csv`. Pass `--config` with the run YAML containing
+`out_path`. Scores appear after export finishes; press `r` to reload if using
+`--no-follow`. This view also works when final CV is disabled.
+
+**“Permuted CV” is a display label for the full-random in-sample OLS control,
+not held-out CV or response-label permutation.** The plot shows the real
+SLIDE score and randomized draws, including partial-random controls when
+available. The header reports their means. Actual held-out CV remains
+separately labeled and refers to the best model, not necessarily the selected
+run. The TUI does not compute new controls or fit a permuted CV model.
+
+If final CV was not enabled for the run, the other sub-views display a short
 "not available" message instead. During live runs, the Overview tab also shows
 `FinalCv` as the current phase while final CV is running.
 
@@ -297,7 +325,7 @@ If final CV was not enabled for the run, the tab displays a short
 | `k` / `Up` | Previous run |
 | `PgDn` | Next factor |
 | `PgUp` | Previous factor |
-| `v` | Cycle primary sub-views (LOVE, SLIDE, and Performance tabs) |
+| `v` | Cycle sub-views (LOVE, Factors, SLIDE, and Performance tabs) |
 | `1`–`7` | Jump to LOVE sub-view directly (`6` and `7` are advanced) |
 | `g` | Cycle Overview grid metric |
 | `m` | Cycle loading-matrix row mode (LOVE view `3`) |
