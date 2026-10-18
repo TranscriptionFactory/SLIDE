@@ -801,11 +801,28 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Min(10),
+                Constraint::Min(1),
                 Constraint::Length(2),
             ])
             .split(frame.area());
 
+        let step = match self.progress.as_ref().map(|report| &report.phase) {
+            Some(Phase::Love) => "LOVE factors".to_owned(),
+            Some(Phase::ZMap) => "Z scores".to_owned(),
+            Some(Phase::KnockoffMarginal) => "SLIDE marginal".to_owned(),
+            Some(Phase::KnockoffInteraction {
+                marginal_lf,
+                total_marginals,
+            }) => format!(
+                "SLIDE interactions ({}/{})",
+                marginal_lf + 1,
+                total_marginals
+            ),
+            Some(Phase::Scoring) => "Scoring".to_owned(),
+            Some(Phase::FinalCv) => "Final CV".to_owned(),
+            None if self.data.is_none() => "waiting for progress".to_owned(),
+            None => "no active step reported".to_owned(),
+        };
         let titles = Tabs::new(Tab::titles())
             .select(match self.tab {
                 Tab::Overview => 0,
@@ -817,7 +834,8 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("LOVE -> SLIDE Monitor"),
+                    .title("LOVE -> SLIDE Monitor")
+                    .title_bottom(Line::from(format!("Step: {step}")).cyan()),
             )
             .highlight_style(
                 Style::default()
@@ -4098,6 +4116,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn current_step_is_visible_on_every_tab() {
+        let mut app = fixture_app("../../tests/test_checkpoint.json");
+        for (phase, label) in [
+            (super::Phase::Love, "LOVE factors"),
+            (super::Phase::ZMap, "Z scores"),
+            (super::Phase::KnockoffMarginal, "SLIDE marginal"),
+            (
+                super::Phase::KnockoffInteraction {
+                    marginal_lf: 1,
+                    total_marginals: 3,
+                },
+                "SLIDE interactions (2/3)",
+            ),
+            (super::Phase::Scoring, "Scoring"),
+            (super::Phase::FinalCv, "Final CV"),
+        ] {
+            app.progress = Some(super::ProgressReport {
+                grid_index: 0,
+                total_grid: 1,
+                delta: 0.1,
+                lambda: 0.1,
+                phase,
+            });
+            for tab in [
+                Tab::Overview,
+                Tab::Love,
+                Tab::Factors,
+                Tab::Slide,
+                Tab::Performance,
+            ] {
+                app.tab = tab;
+                for (width, height) in [(140, 45), (60, 20)] {
+                    assert!(render_text(&app, width, height).contains(&format!("Step: {label}")));
+                }
+                assert!(render_text(&app, 20, 8).contains("Step:"));
+            }
+        }
+        app.progress = None;
+        assert!(render_text(&app, 60, 20).contains("Step: no active step reported"));
+        app.data = None;
+        assert!(render_text(&app, 60, 20).contains("Step: waiting for progress"));
+        app.progress = Some(super::ProgressReport {
+            grid_index: 0,
+            total_grid: 1,
+            delta: 0.1,
+            lambda: 0.1,
+            phase: super::Phase::Love,
+        });
+        assert!(render_text(&app, 60, 20).contains("Step: LOVE factors"));
     }
 
     #[test]

@@ -193,6 +193,9 @@ A quick-test config with fewer iterations for verifying the TUI is at
 ## TUI Tabs and Views
 
 The dashboard has five tabs. Use the keys below to navigate.
+The `Step:` label below the tabs shows the latest reported pipeline phase on
+every tab, including interaction progress. `No active step reported` means no
+progress report is available; it does not confirm that the run succeeded.
 
 ### Overview tab
 
