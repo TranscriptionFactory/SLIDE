@@ -1,0 +1,4 @@
+arm,cell,runs,k,marginal_counts,marginal_median,marginal_q1,marginal_q3,interaction_median,interaction_q1,interaction_q3,interactions_per_marginal_median,union,always,jaccard_mean,wall_median,wall_q1,wall_q3,knockoff_median,score_median,nodes
+rust,d=0.1 l=0.1,10,39,1 1 1 1 1 1 1 1 1 1,1.0,1.0,1.0,2.0,2.0,3.0,2.0,1,1,1.0,5.311995397787541,5.031240370357409,5.579140377463773,0.0,0.5041145324728168,1
+python,d=0.1 l=0.1,10,39,1 1 1 1 1 1 1 1 1 1,1.0,1.0,1.0,2.0,2.0,2.75,2.0,1,1,1.0,22.066007384564728,21.84654375934042,22.82580660120584,,,1
+pure_r,d=0.1 l=0.1,10,39,1 1 1 1 1 1 1 1 1 2,1.0,1.0,1.0,2.0,2.0,3.0,2.0,2,1,0.9,93.51715861773118,91.32323850737885,98.59506619349122,93.095,,1

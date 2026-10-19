@@ -1,0 +1,29 @@
+[package]
+name = "slide-cv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "Cross-validation framework for SLIDE"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ndarray.workspace = true
+rand.workspace = true
+rayon.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+slide-knockoff = { version = "1.0.0", path = "../slide-knockoff" }
+slide-score = { version = "1.0.0", path = "../slide-score" }
+slide-types = { version = "1.0.0", path = "../slide-types" }
+
+[dev-dependencies]
+slide-glmnet = { version = "1.0.0", path = "../slide-glmnet" }

@@ -1,0 +1,208 @@
+name: Promote tested slide-py candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Native build candidates run on the exact current main commit
+        required: true
+        type: string
+      publish:
+        description: Publish the selected tested files to production PyPI (off means validation only)
+        type: boolean
+        default: false
+      redistribution_approved:
+        description: Maintainer confirms qualified redistribution review is complete (not proof of legal compliance)
+        type: boolean
+        default: false
+      runtime_visual_approved:
+        description: Maintainer confirms native runtime, terminal and visual review gates are complete
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-slide-py
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Prepare isolated promotion paths
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp" "$run_dir/downloads" "$run_dir/dist"
+          echo "RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          printf '# Candidate promotion validation\n\nConsumes exact files from the selected successful artifacts.yml run; never rebuilds.\n' > "$run_dir/README.md"
+      - name: Validate candidate provenance and download the complete tested set
+        uses: actions/github-script@v7
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const raw = process.env.CANDIDATE_RUN_ID;
+            if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+              throw new Error('candidate_run_id must be a positive safe integer');
+            }
+            const run_id = Number(raw);
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id});
+            const {data: workflow} = await github.rest.actions.getWorkflow({...context.repo, workflow_id: 'artifacts.yml'});
+            const {data: main} = await github.rest.repos.getBranch({...context.repo, branch: 'main'});
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            if (run.repository.full_name !== repository || run.head_repository?.full_name !== repository ||
+                run.workflow_id !== workflow.id || run.path !== '.github/workflows/artifacts.yml' ||
+                run.event !== 'workflow_dispatch' || run.status !== 'completed' || run.conclusion !== 'success' ||
+                run.head_branch !== 'main' || run.head_sha !== main.commit.sha || run.head_sha !== context.sha) {
+              throw new Error('Candidate must be this repository/workflow, manual, successful, and the exact current main commit');
+            }
+            const required = [];
+            for (const platform of ['linux-x86_64', 'macos-arm64', 'macos-x86_64', 'windows-x86_64']) {
+              for (const tag of ['cp39', 'cp310', 'cp311', 'cp312']) required.push(`slide-py-${platform}-${tag}`);
+            }
+            required.push('slide-py-sdist', 'slide-rs-linux-x86_64-glibc235', 'slide-rs-macos-arm64',
+                          'slide-rs-macos-x86_64', 'slide-rs-windows-x86_64');
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id, per_page: 100
+            });
+            for (const name of required) {
+              const matches = artifacts.filter(artifact => artifact.name === name);
+              if (matches.length !== 1 || matches[0].expired || matches[0].size_in_bytes <= 0) {
+                throw new Error(`Missing, duplicate, empty or expired candidate artifact: ${name}`);
+              }
+              const artifact = matches[0];
+              if (artifact.workflow_run?.id !== run_id || artifact.workflow_run?.head_sha !== run.head_sha) {
+                throw new Error(`Artifact provenance mismatch: ${name}`);
+              }
+              const response = await github.rest.actions.downloadArtifact({
+                ...context.repo, artifact_id: artifact.id, archive_format: 'zip'
+              });
+              fs.writeFileSync(path.join(process.env.RUN_DIR, 'downloads', `${name}.zip`), Buffer.from(response.data));
+            }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check exact wheel matrix and extract only the tested Python distributions
+        run: |
+          python -m pip install --only-binary=:all: packaging twine
+          python - <<'PYTHON'
+          import os
+          import re
+          from pathlib import Path
+          import tarfile
+          import zipfile
+          from packaging.utils import parse_sdist_filename, parse_wheel_filename
+
+          root = Path(os.environ["RUN_DIR"])
+          versions = set()
+          for archive in sorted((root / "downloads").glob("*.zip")):
+              with zipfile.ZipFile(archive) as bundle:
+                  entries = bundle.infolist()
+                  assert len(entries) == 1, (archive, "Expected exactly one distribution")
+                  entry = entries[0]
+                  filename = entry.filename
+                  assert Path(filename).name == filename and not entry.is_dir(), filename
+                  name = archive.stem
+                  if name.startswith("slide-rs-"):
+                      expected = {
+                          "slide-rs-linux-x86_64-glibc235": "slide-linux-x86_64.tar.gz",
+                          "slide-rs-macos-arm64": "slide-macos-arm64.tar.gz",
+                          "slide-rs-macos-x86_64": "slide-macos-x86_64.tar.gz",
+                          "slide-rs-windows-x86_64": "slide-windows-x86_64.zip",
+                      }
+                      assert filename == expected[name], filename
+                      continue
+                  if name == "slide-py-sdist":
+                      distribution, version = parse_sdist_filename(filename)
+                      assert filename.endswith(".tar.gz"), filename
+                  else:
+                      distribution, version, build, tags = parse_wheel_filename(filename)
+                      assert not build, filename
+                      tag = name.rsplit("-", 1)[1]
+                      platform = name[len("slide-py-"):].rsplit("-", 1)[0]
+                      assert all(item.interpreter == tag and item.abi == tag for item in tags), filename
+                      platforms = {item.platform for item in tags}
+                      if platform == "linux-x86_64":
+                          assert "manylinux_2_28_x86_64" in platforms, filename
+                          aliases = {"manylinux1_x86_64", "manylinux2010_x86_64", "manylinux2014_x86_64"}
+                          for item in platforms:
+                              match = re.fullmatch(r"manylinux_2_(\d+)_x86_64", item)
+                              assert item in aliases or (match and int(match[1]) <= 28), filename
+                      else:
+                          expected = {"macos-arm64": "macosx_15_0_arm64",
+                                      "macos-x86_64": "macosx_15_0_x86_64", "windows-x86_64": "win_amd64"}
+                          assert platforms == {expected[platform]}, filename
+                  assert str(distribution) == "slide-py", filename
+                  versions.add(version)
+                  destination = root / "dist" / filename
+                  assert not destination.exists(), filename
+                  destination.write_bytes(bundle.read(entry))
+          assert len(versions) == 1, versions
+          assert len(list((root / "dist").glob("*.whl"))) == 16
+          assert len(list((root / "dist").glob("*.tar.gz"))) == 1
+          with tarfile.open(next((root / "dist").glob("*.tar.gz"))) as source:
+              metadata = [name for name in source.getnames() if name.count("/") == 1 and name.endswith("/PKG-INFO")]
+              assert len(metadata) == 1
+          PYTHON
+          python -m twine check --strict "$RUN_DIR"/dist/*
+      - name: Require explicit maintainer approvals before production promotion
+        if: inputs.publish
+        env:
+          REDISTRIBUTION_APPROVED: ${{ inputs.redistribution_approved }}
+          RUNTIME_VISUAL_APPROVED: ${{ inputs.runtime_visual_approved }}
+        run: |
+          test "$REDISTRIBUTION_APPROVED" = true && test "$RUNTIME_VISUAL_APPROVED" = true || {
+            echo 'Production blocked: maintainer redistribution review and native runtime/terminal/visual approvals are required.' >&2
+            exit 1
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-py-promotion
+          path: ${{ env.RUN_DIR }}/dist/*
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish && inputs.redistribution_approved && inputs.runtime_visual_approved && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/slide-py/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Prepare publication temporary paths
+        run: |
+          relative=".tmpfiles/$(date -u +%F)_publish-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/temp"
+          mkdir -p "$GITHUB_WORKSPACE/$relative"
+          echo "PUBLISH_TMP_REL=$relative" >> "$GITHUB_ENV"
+          for key in TMPDIR TMP TEMP; do echo "$key=$GITHUB_WORKSPACE/$relative" >> "$GITHUB_ENV"; done
+      - name: Recheck current main after environment approval
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data: main} = await github.rest.repos.getBranch({...context.repo, branch: 'main'});
+            if (main.commit.sha !== context.sha) throw new Error('Main advanced; build and review a new candidate');
+      - uses: actions/download-artifact@v4
+        with:
+          name: slide-py-promotion
+          path: dist/
+      - name: Publish the exact tested candidate distributions
+        uses: pypa/gh-action-pypi-publish@release/v1
+        env:
+          # Both the host composite steps and Docker step start in the workspace.
+          TMPDIR: ${{ env.PUBLISH_TMP_REL }}
+          TMP: ${{ env.PUBLISH_TMP_REL }}
+          TEMP: ${{ env.PUBLISH_TMP_REL }}
+        with:
+          skip-existing: false

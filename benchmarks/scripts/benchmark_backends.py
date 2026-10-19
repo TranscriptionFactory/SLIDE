@@ -1,0 +1,1125 @@
+#!/usr/bin/env python3
+"""Benchmark and compare Rust, Python, and R SLIDE backends.
+
+Runs each backend on the same dataset/parameters, times them, and compares
+correctness (sig LFs, Z-matrix correlations, A-matrix agreement).
+
+Backends:
+  - python:       slide-py OptimizeSLIDE with Python LOVE + Python knockoffs
+  - r_knockoffs:  slide-py OptimizeSLIDE with Python LOVE + R knockoffs (rpy2)
+  - rust:         slide-cli with native Rust knockoff SDP solver
+  - rust_r_knockoffs: slide-cli with R knockoff SDP solver
+  - pure_r:       native R SLIDE
+
+Usage:
+    # Full benchmark on SSc UnTx (default)
+    python benchmarks/scripts/benchmark_backends.py
+
+    # Quick test on HIV data
+    python benchmarks/scripts/benchmark_backends.py \\
+        --x-path examples/HIV+cytokines_X.csv \\
+        --y-path examples/HIV+cytokines_y.csv \\
+        --y-factor --delta 0.1 --lambda 0.5
+
+    # Submit to SLURM
+    python benchmarks/scripts/benchmark_backends.py --slurm
+
+    # Only compare existing outputs
+    python benchmarks/scripts/benchmark_backends.py --skip-run --out-dir benchmarks/results
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import dataclasses
+import datetime as dt
+import json
+import logging
+import math
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import warnings
+from itertools import combinations
+from pathlib import Path
+from typing import Any
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]  # deferred until runtime
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("benchmark")
+
+# Default SSc UnTx paths
+_SSC_X = "/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/X.csv"
+_SSC_Y = "/ix/djishnu/Aaron/1_general_use/SLIDE/Data_Scripts/SSc/UnTx/Y.csv"
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+@dataclasses.dataclass
+class TimingRecord:
+    backend: str
+    delta: float
+    lam: float
+    wall_seconds: float
+    status: str  # "success" | "failed" | "skipped" | "timeout"
+    error: str = ""
+    peak_rss_bytes: int | None = None
+    memory_method: str | None = None
+    backend_wall_seconds: float | None = None
+    python_glmnet_available: bool | None = None
+
+
+@dataclasses.dataclass
+class BackendResult:
+    """Extracted results for one (backend, delta, lambda) combination."""
+
+    backend: str
+    delta: float
+    lam: float
+    k: int
+    sig_lfs: set[str]
+    sig_interacts: set[str]
+    z_matrix: np.ndarray | None  # (n_samples, k)
+    z_col_names: list[str]
+    a_matrix: np.ndarray | None  # (n_features, k)
+    score: float | None
+
+
+@dataclasses.dataclass
+class PairComparison:
+    backend_a: str
+    backend_b: str
+    delta: float
+    lam: float
+    sig_lf_jaccard: float
+    z_overall_r: float | None
+    z_median_col_r: float | None
+    z_min_col_r: float | None
+    a_nonzero_jaccard: float | None
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Benchmark SLIDE backends")
+    p.add_argument("--configuration", choices=["native", "parity"], default="native",
+                   help="Native defaults or matched Gaussian knockoff settings; "
+                        "parity does not imply paired RNG or equal solver accuracy")
+    p.add_argument("--source-revision", default=None,
+                   help="Executed source revision when running a frozen source copy")
+    p.add_argument("--x-path", default=_SSC_X, help="Path to X matrix CSV")
+    p.add_argument("--y-path", default=_SSC_Y, help="Path to Y vector CSV")
+    p.add_argument("--y-factor", action="store_true", help="Treat y as binary factor")
+    p.add_argument(
+        "--backends", nargs="+",
+        default=["rust", "rust_r_knockoffs", "python_serial", "python", "r_knockoffs", "pure_r"],
+        help="Backends to benchmark",
+    )
+    p.add_argument(
+        "--rscript", default=None,
+        help="Path to Rscript binary used by R-backed and pure_r backends "
+             "(defaults to pixi env Rscript)",
+    )
+    p.add_argument(
+        "--delta", type=float, nargs="+", default=[0.01, 0.1],
+        help="Delta values",
+    )
+    p.add_argument(
+        "--lam", type=float, nargs="+", default=[0.1, 1.0],
+        dest="lambdas", help="Lambda values",
+    )
+    p.add_argument("--niter", type=int, default=500, help="Knockoff iterations")
+    p.add_argument("--spec", type=float, default=0.1,
+                   help="Selection-frequency threshold (fraction of niter)")
+    p.add_argument("--knockoff-nlambda", type=int, default=None,
+                   help="Rust knockoff lasso grid size (parity requires 500) "
+                        "(default 250; explicit 100, 250, or 500 are honored exactly)")
+    p.add_argument("--knockoff-base-seed", type=int, default=None,
+                   help="Knockoff RNG base seed for reproducible backend runs")
+    p.add_argument("--slide-selection", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="Final selection rule for every backend. Default "
+                        "(--slide-selection) is R findOptIter, which reports a "
+                        "single draw out of niter; --no-slide-selection reports "
+                        "the frequency/stability set instead. For the R backends "
+                        "this drives SLIDE_R_SOURCE/SLIDE_OPT_ITER; set either "
+                        "variable in the environment to override the derived "
+                        "value (needed to run the vendor-vs-installed "
+                        "equivalence check).")
+    p.add_argument("--knockoff-fdr", type=float, default=None,
+                   help="Rust per-draw knockoff FDR target q (None=default 0.1; "
+                        "raise to loosen per-draw selection and lift borderline-LF "
+                        "counts without re-partitioning the stage-one union)")
+    p.add_argument("--out-dir", type=Path, default=Path("benchmarks/results"))
+    p.add_argument("--rust-bin", type=Path, help="Prebuilt slide binary")
+    p.add_argument("--threads", type=int, default=None,
+                   help="Worker budget (default: parity 4, native 10; python_serial 1)")
+    p.add_argument("--profile", action="store_true",
+                   help="Enable internal knockoff stage profiling")
+    p.add_argument("--skip-run", action="store_true", help="Only compare existing outputs")
+    p.add_argument("--measure-process", action="store_true",
+                   help="Measure each cell in a fresh process, including startup and I/O")
+    p.add_argument("--cell-timeout", type=float, default=300.0,
+                   help="Wall-time limit per measured cell in seconds (default 300)")
+    # SLURM
+    p.add_argument("--slurm", action="store_true", help="Submit to SLURM instead of running locally")
+    p.add_argument("--slurm-time", default="1-00:00:00")
+    p.add_argument("--slurm-mem", default="150G")
+    p.add_argument("--slurm-cpus", type=int, default=4)
+    p.add_argument("--slurm-cluster", default="htc")
+    p.add_argument("--slurm-partition", default=None)
+    args = p.parse_args(argv)
+    if args.configuration == "parity":
+        if args.y_factor:
+            p.error("parity currently supports Gaussian responses only")
+        if args.knockoff_nlambda not in (None, 500):
+            p.error("parity requires --knockoff-nlambda 500")
+        if args.knockoff_fdr not in (None, 0.1):
+            p.error("parity requires --knockoff-fdr 0.1")
+        args.knockoff_nlambda = 500
+        if args.knockoff_base_seed is None:
+            args.knockoff_base_seed = 42
+    if args.threads is None:
+        args.threads = 4 if args.configuration == "parity" else 10
+    if args.threads < 1:
+        p.error("--threads must be positive")
+    if args.slurm and args.threads > args.slurm_cpus:
+        p.error("--threads must not exceed --slurm-cpus")
+    if args.cell_timeout <= 0 or not math.isfinite(args.cell_timeout):
+        p.error("--cell-timeout must be finite and positive")
+    if args.measure_process and not args.skip_run:
+        if sys.platform != "linux":
+            p.error("--measure-process requires Linux /proc memory sampling")
+        if any(b in ("rust", "rust_r_knockoffs") for b in args.backends):
+            if not args.rust_bin or not args.rust_bin.is_file() or not os.access(args.rust_bin, os.X_OK):
+                p.error("--measure-process requires an executable prebuilt --rust-bin")
+    return args
+
+
+# ---------------------------------------------------------------------------
+# SLURM self-submission
+# ---------------------------------------------------------------------------
+def submit_slurm(args: argparse.Namespace) -> int:
+    """Re-invoke this script as a SLURM job, minus the --slurm flag.
+
+    Pre-computes a pixi shell-hook activation snippet on the login node
+    so that inside SLURM the full pixi environment (numpy, slide-py,
+    rpy2, cargo, R, etc.) is available without pixi lockfile contention.
+    Requires: ``pixi install -e dev`` has been run at least once.
+    """
+    script = Path(__file__).resolve()
+    project_dir = _PROJECT_ROOT
+
+    # Find pixi binary
+    pixi = os.environ.get("PIXI") or shutil.which("pixi")
+    if not pixi:
+        log.error(
+            "pixi not found. Install from https://pixi.sh or set PIXI=/path/to/pixi"
+        )
+        return 1
+
+    # Pre-compute shell activation to bake into the sbatch --wrap command
+    hook_result = subprocess.run(
+        [pixi, "shell-hook", "-e", "dev", "--manifest-path", str(project_dir / "pixi.toml")],
+        capture_output=True, text=True,
+    )
+    if hook_result.returncode != 0:
+        log.error("pixi shell-hook failed: %s", hook_result.stderr)
+        return 1
+    pixi_activate = hook_result.stdout.strip()
+
+    # Rebuild argv without --slurm and slurm-* flags
+    # Map dest names back to CLI flag names where they differ
+    _dest_to_flag = {"lambdas": "--lam"}
+    _skip_keys = {"slurm", "slurm_time", "slurm_mem", "slurm_cpus", "slurm_cluster", "slurm_partition"}
+    script_args = []
+    for key, val in vars(args).items():
+        if key in _skip_keys:
+            continue
+        flag = _dest_to_flag.get(key, f"--{key.replace('_', '-')}")
+        if isinstance(val, bool):
+            if val:
+                script_args.append(flag)
+            elif key == "slide_selection":
+                script_args.append("--no-slide-selection")
+        elif isinstance(val, list):
+            script_args.append(flag)
+            script_args.extend(str(v) for v in val)
+        elif val is not None:
+            script_args.extend([flag, str(val)])
+
+    inner_cmd = f"python {script} {' '.join(script_args)}"
+    wrap_cmd = f'{pixi_activate}\n{inner_cmd}'
+
+    out_dir = args.out_dir.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    sbatch_args = [
+        "sbatch",
+        f"--job-name=slide-bench",
+        f"--time={args.slurm_time}",
+        f"--mem={args.slurm_mem}",
+        f"--cpus-per-task={args.slurm_cpus}",
+        f"--cluster={args.slurm_cluster}",
+        f"--output={out_dir / 'slurm-%j.out'}",
+        "--export=ALL",
+    ]
+    if args.slurm_partition:
+        sbatch_args.append(f"--partition={args.slurm_partition}")
+    sbatch_args.extend(["--wrap", wrap_cmd])
+
+    log.info("Submitting SLURM job")
+    result = subprocess.run(sbatch_args, capture_output=True, text=True)
+    if result.returncode == 0:
+        log.info("SLURM job submitted: %s", result.stdout.strip())
+    else:
+        log.error("sbatch failed: %s", result.stderr.strip())
+    return result.returncode
+
+
+# ---------------------------------------------------------------------------
+# Backend runners
+# ---------------------------------------------------------------------------
+def _save_timing(record: TimingRecord, out_dir: Path) -> None:
+    """Persist one timing record without a shared-file write race."""
+    timing_dir = out_dir / record.backend
+    timing_dir.mkdir(parents=True, exist_ok=True)
+    shard_dir = timing_dir / "timing_shards"
+    shard_dir.mkdir(exist_ok=True)
+    path = shard_dir / f"{record.delta}_{record.lam}.json"
+    pending = path.with_suffix(f".json.{os.getpid()}.pending")
+    with pending.open("w") as f:
+        json.dump(dataclasses.asdict(record), f, indent=2)
+    pending.replace(path)
+
+
+def _merge_timing_shards(out_dir: Path) -> None:
+    """Merge per-cell timing shards into the legacy backend timing files."""
+    for backend_dir in sorted(path for path in out_dir.iterdir() if path.is_dir()):
+        shard_dir = backend_dir / "timing_shards"
+        if not shard_dir.is_dir():
+            continue
+        records = []
+        for shard in sorted(shard_dir.glob("*.json")):
+            with shard.open() as stream:
+                records.append(json.load(stream))
+        records.sort(key=lambda item: (item["delta"], item["lam"]))
+        with (backend_dir / "timings.json").open("w") as stream:
+            json.dump(records, stream, indent=2)
+
+
+def _load_saved_timings(out_dir: Path) -> list[TimingRecord]:
+    """Load all persisted timing records from per-backend JSON files."""
+    _merge_timing_shards(out_dir)
+    records = []
+    for timing_path in sorted(out_dir.glob("*/timings.json")):
+        with timing_path.open() as f:
+            for entry in json.load(f):
+                records.append(TimingRecord(**entry))
+    return records
+
+
+def _write_profile_summary(out_dir: Path) -> None:
+    """Aggregate stages; concurrent stage totals may exceed cell wall time."""
+    records = []
+    paths = list(out_dir.rglob("profile_*.jsonl")) + list(out_dir.rglob("rust.log"))
+    for path in paths:
+        backend = path.relative_to(out_dir).parts[0]
+        cell = path.parent.name if path.name == "rust.log" else path.stem.removeprefix("profile_")
+        for line in path.read_text(errors="replace").splitlines():
+            start = line.find('{"event":"slide_knockoff_profile"')
+            if start < 0:
+                continue
+            try:
+                record = json.loads(line[start:])
+            except json.JSONDecodeError:
+                continue
+            records.append((backend, cell, record["stage"], float(record["seconds"])))
+    if not records:
+        return
+    rows = []
+    for key in sorted({record[:3] for record in records}):
+        values = np.asarray([record[3] for record in records if record[:3] == key])
+        rows.append({"backend": key[0], "cell": key[1], "stage": key[2],
+                     "count": len(values), "total_seconds": float(values.sum()),
+                     "median_seconds": float(np.median(values)),
+                     "p95_seconds": float(np.percentile(values, 95))})
+    with (out_dir / "profile_summary.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+_PARITY_RUST_ENV = {
+    "SLIDE_KNOCKOFF_TOL": "1e-7",
+    "SLIDE_KNOCKOFF_MAX_ITER": "100000",
+    "SLIDE_KNOCKOFF_MATCH_R_COV": "1",
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA": "1",
+}
+
+
+def _rust_environment(args: argparse.Namespace) -> dict[str, str]:
+    env = os.environ.copy()
+    if args.configuration == "parity":
+        env.update(_PARITY_RUST_ENV)
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[var] = "1"
+    env["RAYON_NUM_THREADS"] = str(args.threads)
+    return env
+
+
+def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None:
+    """Record the execution context needed to interpret benchmark timings."""
+    metadata = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "enclosing_git_sha": subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip(),
+        "hostname": socket.gethostname(),
+        "cpu_count": os.cpu_count(),
+        "threads": args.threads,
+        "blas_threads": {
+            name: os.environ.get(name)
+            for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+        },
+        "python": sys.version,
+        "platform": sys.platform,
+        "seed": args.knockoff_base_seed,
+        "niter": args.niter,
+        "spec": args.spec,
+        "rust_fdr": args.knockoff_fdr if args.knockoff_fdr is not None else 0.1,
+        "python_r_fdr": 0.1,
+        "slide_selection": args.slide_selection,
+        "configuration": args.configuration,
+        "source_revision": args.source_revision,
+        "source_path": str(_PROJECT_ROOT),
+        "rust_binary": str(args.rust_bin) if args.rust_bin else "cargo run --release",
+        "rust_nlambda": args.knockoff_nlambda or 250,
+        "python_r_gaussian_settings": {
+            "nlambda": 500, "tolerance": 1e-7, "max_iter": 100000,
+            "lambda_min_ratio": 1 / 2000,
+        },
+        "rust_native_defaults": {
+            "tolerance": 1e-7, "max_iter": 100000,
+            "covariance_gate": "positive definite and condition number <= 100000",
+            "lambda_min_ratio": "1e-4 if n > 2p else 1/2000",
+        },
+        "inherited_environment": {
+            key: value for key, value in os.environ.items()
+            if key.startswith("SLIDE_")
+        },
+        "rust_solver_environment": {
+            key: _rust_environment(args).get(key) for key in _PARITY_RUST_ENV
+        },
+        "workers_by_backend": {
+            backend: 1 if backend == "python_serial" else args.threads
+            for backend in args.backends
+        },
+        "timing_boundary": ("fresh interpreter and backend startup, imports, I/O and preprocessing; excludes report generation"
+                            if args.measure_process else
+                            "Python excludes imports; Rust/R include subprocess startup"),
+        "cell_timeout_seconds": args.cell_timeout if args.measure_process else None,
+        "memory_method": _MEMORY_METHOD if args.measure_process else None,
+        "paired_random_draws": False,
+    }
+    with (out_dir / "benchmark_environment.json").open("w") as stream:
+        json.dump(metadata, stream, indent=2)
+
+
+def _merge_cell_summaries(out_dir: Path) -> None:
+    """Aggregate cell-local summaries without relying on backend shared files."""
+    for backend_dir in sorted(path for path in out_dir.iterdir() if path.is_dir()):
+        rows = []
+        for summary_path in sorted(backend_dir.glob("*_out/benchmark_summary.csv")):
+            with summary_path.open(newline="") as stream:
+                rows.extend(csv.DictReader(stream))
+        if not rows:
+            continue
+        rows.sort(key=lambda row: (float(row["delta"]), float(row["lambda"])))
+        fields = list(rows[0])
+        with (backend_dir / "benchmark_cell_summary.csv").open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+def run_python_backend(
+    args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
+) -> TimingRecord:
+    """Run Python or R-knockoffs backend via slide_py API."""
+    from slide_py import OptimizeSLIDE
+
+    if args.profile:
+        run_id = dt.datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        os.environ["SLIDE_KNOCKOFF_PROFILE"] = str(
+            (out_dir / f"profile_{delta}_{lam}_{run_id}_{os.getpid()}.jsonl").resolve()
+        )
+
+    if args.knockoff_base_seed is not None:
+        np.random.seed(args.knockoff_base_seed)
+        if backend == "r_knockoffs":
+            from rpy2 import robjects
+            robjects.r["set.seed"](args.knockoff_base_seed)
+
+    knockoff_backend = "r_knockoffs" if backend == "r_knockoffs" else "python"
+    workers = 1 if backend == "python_serial" else args.threads
+    input_params = {
+        "x_path": str(args.x_path),
+        "y_path": str(args.y_path),
+        "y_factor": args.y_factor,
+        "niter": args.niter,
+        "SLIDE_top_feats": 10,
+        "out_path": str(out_dir),
+        "fdr": 0.1,
+        "thresh_fdr": 0.2,
+        "pure_homo": True,
+        "do_interacts": True,
+        "n_workers": workers,
+        "spec": args.spec,
+        "love_backend": "python",
+        "knockoff_backend": knockoff_backend,
+        "knockoff_method": "asdp",
+        "knockoff_shrink": False,
+        "knockoff_offset": 0,
+        "knockoff_base_seed": args.knockoff_base_seed,
+        "fstat": "glmnet_lambdasmax",
+        "slide_selection": args.slide_selection,
+        "delta": [delta],
+        "lambda": [lam],
+    }
+
+    start = time.perf_counter()
+    try:
+        slider = OptimizeSLIDE(input_params)
+        from threadpoolctl import threadpool_limits
+        with warnings.catch_warnings(), threadpool_limits(limits=1):
+            warnings.simplefilter("ignore")
+            slider.run_pipeline(verbose=True)
+        elapsed = time.perf_counter() - start
+        return TimingRecord(backend, delta, lam, elapsed, "success")
+    except Exception as exc:
+        elapsed = time.perf_counter() - start
+        log.error("Backend %s failed (delta=%s, lam=%s): %s", backend, delta, lam, exc)
+        return TimingRecord(backend, delta, lam, elapsed, "failed", str(exc))
+
+
+_DEFAULT_RSCRIPT = "/software/rhel9/manual/install/r/4.5.0/bin/Rscript"
+
+
+def run_pure_r_backend(
+    args: argparse.Namespace, delta: float, lam: float, out_dir: Path,
+) -> TimingRecord:
+    """Run pure-R SLIDE backend via benchmarks/scripts/run_slide_r.R subprocess."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rscript = args.rscript or _DEFAULT_RSCRIPT
+    runner = _PROJECT_ROOT / "benchmarks" / "scripts" / "run_slide_r.R"
+
+    cmd = [
+        rscript, str(runner),
+        "--x-path", str(Path(args.x_path).resolve()),
+        "--y-path", str(Path(args.y_path).resolve()),
+        "--out-dir", str(out_dir),
+        "--delta",  str(delta),
+        "--lambda", str(lam),
+        "--niter",  str(args.niter),
+        "--spec",   str(args.spec),
+        "--threads", str(args.threads),
+    ]
+    if args.knockoff_base_seed is not None:
+        cmd.extend(["--base-seed", str(args.knockoff_base_seed)])
+    if args.y_factor:
+        cmd.append("--y-factor")
+
+    env = os.environ.copy()
+    # R SLIDE parallelizes at the process level. Pin BLAS to 1 so its workers
+    # do not each spawn nested BLAS threads.
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        env[var] = "1"
+    # The stability rule only exists in the vendored SLIDE tree, so reaching it
+    # means running run_slide_r.R against vendor/ rather than the installed
+    # package. An explicit environment setting wins, which is how the
+    # vendor-vs-installed equivalence check is run.
+    env.setdefault("SLIDE_R_SOURCE", "installed" if args.slide_selection else "vendor")
+    env.setdefault("SLIDE_OPT_ITER", "1" if args.slide_selection else "0")
+    if args.configuration == "parity":
+        env["SLIDE_OPT_ITER"] = "1" if args.slide_selection else "0"
+
+    combo_log = out_dir / f"pure_r_{delta}_{lam}.log"
+    log.info("Running pure_r: %s", " ".join(cmd))
+    start = time.perf_counter()
+    try:
+        with combo_log.open("w") as lf:
+            result = subprocess.run(
+                cmd, cwd=str(_PROJECT_ROOT), env=env,
+                stdout=lf, stderr=subprocess.STDOUT, text=True,
+            )
+        elapsed = time.perf_counter() - start
+        if result.returncode != 0:
+            return TimingRecord("pure_r", delta, lam, elapsed, "failed",
+                                f"exit code {result.returncode}; log={combo_log}")
+        return TimingRecord("pure_r", delta, lam, elapsed, "success")
+    except Exception as exc:
+        elapsed = time.perf_counter() - start
+        return TimingRecord("pure_r", delta, lam, elapsed, "failed", str(exc))
+
+
+def run_rust_backend(
+    args: argparse.Namespace, backend: str, delta: float, lam: float, out_dir: Path,
+) -> TimingRecord:
+    """Run Rust with either the native Rust or R knockoff SDP solver."""
+    import yaml
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    config_path = out_dir / "rust_config.yaml"
+    checkpoint_path = out_dir / "checkpoint.json"
+
+    rust_config = {
+        "x_path": str(Path(args.x_path).resolve()),
+        "y_path": str(Path(args.y_path).resolve()),
+        "delta": [delta],
+        "lambda": [lam],
+        "y_factor": args.y_factor,
+        "pure_homo": True,
+        "thresh_fdr": 0.2,
+        "spec": args.spec,
+        "fdr": args.knockoff_fdr if args.knockoff_fdr is not None else 0.1,
+        "SLIDE_iter": args.niter,
+        "do_interacts": True,
+        "knockoff_backend": "r" if backend == "rust_r_knockoffs" else "rust",
+        "slide_selection": args.slide_selection,
+    }
+    if backend == "rust_r_knockoffs":
+        rust_config["rscript"] = args.rscript or _DEFAULT_RSCRIPT
+    if args.knockoff_nlambda is not None:
+        rust_config["nlambda"] = args.knockoff_nlambda
+    if args.knockoff_base_seed is not None:
+        rust_config["base_seed"] = args.knockoff_base_seed
+    with config_path.open("w") as f:
+        yaml.safe_dump(rust_config, f, sort_keys=False)
+
+    if args.rust_bin:
+        cmd = [str(args.rust_bin), "run"]
+    else:
+        cmd = ["cargo", "run", "--release", "-p", "slide-rs", "--", "run"]
+    cmd.extend(["--config", str(config_path), "--checkpoint", str(checkpoint_path)])
+    if args.threads:
+        cmd.extend(["--threads", str(args.threads)])
+
+    env = _rust_environment(args)
+
+    log_path = out_dir / "rust.log"
+    log.info("Running Rust: %s", " ".join(cmd))
+    start = time.perf_counter()
+    try:
+        with log_path.open("w") as lf:
+            result = subprocess.run(
+                cmd, cwd=str(_PROJECT_ROOT), env=env,
+                stdout=lf, stderr=subprocess.STDOUT, text=True,
+            )
+        elapsed = time.perf_counter() - start
+        if result.returncode != 0:
+            return TimingRecord(backend, delta, lam, elapsed, "failed", f"exit code {result.returncode}")
+        return TimingRecord(backend, delta, lam, elapsed, "success")
+    except Exception as exc:
+        elapsed = time.perf_counter() - start
+        return TimingRecord(backend, delta, lam, elapsed, "failed", str(exc))
+
+
+_MEMORY_METHOD = "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak"
+
+
+def _run_cell(args: argparse.Namespace, backend: str, delta: float, lam: float) -> TimingRecord:
+    backend_dir = args.out_dir.resolve() / backend
+    backend_dir.mkdir(parents=True, exist_ok=True)
+    if backend in ("rust", "rust_r_knockoffs"):
+        return run_rust_backend(args, backend, delta, lam, backend_dir / _param_subdir(delta, lam))
+    if backend == "pure_r":
+        return run_pure_r_backend(args, delta, lam, backend_dir)
+    return run_python_backend(args, backend, delta, lam, backend_dir)
+
+
+def _group_rss_bytes(pgid: int) -> int:
+    total = 0
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat_path.read_text().rsplit(")", 1)[1].split()
+            if int(fields[2]) == pgid:
+                total += int(fields[21]) * os.sysconf("SC_PAGE_SIZE")
+        except (OSError, ValueError, IndexError):
+            continue  # Processes can exit between listing /proc and reading stat.
+    return total
+
+
+def _monitor_process(cmd: list[str], log_path: Path, timeout: float) -> tuple[float, int, int, bool]:
+    start = time.perf_counter()
+    peak = 0
+    timed_out = False
+    with log_path.open("w") as stream:
+        proc = subprocess.Popen(cmd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            while proc.poll() is None:
+                peak = max(peak, _group_rss_bytes(proc.pid))
+                if time.perf_counter() - start >= timeout:
+                    timed_out = True
+                    break
+                time.sleep(0.05)
+        finally:
+            # Own session only: also clean up workers left behind after child failure.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+    return time.perf_counter() - start, peak, proc.returncode, timed_out
+
+
+def _measurement_child(config_path: Path) -> int:
+    config = json.loads(config_path.read_text())
+    args = argparse.Namespace(**config["args"])
+    args.out_dir = Path(args.out_dir)
+    backend, delta, lam = config["backend"], config["delta"], config["lam"]
+    available = None
+    start = time.perf_counter()
+    try:
+        if backend in ("python", "python_serial"):
+            from slide_py.knockoff.stats.glmnet import HAS_GLMNET
+            available = bool(HAS_GLMNET)
+            if not available:
+                raise RuntimeError("Measured Python requires compiled glmnet; sklearn fallback is forbidden")
+            if args.configuration == "parity":
+                from slide_py.knockoff.solve import _get_sdp_solver
+                _get_sdp_solver("dsdp")
+        record = _run_cell(args, backend, delta, lam)
+    except Exception as exc:
+        record = TimingRecord(backend, delta, lam, time.perf_counter() - start, "failed", str(exc))
+    record.python_glmnet_available = available
+    Path(config["result_path"]).write_text(json.dumps(dataclasses.asdict(record)))
+    return 0 if record.status == "success" else 1
+
+
+def run_measured_cell(args: argparse.Namespace, backend: str, delta: float, lam: float) -> TimingRecord:
+    measurement_dir = args.out_dir.resolve() / backend / "measurements"
+    measurement_dir.mkdir(parents=True, exist_ok=True)
+    stem = measurement_dir / f"{delta}_{lam}_{time.time_ns()}"
+    config_path, result_path = Path(f"{stem}.config.json"), Path(f"{stem}.result.json")
+    config_path.write_text(json.dumps({
+        "args": vars(args), "backend": backend, "delta": delta, "lam": lam,
+        "result_path": str(result_path),
+    }, default=str))
+    elapsed, peak, returncode, timed_out = _monitor_process(
+        [sys.executable, str(Path(__file__).resolve()), "--measurement-child-json", str(config_path)],
+        Path(f"{stem}.log"), args.cell_timeout,
+    )
+    if result_path.exists() and not timed_out:
+        record = TimingRecord(**json.loads(result_path.read_text()))
+        record.backend_wall_seconds = record.wall_seconds
+        if returncode != 0 and record.status == "success":
+            record.status, record.error = "failed", f"exit code {returncode}"
+    else:
+        record = TimingRecord(backend, delta, lam, elapsed, "timeout" if timed_out else "failed",
+                              f"timeout after {args.cell_timeout}s" if timed_out else f"exit code {returncode}; no child result")
+    record.wall_seconds = elapsed
+    record.peak_rss_bytes = peak
+    record.memory_method = _MEMORY_METHOD
+    return record
+
+
+# ---------------------------------------------------------------------------
+# Result loading
+# ---------------------------------------------------------------------------
+def _param_subdir(delta: float, lam: float) -> str:
+    """Python/R output subdirectory name for a (delta, lambda) pair."""
+    return f"{delta}_{lam}_out"
+
+
+def load_python_result(
+    backend: str, delta: float, lam: float, out_dir: Path,
+) -> BackendResult | None:
+    """Load results from a Python/R backend output directory."""
+    import pandas as pd
+
+    subdir = out_dir / _param_subdir(delta, lam)
+    if not subdir.exists():
+        return None
+
+    # A cell killed mid-run (e.g. wall-clock timeout) leaves Z/A on disk but no
+    # selection output. Loading it would report its empty selected set as a real
+    # result and drive every Jaccard against that cell to 0. sig_LFs.txt and
+    # run_params.txt are both end-of-run artifacts; a cell with neither is
+    # incomplete, whereas a finished run that selected nothing still has one.
+    sig_lf_path = subdir / "sig_LFs.txt"
+    if not sig_lf_path.exists() and not (subdir / "run_params.txt").exists():
+        log.warning(
+            "Skipping incomplete %s cell delta=%s lam=%s (no selection output): %s",
+            backend, delta, lam, subdir,
+        )
+        return None
+
+    sig_lfs: set[str] = set()
+    if sig_lf_path.exists():
+        sig_lfs = set(np.loadtxt(sig_lf_path, dtype=str).reshape(-1).tolist())
+
+    sig_int_path = subdir / "sig_interacts.txt"
+    sig_interacts: set[str] = set()
+    if sig_int_path.exists() and sig_int_path.stat().st_size > 0:
+        sig_interacts = set(np.loadtxt(sig_int_path, dtype=str).reshape(-1).tolist())
+
+    z_matrix = None
+    z_col_names: list[str] = []
+    z_path = subdir / "z_matrix.csv"
+    if z_path.exists():
+        z_df = pd.read_csv(z_path, index_col=0)
+        z_matrix = z_df.values
+        z_col_names = list(z_df.columns)
+
+    a_matrix = None
+    a_path = subdir / "A.csv"
+    if a_path.exists():
+        a_df = pd.read_csv(a_path, index_col=0)
+        a_matrix = a_df.values
+
+    k = z_matrix.shape[1] if z_matrix is not None else 0
+    return BackendResult(
+        backend=backend, delta=delta, lam=lam, k=k,
+        sig_lfs=sig_lfs, sig_interacts=sig_interacts,
+        z_matrix=z_matrix, z_col_names=z_col_names,
+        a_matrix=a_matrix, score=None,
+    )
+
+
+def load_rust_result(
+    backend: str, delta: float, lam: float, out_dir: Path,
+) -> BackendResult | None:
+    """Load results from a Rust checkpoint JSON."""
+    ckpt_path = out_dir / "checkpoint.json"
+    if not ckpt_path.exists():
+        return None
+
+    with ckpt_path.open() as f:
+        ckpt = json.load(f)
+
+    # Find the evaluation matching this (delta, lambda)
+    ev = None
+    for e in ckpt.get("evaluations", []):
+        if e is None:
+            continue
+        if abs(e["delta"] - delta) < 1e-9 and abs(e["lambda"] - lam) < 1e-9:
+            ev = e
+            break
+    if ev is None:
+        return None
+
+    k = ev["love"]["k"]
+    sig_lfs = {f"Z{i}" for i in ev["marginal"]["sig_lfs"]}
+    sig_interacts = {
+        f"Z{p[0]}:Z{p[1]}" for p in ev["interactions"]["sig_interacts"]
+    }
+
+    # A matrix: row-major flat array, dim = [nfeatures, k]
+    a_dim = ev["love"]["a"]["dim"]
+    a_data = ev["love"]["a"]["data"]
+    nrows_a, ncols_a = a_dim
+    a_matrix = np.array(a_data).reshape((nrows_a, ncols_a))
+
+    # Z matrix: row-major flat array, dim = [nsamples, k]
+    z_dim = ev["z"]["dim"]
+    z_data = ev["z"]["data"]
+    nrows_z, ncols_z = z_dim
+    z_matrix = np.array(z_data).reshape((nrows_z, ncols_z))
+    z_col_names = [f"Z{i}" for i in range(ncols_z)]
+
+    return BackendResult(
+        backend=backend, delta=delta, lam=lam, k=k,
+        sig_lfs=sig_lfs, sig_interacts=sig_interacts,
+        z_matrix=z_matrix, z_col_names=z_col_names,
+        a_matrix=a_matrix, score=ev.get("score"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Comparison
+# ---------------------------------------------------------------------------
+def jaccard(s1: set, s2: set) -> float:
+    if not s1 and not s2:
+        return 1.0
+    if not s1 or not s2:
+        return 0.0
+    return len(s1 & s2) / len(s1 | s2)
+
+
+def _nonzero_rows(a: np.ndarray) -> set[int]:
+    return {i for i in range(a.shape[0]) if np.any(a[i] != 0)}
+
+
+def z_corr(z1: np.ndarray, z2: np.ndarray, cols1: list[str], cols2: list[str]):
+    """Column-wise Pearson correlation between two Z matrices."""
+    common = sorted(set(cols1) & set(cols2), key=lambda c: int(c[1:]))
+    if not common:
+        return None, None, None
+
+    idx1 = [cols1.index(c) for c in common]
+    idx2 = [cols2.index(c) for c in common]
+    a1 = z1[:, idx1]
+    a2 = z2[:, idx2]
+    n = min(a1.shape[0], a2.shape[0])
+    a1, a2 = a1[:n], a2[:n]
+
+    overall_r = float(np.corrcoef(a1.flatten(), a2.flatten())[0, 1])
+
+    col_rs = []
+    for i in range(len(common)):
+        v1, v2 = a1[:, i], a2[:, i]
+        if np.std(v1) < 1e-10 or np.std(v2) < 1e-10:
+            continue
+        col_rs.append(float(np.corrcoef(v1, v2)[0, 1]))
+
+    median_r = float(np.median(col_rs)) if col_rs else None
+    min_r = float(np.min(col_rs)) if col_rs else None
+    return overall_r, median_r, min_r
+
+
+def compare_pair(a: BackendResult, b: BackendResult) -> PairComparison:
+    """Compare two backend results for one (delta, lambda)."""
+    lf_j = jaccard(a.sig_lfs, b.sig_lfs)
+
+    overall_r = median_r = min_r = None
+    if a.z_matrix is not None and b.z_matrix is not None:
+        overall_r, median_r, min_r = z_corr(
+            a.z_matrix, b.z_matrix, a.z_col_names, b.z_col_names,
+        )
+
+    a_j = None
+    if a.a_matrix is not None and b.a_matrix is not None:
+        a_j = jaccard(_nonzero_rows(a.a_matrix), _nonzero_rows(b.a_matrix))
+
+    return PairComparison(
+        backend_a=a.backend, backend_b=b.backend,
+        delta=a.delta, lam=a.lam,
+        sig_lf_jaccard=lf_j,
+        z_overall_r=overall_r, z_median_col_r=median_r, z_min_col_r=min_r,
+        a_nonzero_jaccard=a_j,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Report writing
+# ---------------------------------------------------------------------------
+def write_report(
+    timings: list[TimingRecord],
+    results: dict[tuple[str, float, float], BackendResult],
+    comparisons: list[PairComparison],
+    out_dir: Path,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # -- Timing CSV --
+    csv_path = out_dir / "benchmark_times.csv"
+    with csv_path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["backend", "delta", "lambda", "wall_seconds", "status", "error"])
+        for t in timings:
+            w.writerow([t.backend, t.delta, t.lam, f"{t.wall_seconds:.2f}", t.status, t.error])
+
+    # -- JSON summary --
+    summary: dict[str, Any] = {
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "timings": [dataclasses.asdict(t) for t in timings],
+        "comparisons": [dataclasses.asdict(c) for c in comparisons],
+        "results": {},
+    }
+    for key, r in results.items():
+        summary["results"][f"{r.backend}_{r.delta}_{r.lam}"] = {
+            "k": r.k,
+            "n_sig_lfs": len(r.sig_lfs),
+            "sig_lfs": sorted(r.sig_lfs),
+            "n_sig_interacts": len(r.sig_interacts),
+            "sig_interacts": sorted(r.sig_interacts),
+            "score": r.score,
+        }
+    with (out_dir / "benchmark_summary.json").open("w") as f:
+        json.dump(summary, f, indent=2, default=str)
+
+    # -- Markdown report --
+    report_path = out_dir / "comparison_report.md"
+    with report_path.open("w") as f:
+        f.write("# SLIDE Backend Benchmark Report\n\n")
+        f.write(f"Generated: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+        # Timing table
+        f.write("Configuration matching does not pair random draws or establish equal "
+                "solver accuracy. See `benchmark_environment.json` for timing boundaries "
+                "and settings; memory fields describe sampled RSS, not cgroup peaks.\n\n")
+        f.write("## Timing\n\n")
+        f.write("| Backend | Delta | Lambda | Seconds | Status |\n")
+        f.write("|---------|------:|-------:|--------:|--------|\n")
+        for t in timings:
+            f.write(f"| {t.backend} | {t.delta} | {t.lam} | {t.wall_seconds:.2f} | {t.status} |\n")
+
+        # Timing summary (total per backend)
+        f.write("\n### Total time per backend\n\n")
+        f.write("| Backend | Total (s) | Speedup vs slowest |\n")
+        f.write("|---------|----------:|-------------------:|\n")
+        backend_totals: dict[str, float] = {}
+        for t in timings:
+            if t.status == "success":
+                backend_totals[t.backend] = backend_totals.get(t.backend, 0.0) + t.wall_seconds
+        if backend_totals:
+            slowest = max(backend_totals.values())
+            for b in sorted(backend_totals):
+                total = backend_totals[b]
+                speedup = slowest / total if total > 0 else float("inf")
+                f.write(f"| {b} | {total:.2f} | {speedup:.1f}x |\n")
+
+        # Per-backend results
+        f.write("\n## Results per backend\n\n")
+        f.write("| Backend | Delta | Lambda | K | Sig LFs | Sig Interacts |\n")
+        f.write("|---------|------:|-------:|--:|--------:|--------------:|\n")
+        for key in sorted(results):
+            r = results[key]
+            f.write(
+                f"| {r.backend} | {r.delta} | {r.lam} | {r.k} "
+                f"| {len(r.sig_lfs)} | {len(r.sig_interacts)} |\n"
+            )
+
+        # Pairwise comparisons
+        f.write("\n## Pairwise correctness comparison\n\n")
+        f.write(
+            "| Backend A | Backend B | Delta | Lambda | Sig LF Jaccard "
+            "| Z overall r | Z median col r | Z min col r | A nonzero Jaccard |\n"
+        )
+        f.write(
+            "|-----------|-----------|------:|-------:|---------------:"
+            "|------------:|---------------:|------------:|------------------:|\n"
+        )
+        for c in comparisons:
+            def _fmt(v):
+                return f"{v:.4f}" if v is not None else "N/A"
+            f.write(
+                f"| {c.backend_a} | {c.backend_b} | {c.delta} | {c.lam} "
+                f"| {_fmt(c.sig_lf_jaccard)} | {_fmt(c.z_overall_r)} "
+                f"| {_fmt(c.z_median_col_r)} | {_fmt(c.z_min_col_r)} "
+                f"| {_fmt(c.a_nonzero_jaccard)} |\n"
+            )
+
+    log.info("Report written to %s", report_path)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main(argv: list[str] | None = None) -> int:
+    raw_args = sys.argv[1:] if argv is None else argv
+    if len(raw_args) == 2 and raw_args[0] == "--measurement-child-json":
+        return _measurement_child(Path(raw_args[1]))
+    args = parse_args(raw_args)
+
+    if args.slurm:
+        return submit_slurm(args)
+
+    out_dir = args.out_dir.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Validate data paths
+    for p, label in [(args.x_path, "X matrix"), (args.y_path, "Y vector")]:
+        if not Path(p).exists():
+            log.error("%s not found: %s", label, p)
+            return 1
+
+    timings: list[TimingRecord] = []
+    param_grid = [(d, l) for d in args.delta for l in args.lambdas]
+
+    # Every process-level worker gets one BLAS thread; backend concurrency is
+    # controlled separately by n_workers or Rayon.
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[var] = "1"
+    if args.threads:
+        os.environ["RAYON_NUM_THREADS"] = str(args.threads)
+
+    if not args.skip_run:
+        if not args.measure_process and args.configuration == "parity" and any(
+            backend in ("python", "python_serial", "r_knockoffs")
+            for backend in args.backends
+        ):
+            from slide_py.knockoff.stats.glmnet import HAS_GLMNET
+            if not HAS_GLMNET:
+                log.error("Parity requires compiled Python glmnet; sklearn fallback is not matched")
+                return 1
+        _write_environment_metadata(args, out_dir)
+        for backend in args.backends:
+            for delta, lam in param_grid:
+                backend_dir = out_dir / backend
+                backend_dir.mkdir(parents=True, exist_ok=True)
+                log.info("=== %s delta=%s lambda=%s ===", backend, delta, lam)
+
+                if args.measure_process:
+                    record = run_measured_cell(args, backend, delta, lam)
+                else:
+                    record = _run_cell(args, backend, delta, lam)
+
+                timings.append(record)
+                _save_timing(record, out_dir)
+                log.info(
+                    "%s delta=%s lam=%s: %.2fs (%s)",
+                    backend, delta, lam, record.wall_seconds, record.status,
+                )
+
+    # Load saved timings from previous runs (complements current-run timings)
+    saved_timings = _load_saved_timings(out_dir)
+    _merge_cell_summaries(out_dir)
+    if args.profile:
+        _write_profile_summary(out_dir)
+    seen = {(t.backend, t.delta, t.lam) for t in timings}
+    for st in saved_timings:
+        if (st.backend, st.delta, st.lam) not in seen:
+            timings.append(st)
+
+    # Load results
+    results: dict[tuple[str, float, float], BackendResult] = {}
+    for backend in args.backends:
+        for delta, lam in param_grid:
+            backend_dir = out_dir / backend
+            if backend in ("rust", "rust_r_knockoffs"):
+                rust_dir = backend_dir / _param_subdir(delta, lam)
+                r = load_rust_result(backend, delta, lam, rust_dir)
+            else:
+                r = load_python_result(backend, delta, lam, backend_dir)
+            if r is not None:
+                results[(backend, delta, lam)] = r
+                log.info(
+                    "Loaded %s delta=%s lam=%s: K=%d, %d sig LFs",
+                    backend, delta, lam, r.k, len(r.sig_lfs),
+                )
+
+    # Pairwise comparisons
+    comparisons: list[PairComparison] = []
+    for delta, lam in param_grid:
+        available = [(b, delta, lam) for b in args.backends if (b, delta, lam) in results]
+        for (b1, d1, l1), (b2, d2, l2) in combinations(available, 2):
+            c = compare_pair(results[(b1, d1, l1)], results[(b2, d2, l2)])
+            comparisons.append(c)
+            log.info(
+                "%s vs %s (d=%s l=%s): Jaccard=%.3f, Z_r=%s",
+                b1, b2, delta, lam, c.sig_lf_jaccard,
+                f"{c.z_overall_r:.4f}" if c.z_overall_r is not None else "N/A",
+            )
+
+    write_report(timings, results, comparisons, out_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,8 @@
+{
+  "backend": "r_knockoffs",
+  "delta": 0.01,
+  "lam": 0.1,
+  "wall_seconds": 610.9499201476574,
+  "status": "success",
+  "error": ""
+}

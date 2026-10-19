@@ -1,0 +1,29 @@
+Run completed: 2026-10-19 12:13:52
+
+### PARAMETERS ###
+
+x_path: /vast/djishnu/Aaron/1_general_use/SLIDE/examples/HIV+cytokines_X.csv
+y_path: /vast/djishnu/Aaron/1_general_use/SLIDE/examples/HIV+cytokines_y.csv
+out_path: /vast/djishnu/Aaron/1_general_use/SLIDE/examples/out/2026-10-19_python-smoke
+delta: [0.1]
+lambda: [0.1]
+y_factor: True
+pure_homo: True
+spec: 0.1
+fdr: 0.1
+thresh_fdr: 0.2
+niter: 10
+knockoff_backend: python
+do_interacts: True
+n_workers: 1
+y_flip: False
+SLIDE_top_feats: 20
+
+###### DATA ######
+
+60 samples
+80 features
+61.7% cases
+38.3% controls
+
+##################

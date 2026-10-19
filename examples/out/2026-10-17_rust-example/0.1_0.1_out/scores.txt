@@ -1,0 +1,7 @@
+Score contract: R in-sample OLS control performance (not held-out CV)
+True Scores: 0.8190364277320799
+Partial Random: 0.7381621621621615
+Full Random: 0.7028531139835488
+Number of latent factors: 16
+Number of marginals: 2
+Number of interactions: 5

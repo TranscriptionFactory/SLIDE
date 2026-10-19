@@ -1,0 +1,5 @@
+cell,left,right,kind,count_difference,count_lo,count_hi,count_margin,reference_within_jaccard,cross_jaccard,overlap_deficit,overlap_lo,overlap_hi,overlap_margin,left_empty,right_empty,both_empty_pairs,one_empty_pairs,interval_scope
+d=0.1 l=0.1,rust,pure_r,marginal,-0.10000000000000009,-0.30000000000000004,0.0,1,0.9,0.95,-0.04999999999999993,-0.08333333333333326,0.0,0.05,0,0,0,0,exploratory independent-run bootstrap; not a verdict
+d=0.1 l=0.1,rust,pure_r,interaction,0.0,-0.40000000000000036,0.40000000000000036,1,0.7111111111111111,0.7166666666666667,-0.005555555555555536,-0.07666666666666666,0.17111111111111077,0.05,0,0,0,0,exploratory independent-run bootstrap; not a verdict
+d=0.1 l=0.1,python,pure_r,marginal,-0.10000000000000009,-0.30000000000000004,0.0,1,0.9,0.95,-0.04999999999999993,-0.08333333333333326,0.0,0.05,0,0,0,0,exploratory independent-run bootstrap; not a verdict
+d=0.1 l=0.1,python,pure_r,interaction,-0.19999999999999973,-0.7,0.2999999999999998,1,0.7111111111111111,0.7508333333333332,-0.0397222222222221,-0.09916666666666674,0.11944444444444435,0.05,0,0,0,0,exploratory independent-run bootstrap; not a verdict

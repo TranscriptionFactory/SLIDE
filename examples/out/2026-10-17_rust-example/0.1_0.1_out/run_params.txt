@@ -1,0 +1,53 @@
+{
+  "config": {
+    "do_interacts": true,
+    "knockoff": {
+      "base_seed": 42,
+      "f_size": null,
+      "family": "Gaussian",
+      "fdr": 0.1,
+      "interaction_size_cap": true,
+      "knockoff_backend": "rust",
+      "knockoff_method": {
+        "Asdp": {
+          "max_block_size": 500
+        }
+      },
+      "knockoff_offset": 0,
+      "niter": 10,
+      "nlambda": 250,
+      "slide_selection": true,
+      "spec": 0.1,
+      "statistic": "GlmnetLambdasMax"
+    },
+    "love": {
+      "delta": null,
+      "diagonal": false,
+      "est_non_pure_row": "HardThreshold",
+      "exact": false,
+      "lbd": {
+        "data": [
+          0.5
+        ],
+        "dim": [
+          1
+        ],
+        "v": 1
+      },
+      "max_pure": null,
+      "merge_strategy": "Union",
+      "mu": 0.5,
+      "ndelta": 50,
+      "nfolds": 10,
+      "pure_homo": true,
+      "q": "L2",
+      "rep_cv": 50,
+      "thresh_fdr": 0.2
+    },
+    "response_type": "Binary"
+  },
+  "control_random_draws": 1000,
+  "control_score_contract": "R in-sample OLS; not held-out CV",
+  "delta": 0.1,
+  "lambda": 0.1
+}

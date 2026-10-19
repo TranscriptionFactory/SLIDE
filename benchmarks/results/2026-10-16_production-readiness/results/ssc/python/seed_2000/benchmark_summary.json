@@ -1,0 +1,145 @@
+{
+  "timestamp": "2026-10-16T20:41:05.776682+00:00",
+  "timings": [
+    {
+      "backend": "python",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 45.2948815189302,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 1141743616,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 43.228516108356416,
+      "python_glmnet_available": true
+    },
+    {
+      "backend": "python",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 46.01489280257374,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 1150296064,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 44.28633576724678,
+      "python_glmnet_available": true
+    },
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 29.23600701801479,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 1161588736,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 27.24803825467825,
+      "python_glmnet_available": true
+    },
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 26.476976504549384,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 1149845504,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 24.78917222470045,
+      "python_glmnet_available": true
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "python_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "sig_interacts": [
+        "Z136.Z22",
+        "Z18.Z100",
+        "Z27.Z100",
+        "Z27.Z151",
+        "Z27.Z52",
+        "Z27.Z54",
+        "Z45.Z129"
+      ],
+      "score": null
+    },
+    "python_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z136.Z22",
+        "Z18.Z100",
+        "Z27.Z100",
+        "Z27.Z151",
+        "Z27.Z52",
+        "Z27.Z54",
+        "Z45.Z129",
+        "Z45.Z91"
+      ],
+      "score": null
+    },
+    "python_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 6,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z38",
+        "Z53",
+        "Z61",
+        "Z62"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z25.Z74",
+        "Z33.Z57",
+        "Z33.Z67",
+        "Z38.Z37",
+        "Z53.Z68",
+        "Z61.Z50",
+        "Z62.Z20",
+        "Z62.Z37"
+      ],
+      "score": null
+    },
+    "python_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44",
+        "Z69"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z25.Z20",
+        "Z25.Z74",
+        "Z33.Z57",
+        "Z33.Z59",
+        "Z44.Z58",
+        "Z44.Z59",
+        "Z44.Z81",
+        "Z69.Z61"
+      ],
+      "score": null
+    }
+  }
+}

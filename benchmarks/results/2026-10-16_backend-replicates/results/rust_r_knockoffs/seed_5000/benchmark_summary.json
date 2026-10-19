@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-10-16T08:17:02.443099+00:00",
+  "timings": [
+    {
+      "backend": "rust_r_knockoffs",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 43.49580639787018,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust_r_knockoffs",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 36.52795142494142,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust_r_knockoffs",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 14.685075376182795,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust_r_knockoffs",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 13.619816854596138,
+      "status": "success",
+      "error": ""
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_r_knockoffs_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z74"
+      ],
+      "n_sig_interacts": 14,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z74:Z123",
+        "Z74:Z127",
+        "Z74:Z130",
+        "Z74:Z143",
+        "Z74:Z2",
+        "Z74:Z55",
+        "Z74:Z93"
+      ],
+      "score": 0.9953904611206538
+    },
+    "rust_r_knockoffs_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129"
+      ],
+      "score": 0.9457082962030293
+    },
+    "rust_r_knockoffs_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 3,
+      "sig_lfs": [
+        "Z25",
+        "Z44",
+        "Z53"
+      ],
+      "n_sig_interacts": 3,
+      "sig_interacts": [
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z53:Z68"
+      ],
+      "score": 0.8971082371803788
+    },
+    "rust_r_knockoffs_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 2,
+      "sig_lfs": [
+        "Z44",
+        "Z69"
+      ],
+      "n_sig_interacts": 4,
+      "sig_interacts": [
+        "Z44:Z58",
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z69:Z61"
+      ],
+      "score": 0.8840296976595569
+    }
+  }
+}

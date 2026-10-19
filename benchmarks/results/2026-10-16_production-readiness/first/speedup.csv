@@ -1,0 +1,9 @@
+dataset,backend,delta,lam,speedup,ci95_lo,ci95_hi,backend_successes,r_successes,coverage_warning,scope
+ssc,python,0.01,0.1,1.1762495254755483,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,python,0.01,1.0,0.9736204110506564,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,python,0.1,0.1,1.0099330641634985,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,python,0.1,1.0,1.1253909535757323,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,rust,0.01,0.1,1.8313008966007494,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,rust,0.01,1.0,3.599247973452963,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,rust,0.1,0.1,1.863978586810968,,,1,1,,success-conditioned; independent-run percentile bootstrap
+ssc,rust,0.1,1.0,2.0883283349491806,,,1,1,,success-conditioned; independent-run percentile bootstrap

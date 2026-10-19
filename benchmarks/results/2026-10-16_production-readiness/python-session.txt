@@ -1,0 +1,6 @@
+3.11.15 | packaged by conda-forge | (main, Mar  5 2026, 16:45:40) [GCC 14.3.0]
+numpy 2.4.3 /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/python3.11/site-packages/numpy/__init__.py
+scipy 1.17.1 /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/python3.11/site-packages/scipy/__init__.py
+pandas 3.0.2 /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/python3.11/site-packages/pandas/__init__.py
+sklearn 1.8.0 /vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/python3.11/site-packages/sklearn/__init__.py
+[{'user_api': 'blas', 'internal_api': 'openblas', 'num_threads': 1, 'prefix': 'libopenblas', 'filepath': '/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/libopenblasp-r0.3.32.so', 'version': '0.3.32', 'threading_layer': 'pthreads', 'architecture': 'Cooperlake'}, {'user_api': 'openmp', 'internal_api': 'openmp', 'num_threads': 1, 'prefix': 'libgomp', 'filepath': '/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/lib/libgomp.so.1.0.0', 'version': None}]

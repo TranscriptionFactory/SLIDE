@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust MSRV (${{ matrix.toolchain }})
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        toolchain: ["1.88.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare dated temporary directory
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_source-ci-${GITHUB_JOB}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          printf '# Source CI\n\nNative source build and tests; no candidate promotion.\n' > "$run_dir/README.md"
+      - name: Install native dependencies
+        run: |
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get update
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get install -y --no-install-recommends \
+            build-essential libopenblas-dev liblapack-dev gfortran cmake clang libclang-dev libcairo2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --release --locked
+      - name: Test
+        run: cargo test --workspace --release --locked
+
+  python:
+    name: Python (slide-py)
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare dated temporary directory
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_source-ci-${GITHUB_JOB}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          printf '# Source CI\n\nNative source build and tests; no candidate promotion.\n' > "$run_dir/README.md"
+      - name: Install native dependencies
+        run: |
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get update
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get install -y --no-install-recommends build-essential libopenblas-dev liblapack-dev gfortran
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build and install wheel
+        run: |
+          mkdir -p .tmpfiles/ci-python/{temp,dist}
+          python -m pip install --upgrade pip build
+          python -m build --outdir .tmpfiles/ci-python/dist
+          python -m pip install "$(echo .tmpfiles/ci-python/dist/*.whl)[dev]"
+      - name: Check installed artifact outside checkout
+        run: |
+          cd "$GITHUB_WORKSPACE/../"
+          python - <<'PYTHON'
+          from pathlib import Path
+          import os
+          import zipfile
+          import slide_py
+          from slide_py.dsdp_solver import pydsdp5
+          from slide_py.knockoff._vendor.glmnet import _glmnet, ElasticNet, LogitNet
+          from slide_py.love_python.love import LOVE
+          package = Path(slide_py.__file__).resolve().parent
+          assert not str(package).startswith(os.environ["GITHUB_WORKSPACE"] + "/")
+          assert (package / "slide_r" / "getLatentFactors.R").is_file()
+          assert pydsdp5.__file__.endswith(".so")
+          assert _glmnet.__file__.endswith(".so")
+          wheel = next((Path(os.environ["GITHUB_WORKSPACE"]) / ".tmpfiles/ci-python/dist").glob("*.whl"))
+          names = zipfile.ZipFile(wheel).namelist()
+          assert len([n for n in names if n.endswith((".so", ".pyd"))]) == 2
+          assert not any("__pycache__" in n or "/builddir/" in n for n in names)
+          PYTHON
+          slide-py --version
+      - name: Test
+        run: python -m pytest tests/tests -m "not slow and not requires_r and not requires_rust" -q
+      - name: CLI smoke test
+        run: slide-py --version
+
+  pixi-source:
+    name: Pixi source (${{ matrix.platform }}, Python 3.11 / Rust 1.99.1)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: linux-64, runner: ubuntu-22.04}
+          - {platform: osx-arm64, runner: macos-15}
+          - {platform: osx-64, runner: macos-15-intel}
+          - {platform: win-64, runner: windows-2022}
+    env:
+      PYTHONNOUSERSITE: "1"
+      SLIDE_TEST_EDITABLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare temporary directories and archive checkout binaries
+        shell: pwsh
+        run: |
+          $runDir = Join-Path $env:GITHUB_WORKSPACE ".tmpfiles/$((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'))_pixi-source-${{ matrix.platform }}-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Force "$runDir/temp", "$runDir/archive" | Out-Null
+          foreach ($key in @('TMPDIR', 'TMP', 'TEMP')) { "$key=$runDir/temp" >> $env:GITHUB_ENV }
+          "RUN_DIR=$runDir" >> $env:GITHUB_ENV
+          '# Pixi source CI: locked native source builds and shared numerical smoke; not artifact portability.' | Set-Content "$runDir/README.md"
+          Get-ChildItem src -Recurse -File -Include *.so,*.pyd | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $_.FullName)
+            $destination = Join-Path "$runDir/archive" $relative
+            New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
+            Move-Item $_.FullName $destination
+          }
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          pixi-version: v0.65.0
+          run-install: false
+          cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
+          components: clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Record stdlib-only Rust smoke interpreter
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          "SMOKE_PYTHON=$python" >> $env:GITHUB_ENV
+      - name: Install locked Rust source environment
+        id: rust-install
+        shell: pwsh
+        run: |
+          pixi install --locked -e rust
+          if ($LASTEXITCODE -ne 0) { throw 'Locked Rust environment installation failed' }
+      - name: Install locked Python source environment
+        id: python-install
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          pixi install --locked -e default
+          if ($LASTEXITCODE -ne 0) { throw 'Locked Python source installation failed' }
+      - name: Install CI-only Python test harness
+        id: python-harness
+        if: ${{ !cancelled() && steps.python-install.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          # pytest is not part of the locked production runtime; do not upgrade numerical packages.
+          pixi run --locked -e default python -m ensurepip
+          if ($LASTEXITCODE -ne 0) { throw 'ensurepip failed' }
+          pixi run --locked -e default python -m pip install --only-binary=:all: pytest
+          if ($LASTEXITCODE -ne 0) { throw 'pytest harness installation failed' }
+      - name: Test editable imports, native solvers and Python pipeline
+        if: ${{ !cancelled() && steps.python-harness.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          pixi run --locked -e default python -m pytest -c tests/pytest.ini tests/tests/test_installed_artifact.py tests/tests/test_native_build.py --basetemp "$env:RUN_DIR/python-tests" -q
+          if ($LASTEXITCODE -ne 0) { throw 'Python source smoke failed' }
+      - name: Build and test native Rust workspace
+        id: rust-build
+        if: ${{ !cancelled() && steps.rust-install.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          pixi run --locked -e rust build
+          if ($LASTEXITCODE -ne 0) { throw 'Rust source build failed' }
+          pixi run --locked -e rust test
+          if ($LASTEXITCODE -ne 0) { throw 'Rust workspace tests failed' }
+      - name: Clippy
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.rust-build.outcome == 'success' }}
+        run: pixi run --locked -e rust check
+      - name: Native Rust pipeline, final CV, PDFs and Unix TUI
+        if: ${{ !cancelled() && runner.os != 'Windows' && steps.rust-build.outcome == 'success' }}
+        shell: bash
+        run: |
+          pixi run --locked -e rust "$SMOKE_PYTHON" \
+            scripts/slide_artifact_smoke.py --binary target/release/slide \
+            --workdir "$RUN_DIR/rust-smoke" --out-path "$RUN_DIR/results" --tui-pty
+      - name: Native Rust pipeline, final CV and PDFs (ConPTY pending)
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.rust-build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          pixi run --locked -e rust "$env:SMOKE_PYTHON" `
+            scripts/slide_artifact_smoke.py --binary target/release/slide.exe `
+            --workdir "$env:RUN_DIR/rust-smoke" --out-path "$env:RUN_DIR/results"
+          if ($LASTEXITCODE -ne 0) { throw 'Rust native smoke failed; Windows ConPTY is not checked' }
+      - name: Upload source smoke results (PDF visual review still required)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixi-source-${{ matrix.platform }}
+          path: |
+            ${{ env.RUN_DIR }}/results
+            ${{ env.RUN_DIR }}/rust-smoke
+          include-hidden-files: true
+          if-no-files-found: warn

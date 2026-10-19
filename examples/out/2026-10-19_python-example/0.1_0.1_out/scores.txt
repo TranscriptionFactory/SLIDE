@@ -1,0 +1,13 @@
+Run completed: 2026-10-19 12:13:52
+
+#########################
+
+True Scores: 0.762632197414806
+Partial Random: 0.7054089306698003
+Full Random: 0.6245804935370153
+
+#########################
+
+Number of latent factors: 16
+Number of marginals: 1
+Number of interactions: 2

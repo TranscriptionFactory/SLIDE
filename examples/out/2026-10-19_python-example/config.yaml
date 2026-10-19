@@ -1,0 +1,14 @@
+x_path: ../../HIV+cytokines_X.csv
+y_path: ../../HIV+cytokines_y.csv
+out_path: .
+delta: [0.1]
+lambda: [0.1]
+y_factor: true
+pure_homo: true
+spec: 0.1
+fdr: 0.1
+thresh_fdr: 0.2
+niter: 10
+knockoff_backend: python
+do_interacts: true
+n_workers: 1

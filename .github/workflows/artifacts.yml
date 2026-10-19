@@ -1,0 +1,575 @@
+name: Native build candidates
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OPENBLAS_NUM_THREADS: "1"
+  MACOSX_DEPLOYMENT_TARGET: "15.0"
+
+jobs:
+  wheels:
+    name: Wheels (${{ matrix.platform.name }}, ${{ matrix.tag }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [cp39, cp310, cp311, cp312]
+        platform:
+          - {name: linux-x86_64, runner: ubuntu-22.04, os: linux, arch: x86_64, suffix: manylinux_x86_64}
+          - {name: macos-arm64, runner: macos-15, os: macos, arch: arm64, suffix: macosx_arm64}
+          - {name: macos-x86_64, runner: macos-15-intel, os: macos, arch: x86_64, suffix: macosx_x86_64}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare isolated tests and temporary paths
+        shell: bash
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_wheels-${{ matrix.platform.name }}-${{ matrix.tag }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp" "$run_dir/isolated/tests/tests" "$run_dir/isolated/examples"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          echo "RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+          cp tests/tests/{test_installed_artifact,test_knockoff_glmnet_defaults,test_pipeline}.py "$run_dir/isolated/tests/tests/"
+          cp tests/pytest.ini "$run_dir/isolated/tests/"
+          cp examples/HIV+cytokines_{X,y}.csv "$run_dir/isolated/examples/"
+          printf '# Native wheel candidates\n\nartifacts.yml; cibuildwheel repaired wheel plus isolated installed tests. Not published.\n' > "$run_dir/README.md"
+      - uses: actions/setup-python@v5
+        with:
+          # Tool host, not the wheel ABI; cibuildwheel selects the four target Pythons.
+          python-version: "3.11"
+      - uses: pypa/cibuildwheel@v2.23.3
+        with:
+          output-dir: ${{ env.RUN_DIR }}/wheels
+        env:
+          CIBW_BUILD: ${{ matrix.tag }}-${{ matrix.platform.suffix }}
+          CIBW_ARCHS: ${{ matrix.platform.arch }}
+      - name: Test Linux wheel without system BLAS or compilers
+        if: matrix.platform.os == 'linux'
+        shell: bash
+        env:
+          PYTHON_TAG: ${{ matrix.tag }}
+        run: |
+          python_version="${PYTHON_TAG#cp}"
+          python_version="${python_version:0:1}.${python_version:1}"
+          docker run --rm \
+            -v "$RUN_DIR/wheels:/wheels:ro" -v "$RUN_DIR/isolated:/check" -w /check \
+            -e TMPDIR=/check -e TMP=/check -e TEMP=/check \
+            -e SLIDE_TEST_INSTALLED=1 -e OPENBLAS_NUM_THREADS=1 \
+            "python:$python_version-slim-bookworm" sh -ec '
+              unset LD_LIBRARY_PATH LIBRARY_PATH LD_PRELOAD PYTHONPATH
+              python -m pip download --only-binary=:all: --dest dependencies /wheels/*.whl pytest
+              python -m pip install --no-index --find-links dependencies /wheels/*.whl pytest
+              python -m pip check
+              python - <<'"'"'PYTHON'"'"'
+          from pathlib import Path
+          import subprocess
+          import sysconfig
+          for extension in Path(sysconfig.get_path("platlib")).joinpath("slide_py").rglob("*.so"):
+              result = subprocess.run(["ldd", str(extension)], text=True, capture_output=True, check=True)
+              print(result.stdout)
+              assert "not found" not in result.stdout, extension
+          PYTHON
+              slide-py --version
+              python -m pytest -p no:cacheprovider -c tests/pytest.ini \
+                tests/tests/test_installed_artifact.py tests/tests/test_knockoff_glmnet_defaults.py -q
+            '
+      - uses: actions/setup-python@v5
+        if: matrix.platform.os == 'macos'
+        with:
+          python-version: ${{ matrix.tag == 'cp39' && '3.9' || matrix.tag == 'cp310' && '3.10' || matrix.tag == 'cp311' && '3.11' || '3.12' }}
+      - name: Test macOS wheel closure and isolated runtime
+        if: matrix.platform.os == 'macos'
+        shell: bash
+        run: |
+          python -m venv "$RUN_DIR/clean-env"
+          py="$RUN_DIR/clean-env/bin/python"
+          "$py" -m pip download --only-binary=:all: --dest "$RUN_DIR/dependencies" "$RUN_DIR"/wheels/*.whl pytest
+          "$py" -m pip install --no-index --find-links "$RUN_DIR/dependencies" "$RUN_DIR"/wheels/*.whl pytest
+          "$py" -m pip check
+          "$py" - <<'PYTHON'
+          import os, re, runpy, subprocess, sysconfig
+          from pathlib import Path
+          closure = runpy.run_path("scripts/package-rust-macos.py")["closure"]
+          installed = Path(sysconfig.get_path("platlib")).resolve()
+          for extension in (installed / "slide_py").rglob("*.so"):
+              for library in closure(extension):
+                  assert library.is_relative_to(installed), library
+                  commands = subprocess.check_output(["otool", "-l", str(library)], text=True)
+                  minimums = re.findall(r"cmd LC_(?:BUILD_VERSION|VERSION_MIN_MACOSX)\n\s+cmdsize \d+\n(?:\s+platform \S+\n)?\s+(?:minos|version) (\d+)\.(\d+)(?:\.(\d+))?", commands)
+                  assert minimums and all(tuple(int(part or 0) for part in version) <= (15, 0, 0) for version in minimums), library
+          PYTHON
+          mkdir -p "$RUN_DIR/home" "$RUN_DIR/cache"
+          cd "$RUN_DIR/isolated"
+          env -i HOME="$RUN_DIR/home" XDG_CACHE_HOME="$RUN_DIR/cache" \
+            PATH="/usr/bin:/bin:/usr/sbin:/sbin" TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" \
+            SLIDE_TEST_INSTALLED=1 OPENBLAS_NUM_THREADS=1 DYLD_PRINT_LIBRARIES=1 \
+            "$py" -m pytest -p no:cacheprovider -c tests/pytest.ini \
+              tests/tests/test_installed_artifact.py tests/tests/test_knockoff_glmnet_defaults.py -q -s \
+              2> "$RUN_DIR/loader.log"
+          grep -F 'pydsdp5' "$RUN_DIR/loader.log"
+          grep -F '_glmnet' "$RUN_DIR/loader.log"
+          if grep -E '/(opt/homebrew|usr/local/(opt|Cellar))/' "$RUN_DIR/loader.log"; then
+            echo 'Runtime loaded a build-machine Homebrew library' >&2; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-py-${{ matrix.platform.name }}-${{ matrix.tag }}
+          path: ${{ env.RUN_DIR }}/wheels/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Single source candidate (build and install actual sdist)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare temporary paths
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_sdist-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp" "$run_dir/isolated/tests/tests" "$run_dir/isolated/examples"
+          echo "RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          cp tests/tests/{test_installed_artifact,test_knockoff_glmnet_defaults,test_pipeline}.py "$run_dir/isolated/tests/tests/"
+          cp tests/pytest.ini "$run_dir/isolated/tests/"
+          cp examples/HIV+cytokines_{X,y}.csv "$run_dir/isolated/examples/"
+          printf '# Source candidate\n\nOne sdist, checked and installed directly with PEP 517 isolation. Not published.\n' > "$run_dir/README.md"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install native source-build prerequisites
+        run: |
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get update
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get install -y --no-install-recommends build-essential libopenblas-dev liblapack-dev gfortran
+          python -m pip install --only-binary=:all: build twine
+      - name: Build once and check native source inputs
+        run: |
+          python -m build --sdist --outdir "$RUN_DIR/dist"
+          python -m twine check --strict "$RUN_DIR"/dist/*
+          python - <<'PYTHON'
+          import os, tarfile, tomllib
+          from pathlib import Path
+          archives = list((Path(os.environ["RUN_DIR"]) / "dist").glob("*.tar.gz"))
+          assert len(archives) == 1
+          with tarfile.open(archives[0]) as archive:
+              members = archive.getnames()
+          names = {name.split("/", 1)[1] for name in members if "/" in name}
+          expected = {"setup.py", "pyproject.toml", "MANIFEST.in", "README.md", "LICENSE"}
+          for directory, patterns in [
+              ("src/slide_py/dsdp_solver", ("**/*.c", "**/*.h", "LICENSE")),
+              ("src/slide_py/knockoff/_vendor/glmnet", ("*.pyf", "meson.build", "src/glmnet/*.f90", "LICENSE")),
+          ]:
+              for pattern in patterns:
+                  expected.update(str(path) for path in Path(directory).glob(pattern))
+          assert expected <= names, sorted(expected - names)
+          assert not any(name.endswith((".so", ".pyd", ".pyc")) for name in names)
+          config = tomllib.loads(Path("pyproject.toml").read_text())
+          requirements = Path(os.environ["RUN_DIR"]) / "requirements.txt"
+          requirements.write_text("\n".join(config["project"]["dependencies"]) + "\npytest\n")
+          PYTHON
+      - name: Install actual sdist in a clean environment and test outside checkout
+        env:
+          SLIDE_TEST_INSTALLED: "1"
+          PIP_ONLY_BINARY: ":all:"
+        run: |
+          python -m venv "$RUN_DIR/source-env"
+          py="$RUN_DIR/source-env/bin/python"
+          "$py" -m pip install --only-binary=:all: -r "$RUN_DIR/requirements.txt"
+          "$py" -m pip install --no-deps "$RUN_DIR"/dist/*.tar.gz
+          "$py" -m pip check
+          cd "$RUN_DIR/isolated"
+          "$py" -m pytest -p no:cacheprovider -c tests/pytest.ini \
+            tests/tests/test_installed_artifact.py tests/tests/test_knockoff_glmnet_defaults.py -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-py-sdist
+          path: ${{ env.RUN_DIR }}/dist/*.tar.gz
+          if-no-files-found: error
+
+  rust-linux:
+    runs-on: ubuntu-22.04
+    env:
+      RUSTFLAGS: "-C target-cpu=x86-64"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare output directory
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_rust-linux-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp" "$run_dir/clean-test"
+          echo "RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          printf '# Rust Linux candidate\n\nUbuntu 22.04; cargo +1.99.1 build --release --locked; relocated smoke. Not published.\n' > "$run_dir/README.md"
+      - name: Install build and packaging tools
+        run: |
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get update
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get install -y --no-install-recommends build-essential \
+            libopenblas-dev liblapack-dev gfortran cmake clang libclang-dev \
+            libcairo2-dev pkg-config pax-utils python3-pyelftools patchelf fonts-dejavu-core binutils
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and bundle
+        run: |
+          cargo +1.99.1 build --release --locked
+          /usr/bin/python3 scripts/package-rust-linux.py target/release/slide "$RUN_DIR/slide-linux-x86_64"
+      - name: Test relocated archive without system BLAS or Cairo
+        run: |
+          docker run --rm \
+            -v "$RUN_DIR/slide-linux-x86_64.tar.gz:/candidate.tar.gz:ro" \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUN_DIR/clean-test:/check" \
+            -w /check -e TMPDIR=/check -e TMP=/check -e TEMP=/check \
+            -e XDG_CACHE_HOME=/check/cache -e HOME=/check/home -e OPENBLAS_NUM_THREADS=1 \
+            ubuntu:22.04 bash -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends python3
+              mkdir -p "relocated bundle" "$HOME"
+              tar -xzf /candidate.tar.gz -C "relocated bundle"
+              binary="/check/relocated bundle/slide-linux-x86_64/slide"
+              export PATH="/usr/bin:/bin"
+              unset LD_LIBRARY_PATH LIBRARY_PATH LD_PRELOAD
+              "$binary" --version
+              python3 /src/scripts/slide_artifact_smoke.py --binary "$binary" \
+                --workdir /check/smoke --out-path /check/results --tui-pty
+            '
+      - name: Render plot previews for maintainer inspection
+        run: |
+          sudo env TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" apt-get install -y --no-install-recommends poppler-utils
+          mkdir -p "$RUN_DIR/previews"
+          sudo chmod -R a+rX "$RUN_DIR/clean-test/results"
+          find "$RUN_DIR/clean-test/results" -name ControlPerformancePlot.pdf -exec \
+            pdftoppm -singlefile -scale-to 1600 -png '{}' "$RUN_DIR/previews/control" \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-rs-linux-x86_64-glibc235
+          path: ${{ env.RUN_DIR }}/slide-linux-x86_64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-rs-linux-x86_64-plot-review
+          path: |
+            ${{ env.RUN_DIR }}/previews/*.png
+            ${{ env.RUN_DIR }}/clean-test/results/**/*.pdf
+          if-no-files-found: error
+
+  rust-macos:
+    name: Rust (macOS ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15, arch: arm64}
+          - {runner: macos-15-intel, arch: x86_64}
+    env:
+      RUSTFLAGS: "-C link-arg=-Wl,-headerpad_max_install_names"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare output directory
+        run: |
+          run_dir="$GITHUB_WORKSPACE/.tmpfiles/$(date -u +%F)_rust-macos-${{ matrix.arch }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$run_dir/temp" "$run_dir/font-source" "$run_dir/notices" "$run_dir/relocated bundle" "$run_dir/home" "$run_dir/cache"
+          echo "RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+          for key in TMPDIR TMP TEMP; do echo "$key=$run_dir/temp" >> "$GITHUB_ENV"; done
+          printf '# Rust macOS candidate\n\nNative macOS 15; cargo +1.99.1 build --release --locked; relocated smoke. Not notarized or published.\n' > "$run_dir/README.md"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install native build, font and preview tools
+        run: |
+          brew install openblas libomp cairo fontconfig freetype pkg-config cmake llvm poppler
+          brew fetch --cask font-dejavu
+          tar -xf "$(brew --cache --cask font-dejavu)" -C "$RUN_DIR/font-source"
+          font=$(find "$RUN_DIR/font-source" -name DejaVuSans.ttf -print -quit)
+          notice=$(find "$RUN_DIR/font-source" -name LICENSE -print -quit)
+          test -n "$font" && test -n "$notice"
+          echo "DEJAVU_TTF=$(dirname "$font")" >> "$GITHUB_ENV"
+          echo "DEJAVU_LICENSE=$notice" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix openblas)/lib/pkgconfig:$(brew --prefix cairo)/lib/pkgconfig" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and stage native dependency notices
+        run: |
+          cargo +1.99.1 build --release --locked
+          python - <<'PYTHON'
+          import os, runpy, shutil
+          from pathlib import Path
+          closure = runpy.run_path("scripts/package-rust-macos.py")["closure"]
+          roots = set()
+          for library in closure(Path("target/release/slide").resolve()):
+              if "Cellar" in library.parts:
+                  index = library.parts.index("Cellar")
+                  roots.add(Path(*library.parts[:index + 3]))
+          assert roots, "No Homebrew native dependencies found"
+          for root in roots:
+              notices = [path for path in root.rglob("*") if path.is_file() and
+                         path.name.lower().startswith(("license", "copying", "copyright", "notice"))]
+              assert notices, f"No available native license notice: {root}"
+              for source in notices:
+                  destination = Path(os.environ["RUN_DIR"]) / "notices" / root.parent.name / source.relative_to(root)
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
+          PYTHON
+          python scripts/package-rust-macos.py target/release/slide "$RUN_DIR/slide-macos-${{ matrix.arch }}" \
+            --font-dir "$DEJAVU_TTF" --font-notice "$DEJAVU_LICENSE" --notice-dir "$RUN_DIR/notices"
+      - name: Test relocated closure, runtime and real terminal
+        run: |
+          tar -xzf "$RUN_DIR/slide-macos-${{ matrix.arch }}.tar.gz" -C "$RUN_DIR/relocated bundle"
+          bundle="$RUN_DIR/relocated bundle/slide-macos-${{ matrix.arch }}"
+          export BUNDLE="$bundle"
+          python - <<'PYTHON'
+          import os, re, runpy, subprocess
+          from pathlib import Path
+          closure = runpy.run_path("scripts/package-rust-macos.py")["closure"]
+          bundle = Path(os.environ["BUNDLE"])
+          for library in closure(bundle / "bin/slide"):
+              assert library.is_relative_to(bundle), library
+              commands = subprocess.check_output(["otool", "-l", str(library)], text=True)
+              minimums = re.findall(r"cmd LC_(?:BUILD_VERSION|VERSION_MIN_MACOSX)\n\s+cmdsize \d+\n(?:\s+platform \S+\n)?\s+(?:minos|version) (\d+)\.(\d+)(?:\.(\d+))?", commands)
+              assert minimums and all(tuple(int(part or 0) for part in version) <= (15, 0, 0) for version in minimums), library
+          PYTHON
+          # Check the quoted launcher, then trace the Mach-O directly (SIP shells strip DYLD_*).
+          env -i HOME="$RUN_DIR/home" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+            TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" "$bundle/slide" --version
+          py=$(command -v python)
+          cd "$RUN_DIR/relocated bundle"
+          env -i HOME="$RUN_DIR/home" XDG_CACHE_HOME="$RUN_DIR/cache" \
+            PATH="/usr/bin:/bin:/usr/sbin:/sbin" TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" \
+            OPENBLAS_NUM_THREADS=1 DYLD_PRINT_LIBRARIES=1 FONTCONFIG_FILE="$bundle/fonts.conf" \
+            "$py" "$GITHUB_WORKSPACE/scripts/slide_artifact_smoke.py" --binary "$bundle/bin/slide" \
+              --workdir "$RUN_DIR/smoke" --out-path "$RUN_DIR/results" --tui-pty \
+              2> "$RUN_DIR/loader.log"
+          grep -F "$bundle/lib/" "$RUN_DIR/loader.log"
+          if grep -E '/(opt/homebrew|usr/local/(opt|Cellar))/' "$RUN_DIR/loader.log"; then
+            echo 'Runtime loaded a build-machine Homebrew library' >&2; exit 1
+          fi
+      - name: Render plot previews for maintainer inspection
+        run: |
+          mkdir -p "$RUN_DIR/previews"
+          find "$RUN_DIR/results" -name ControlPerformancePlot.pdf -exec \
+            pdftoppm -singlefile -scale-to 1600 -png '{}' "$RUN_DIR/previews/control" \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-rs-macos-${{ matrix.arch }}
+          path: ${{ env.RUN_DIR }}/slide-macos-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-rs-macos-${{ matrix.arch }}-plot-review
+          path: |
+            ${{ env.RUN_DIR }}/previews/*.png
+            ${{ env.RUN_DIR }}/results/**/*.pdf
+          if-no-files-found: error
+
+  rust-windows:
+    runs-on: windows-2022
+    env:
+      VSLANG: "1033"
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKGRS_DYNAMIC: "1"
+      RUSTFLAGS: "-C target-cpu=x86-64"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare native Windows temporary paths
+        shell: pwsh
+        run: |
+          $runDir = "$env:GITHUB_WORKSPACE/.tmpfiles/$(Get-Date -Format yyyy-MM-dd)_rust-windows-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Force "$runDir/temp", "$runDir/probe with spaces", "$runDir/notices" | Out-Null
+          "RUN_DIR=$runDir" >> $env:GITHUB_ENV
+          foreach ($key in @('TMPDIR', 'TMP', 'TEMP')) { "$key=$runDir/temp" >> $env:GITHUB_ENV }
+          '# Rust Windows candidate: MSVC, pinned LP64 OpenBLAS/LAPACK, relocated smoke. Native ConPTY and legal review pending.' | Set-Content "$runDir/README.md"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Prepare pinned provider, Cairo, pkgconf and bundled fonts
+        shell: pwsh
+        run: |
+          $prefix = "$env:RUN_DIR/OpenBLAS provider"
+          python scripts/prepare-windows-openblas.py "$prefix"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          & "$vcpkg/vcpkg.exe" install "cairo[fontconfig,freetype]:x64-windows" "pkgconf:x64-windows"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installed = "$vcpkg/installed/x64-windows"
+          $pkgconf = "$installed/tools/pkgconf/pkgconf.exe"
+          $clang = "C:/Program Files/LLVM/bin"
+          if (!(Test-Path "$clang/libclang.dll")) { throw 'Hosted LLVM libclang.dll is required' }
+          "OPENBLAS_PREFIX=$prefix" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$vcpkg" >> $env:GITHUB_ENV
+          "VCPKG_INSTALLED=$installed" >> $env:GITHUB_ENV
+          "PKG_CONFIG=$pkgconf" >> $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$prefix/lib/pkgconfig;$installed/lib/pkgconfig;$installed/share/pkgconfig" >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$clang" >> $env:GITHUB_ENV
+          python -m pip install --only-binary=:all: matplotlib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          import matplotlib, os
+          from pathlib import Path
+          fonts = Path(matplotlib.get_data_path()) / "fonts/ttf"
+          notice = fonts / "LICENSE_DEJAVU"
+          assert notice.is_file()
+          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+              output.write(f"DEJAVU_TTF={fonts}\nDEJAVU_LICENSE={notice}\n")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem "$env:VCToolsRedistDir" -Recurse -File | Where-Object Name -Match 'license|copyright|notice' | ForEach-Object {
+            $relative = $_.FullName.Substring($env:VCToolsRedistDir.Length).TrimStart('\', '/')
+            $destination = "$env:RUN_DIR/notices/msvc/$relative"
+            New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
+            Copy-Item $_.FullName $destination
+          }
+          'Available notices only; embedded compiler/runtime redistribution review remains unresolved.' | Set-Content "$env:RUN_DIR/notices/PENDING.txt"
+      - name: Require native LP64 BLAS and LAPACK before the Rust build
+        shell: pwsh
+        run: |
+          & "$env:PKG_CONFIG" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = & "$env:PKG_CONFIG" --modversion openblas
+          if ($LASTEXITCODE -ne 0 -or $version -ne '0.3.34') { throw 'Pinned OpenBLAS pkg-config shim was not selected' }
+          & "$env:PKG_CONFIG" --libs --cflags openblas cairo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $probeDir = "$env:RUN_DIR/probe with spaces"
+          cl /nologo /O2 scripts/windows_openblas_probe.c "/Fo$probeDir/probe.obj" /link "/LIBPATH:$env:OPENBLAS_PREFIX/lib" libopenblas.lib "/OUT:$probeDir/probe.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "$env:OPENBLAS_PREFIX/bin/libopenblas.dll" "$probeDir/libopenblas.dll"
+          $savedPath = $env:PATH
+          try {
+            $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
+            & "$probeDir/probe.exe"
+            if ($LASTEXITCODE -ne 0) { throw 'Native BLAS/LAPACK probe failed' }
+          } finally { $env:PATH = $savedPath }
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Build locked MSVC executable and bundle complete PE closure
+        shell: pwsh
+        run: |
+          cargo +1.99.1 build --release --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/package-rust-windows.py target/x86_64-pc-windows-msvc/release/slide.exe "$env:RUN_DIR/slide-windows-x86_64" `
+            --dll-dir "$env:OPENBLAS_PREFIX/bin" --dll-dir "$env:VCPKG_INSTALLED/bin" `
+            --dll-dir "$env:VCToolsRedistDir/x64/Microsoft.VC143.CRT" `
+            --font-dir "$env:DEJAVU_TTF" --font-notice "$env:DEJAVU_LICENSE" `
+            --notice-dir "$env:OPENBLAS_PREFIX/licenses" --notice-dir "$env:VCPKG_INSTALLED/share" --notice-dir "$env:RUN_DIR/notices"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check relocated PE closure and actual loaded DLL paths
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath "$env:RUN_DIR/slide-windows-x86_64.zip" -DestinationPath "$env:RUN_DIR/relocated bundle"
+          $bundle = "$env:RUN_DIR/relocated bundle/slide-windows-x86_64"
+          $env:BUNDLE = $bundle
+          python -c "import os,runpy; from pathlib import Path; bundle=Path(os.environ['BUNDLE']).resolve(); closure=runpy.run_path('scripts/package-rust-windows.py')['closure']; assert all(path.is_relative_to(bundle) for path in closure(bundle/'bin/slide.exe',[bundle/'bin']))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = (Get-Command python).Source
+          Set-Location "$env:RUN_DIR/relocated bundle"
+          $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
+          $env:HOME = "$env:RUN_DIR/home"
+          $env:USERPROFILE = $env:HOME
+          $env:APPDATA = "$env:HOME/AppData/Roaming"
+          $env:LOCALAPPDATA = "$env:HOME/AppData/Local"
+          $env:XDG_CACHE_HOME = "$env:RUN_DIR/cache"
+          New-Item -ItemType Directory -Force $env:HOME, $env:APPDATA, $env:LOCALAPPDATA, $env:XDG_CACHE_HOME | Out-Null
+          $env:FONTCONFIG_FILE = "$bundle/fonts.conf"
+          & "$bundle/slide.cmd" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $arguments = '"{0}" --binary "{1}" --workdir "{2}" --out-path "{3}"' -f `
+            "$env:GITHUB_WORKSPACE/scripts/slide_artifact_smoke.py", "$bundle/bin/slide.exe", "$env:RUN_DIR/smoke", "$env:RUN_DIR/results"
+          $process = Start-Process -FilePath $python -ArgumentList $arguments -PassThru `
+            -RedirectStandardOutput "$env:RUN_DIR/smoke.stdout.log" -RedirectStandardError "$env:RUN_DIR/smoke.stderr.log"
+          $observed = @{}
+          while (!$process.HasExited) {
+            foreach ($native in (Get-Process -Name slide -ErrorAction SilentlyContinue)) {
+              try { foreach ($module in $native.Modules) { $observed[$module.FileName] = $true } }
+              catch [System.InvalidOperationException] { } # Process exited between samples.
+            }
+            Start-Sleep -Milliseconds 20
+            $process.Refresh()
+          }
+          $process.WaitForExit()
+          Get-Content "$env:RUN_DIR/smoke.stdout.log", "$env:RUN_DIR/smoke.stderr.log"
+          if ($process.ExitCode -ne 0) { throw 'Relocated native pipeline/final-CV/PDF smoke failed' }
+          $observed.Keys | Set-Content "$env:RUN_DIR/runtime-modules.txt"
+          @'
+          import os
+          from pathlib import Path
+          bundle = Path(os.environ["BUNDLE"]).resolve()
+          windows = Path(os.environ["SystemRoot"]).resolve()
+          bundled_names = {path.name.lower() for path in (bundle / "bin").glob("*")}
+          modules = [Path(line).resolve() for line in
+                     (Path(os.environ["RUN_DIR"]) / "runtime-modules.txt").read_text(encoding="utf-8-sig").splitlines()]
+          assert any(path.name.lower() == "libopenblas.dll" and path.is_relative_to(bundle) for path in modules), "No bundled OpenBLAS observed"
+          # OS DLLs can load further OS modules; bundled dependencies must not resolve to system copies.
+          assert all(path.is_relative_to(bundle) or
+                     (path.is_relative_to(windows) and path.name.lower() not in bundled_names)
+                     for path in modules), modules
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          'Native Windows ConPTY startup/render/quit and desktop minimum remain PENDING; help and pipeline are not terminal verification.' >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-rs-windows-x86_64
+          path: ${{ env.RUN_DIR }}/slide-windows-x86_64.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slide-rs-windows-x86_64-plot-review
+          path: |
+            ${{ env.RUN_DIR }}/results/**/*.pdf
+            ${{ env.RUN_DIR }}/runtime-modules.txt
+          if-no-files-found: error
+
+  windows-feasibility:
+    name: Windows dependency wheels and blocked native gate (${{ matrix.python }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare native Windows temporary paths
+        shell: pwsh
+        run: |
+          $runDir = "$env:GITHUB_WORKSPACE/.tmpfiles/$(Get-Date -Format yyyy-MM-dd)_windows-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Force "$runDir/temp" | Out-Null
+          "RUN_DIR=$runDir" >> $env:GITHUB_ENV
+          foreach ($key in @('TMPDIR', 'TMP', 'TEMP')) { "$key=$runDir/temp" >> $env:GITHUB_ENV }
+          '# Windows feasibility: dependency-only wheels; Python Flang/runtime linkage remains blocked.' | Set-Content "$runDir/README.md"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - name: Read existing runtime requirements with tool-host Python
+        shell: pwsh
+        run: |
+          python -c "import os,tomllib; from pathlib import Path; config=tomllib.loads(Path('pyproject.toml').read_text()); (Path(os.environ['RUN_DIR'])/'requirements.txt').write_text('\n'.join(config['project']['dependencies'])+'\n')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: x64
+      - name: Require binary wheels for every runtime dependency on the target Python
+        shell: pwsh
+        run: |
+          python -m pip download --only-binary=:all: --dest "$env:RUN_DIR/dependencies" -r "$env:RUN_DIR/requirements.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # shortcut: Windows glmnet has no verified Flang/runtime toolchain; enable wheels only after native link/run gates.
+      - name: Fail closed until Windows Python compiler and runtime gates pass
+        shell: pwsh
+        run: |
+          Write-Error 'Windows Python candidates are blocked: LLVM Flang/runtime availability and mixed-language glmnet linking remain unresolved. Rust uses the approved upstream OpenBLAS provider independently. Repaired cp39/cp310/cp311/cp312 wheels and all native runtime/terminal gates must pass before promotion.'
+          exit 1
