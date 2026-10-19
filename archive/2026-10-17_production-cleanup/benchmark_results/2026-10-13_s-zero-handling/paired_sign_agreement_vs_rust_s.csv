@@ -1,0 +1,9 @@
+factor,stat,rust_s,r_s,r_s_nearzero_to_0,rust_s_floor_1e-9
+Z20,python,1.0,0.98,0.995,0.94
+Z20,r_glmnet,1.0,0.98,0.995,0.95
+Z20,rust_default,1.0,1.0,1.0,1.0
+Z20,rust_replay,1.0,0.995,0.995,0.92
+Z21,python,1.0,0.975,0.99,0.945
+Z21,r_glmnet,1.0,0.975,0.99,0.945
+Z21,rust_default,1.0,0.98,1.0,0.975
+Z21,rust_replay,1.0,0.935,0.995,0.895

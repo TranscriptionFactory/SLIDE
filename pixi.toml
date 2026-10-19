@@ -1,0 +1,179 @@
+[workspace]
+name = "slide-py"
+version = "1.0.0"
+description = "Python implementation of SLIDE (LOVE + Knockoffs)"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
+
+# ─── Default feature: core scientific deps ────────────────────────────────────
+[dependencies]
+python = "3.11.*"
+numpy = ">=1.20"
+scipy = ">=1.7"
+scikit-learn = ">=1.0"
+pandas = ">=2.0"
+joblib = ">=0.14.1"
+statsmodels = ">=0.14"
+cvxpy = ">=1.3"
+tqdm = ">=4.60"
+networkx = ">=3.0"
+matplotlib = ">=3.7"
+seaborn = ">=0.12"
+pyyaml = ">=6.0"
+meson = ">=1.11.1,<2"
+ninja = ">=1.13.2,<2"
+setuptools = ">=77.0.3"
+openblas = "*"
+# Keep NumPy/SciPy and the native extensions on the same LP64 OpenBLAS backend.
+libblas = { version = "*", build = "*openblas" }
+
+[target.linux-64.dependencies]
+gcc_linux-64 = "*"
+gfortran_linux-64 = "*"
+
+[target.osx-arm64.dependencies]
+clang_osx-arm64 = "*"
+gfortran_osx-arm64 = "*"
+
+[target.osx-64.dependencies]
+clang_osx-64 = "*"
+gfortran_osx-64 = "*"
+
+[target.win-64.dependencies]
+vs2022_win-64 = "*"
+flang_win-64 = "*"
+
+[pypi-dependencies]
+slide-py = { path = ".", editable = true }
+pqdm = "*"
+easydict = "*"
+
+[pypi-options]
+no-build-isolation = ["slide-py"]
+
+# ─── Feature: R integration ──────────────────────────────────────────────────
+[feature.r]
+platforms = ["linux-64"]
+
+[feature.r.dependencies]
+r-base = ">=4.5.3,<4.6"
+r-knockoff = ">=0.3.6,<0.4"
+r-linprog = "*"
+r-lpsolve = "*"
+r-mass = "*"
+r-glmnet = ">=5.0,<6"
+r-remotes = ">=2.5.0,<3"
+r-igraph = ">=2.3.3,<3"
+r-ggraph = ">=2.2.2,<3"
+r-qgraph = ">=1.10.1,<2"
+r-ggpubr = ">=1.0.0,<2"
+r-dplyr = ">=1.2.1,<2"
+r-ggplot2 = ">=4.0.3,<5"
+
+[feature.r.pypi-dependencies]
+rpy2 = ">=3.6.7"
+
+[feature.r.activation.env]
+RPY2_CFFI_MODE = "ABI"
+
+# ─── Feature: Rust native build dependencies ──────────────────────────────────
+# rustup supplies Rust 1.99.1 (MSRV 1.88); do not install conda's Rust compiler.
+[feature.rust.dependencies]
+openblas = "*"
+cairo = "*"
+fontconfig = "*"
+freetype = "*"
+expat = "*"
+zlib = "*"
+libclang = "*"
+cmake = "*"
+ninja = "*"
+pkg-config = "*"
+font-ttf-dejavu = "*"
+
+[feature.rust.target.linux-64.dependencies]
+xorg-xorgproto = "*"
+gxx_linux-64 = "*"
+make = "*"
+
+[feature.rust.target.osx-arm64.dependencies]
+clangxx_osx-arm64 = "*"
+make = "*"
+
+[feature.rust.target.osx-64.dependencies]
+clangxx_osx-64 = "*"
+make = "*"
+
+[feature.rust.target.win-64.dependencies]
+vs2022_win-64 = "*"
+
+[feature.rust.target.linux-64.activation.env]
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "$CC"
+LIBCLANG_PATH = "$CONDA_PREFIX/lib"
+LD_LIBRARY_PATH = "$CONDA_PREFIX/lib"
+
+[feature.rust.target.osx-arm64.activation.env]
+CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER = "$CC"
+LIBCLANG_PATH = "$CONDA_PREFIX/lib"
+DYLD_FALLBACK_LIBRARY_PATH = "$CONDA_PREFIX/lib"
+
+[feature.rust.target.osx-64.activation.env]
+CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER = "$CC"
+LIBCLANG_PATH = "$CONDA_PREFIX/lib"
+DYLD_FALLBACK_LIBRARY_PATH = "$CONDA_PREFIX/lib"
+
+[feature.rust.target.win-64.activation.env]
+LIBCLANG_PATH = "$CONDA_PREFIX/Library/bin"
+
+[feature.rust.tasks]
+build = "cargo +1.99.1 build --workspace --release --locked"
+test = "cargo +1.99.1 test --workspace --release --locked"
+check = "cargo +1.99.1 clippy --workspace --all-targets --locked -- -D warnings"
+
+# ─── Feature: dev tools ──────────────────────────────────────────────────────
+[feature.dev.dependencies]
+pytest = ">=7.0"
+ruff = ">=0.1"
+
+[feature.dev.pypi-dependencies]
+black = ">=23.0"
+
+# ─── Feature: viz extras ─────────────────────────────────────────────────────
+[feature.viz.pypi-dependencies]
+adjusttext = ">=1.0"
+altair = ">=5.0"
+wordcloud = "*"
+
+# ─── Environments ────────────────────────────────────────────────────────────
+[environments]
+default = { features = [], solve-group = "default" }
+dev = { features = ["r", "dev", "viz"] }
+rust = { features = ["rust"], no-default-feature = true }
+
+# ─── Activation ──────────────────────────────────────────────────────────────
+# Prevent stale user-site packages from shadowing pixi's environment
+[activation]
+env = { PYTHONNOUSERSITE = "1", BLAS_LIB = "openblas", LAPACK_LIB = "openblas" }
+
+# ─── Tasks ───────────────────────────────────────────────────────────────────
+[tasks]
+test = "pytest -c tests/pytest.ini tests/tests -m \"not slow\""
+lint = "ruff check src/"
+fmt = "ruff format src/"
+check = "python -c \"import slide_py; print('slide-py', slide_py.__version__ if hasattr(slide_py, '__version__') else 'OK')\""
+# Build the vendored Fortran glmnet extension (same glmnet5.f90 as R's glmnet package).
+# Normal package installation builds this required extension automatically.
+# This task is for rebuilding it in the source tree during development.
+build-glmnet = """python -c "
+import subprocess, sys, os, shutil
+src = 'src/slide_py/knockoff/_vendor/glmnet'
+bdir = os.path.join(src, 'builddir')
+if os.path.exists(bdir): shutil.rmtree(bdir)
+subprocess.check_call(['meson', 'setup', bdir, src])
+subprocess.check_call(['ninja', '-C', bdir])
+import glob
+for so in glob.glob(os.path.join(bdir, '_glmnet*.so')) + glob.glob(os.path.join(bdir, '_glmnet*.pyd')):
+    shutil.copy2(so, src)
+    print(f'Installed: {os.path.basename(so)}')
+"
+"""

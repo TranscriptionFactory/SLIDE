@@ -1,0 +1,26 @@
+[package]
+name = "slide-sdp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "Semidefinite programming solver for SLIDE knockoff generation"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+blas-src = { version = "0.11.1", features = ["openblas"] }
+clarabel = { version = "0.11.1", features = ["sdp", "blas-src", "lapack-src", "faer-sparse"] }
+lapack-src = { version = "0.11.0", features = ["openblas"] }
+nalgebra.workspace = true
+ndarray.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+slide-types = { version = "1.0.0", path = "../slide-types" }

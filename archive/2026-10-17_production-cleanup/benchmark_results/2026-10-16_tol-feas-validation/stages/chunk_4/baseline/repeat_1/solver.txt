@@ -1,0 +1,57 @@
+status=Solved
+iterations=13
+primal_residual=1.99482475277064954e-9
+dual_residual=7.67543061635831451e-11
+primal_objective=-5.69883316578928545e-1
+dual_objective=-5.69883358675124296e-1
+objective_gap_abs=4.20961957514620622e-8
+solve_seconds=2.84464250000000009e-2
+wall_seconds=2.85268550000000003e-2
+objective_minimize=-sum(s)
+objective_value=-5.69883316578928323e-1
+cones=Nonnegative(44),PSDTriangle(22)
+settings=DefaultSettings {
+    max_iter: 200,
+    time_limit: inf,
+    verbose: false,
+    max_step_fraction: 0.99,
+    tol_gap_abs: 1e-6,
+    tol_gap_rel: 1e-6,
+    tol_feas: 1e-6,
+    tol_infeas_abs: 1e-6,
+    tol_infeas_rel: 1e-6,
+    tol_ktratio: 1e-6,
+    reduced_tol_gap_abs: 1e-7,
+    reduced_tol_gap_rel: 1e-7,
+    reduced_tol_feas: 1e-7,
+    reduced_tol_infeas_abs: 1e-7,
+    reduced_tol_infeas_rel: 1e-7,
+    reduced_tol_ktratio: 0.0001,
+    equilibrate_enable: true,
+    equilibrate_max_iter: 10,
+    equilibrate_min_scaling: 0.0001,
+    equilibrate_max_scaling: 10000.0,
+    linesearch_backtrack_step: 0.8,
+    min_switch_step_length: 0.1,
+    min_terminate_step_length: 0.0001,
+    max_threads: 0,
+    direct_kkt_solver: true,
+    direct_solve_method: "auto",
+    static_regularization_enable: true,
+    static_regularization_constant: 1e-8,
+    static_regularization_proportional: 4.930380657631324e-32,
+    dynamic_regularization_enable: true,
+    dynamic_regularization_eps: 1e-13,
+    dynamic_regularization_delta: 2e-7,
+    iterative_refinement_enable: true,
+    iterative_refinement_reltol: 1e-13,
+    iterative_refinement_abstol: 1e-12,
+    iterative_refinement_max_iter: 10,
+    iterative_refinement_stop_ratio: 5.0,
+    presolve_enable: true,
+    input_sparse_dropzeros: false,
+    chordal_decomposition_enable: true,
+    chordal_decomposition_merge_method: "clique_graph",
+    chordal_decomposition_compact: true,
+    chordal_decomposition_complete_dual: true,
+}

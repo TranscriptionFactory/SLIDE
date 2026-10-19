@@ -1,0 +1,93 @@
+{
+  "timestamp": "2026-10-16T14:42:35.656854+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 32.04222875740379,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 14.331854513846338,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 12.949460878968239,
+      "status": "success",
+      "error": ""
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 9.518597115762532,
+      "status": "failed",
+      "error": "exit code 1"
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z20",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 7,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129"
+      ],
+      "score": 0.9452093778671158
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 1,
+      "sig_lfs": [
+        "Z27"
+      ],
+      "n_sig_interacts": 3,
+      "sig_interacts": [
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54"
+      ],
+      "score": 0.8813317263193283
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z44",
+        "Z5",
+        "Z53"
+      ],
+      "n_sig_interacts": 3,
+      "sig_interacts": [
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z53:Z68"
+      ],
+      "score": 0.9422402047918476
+    }
+  }
+}

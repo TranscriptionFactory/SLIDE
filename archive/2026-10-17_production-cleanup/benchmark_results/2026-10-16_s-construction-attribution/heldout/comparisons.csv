@@ -1,0 +1,19 @@
+fixture,comparison,max_abs_s_delta
+corr3,clarabel_native: R post vs Rust post,5.339785115188178e-07
+corr3,clarabel_fixed_r_g: R post vs Rust post,5.339785115188178e-07
+corr3,dsdp_fixed_r_g: R post vs Rust post,9.999998273890753e-09
+corr3,Clarabel native vs fixed R G: raw,0.0
+corr3,DSDP fixed R G vs Clarabel fixed R G: raw,0.00020297066270535957
+corr3,DSDP raw Rust native G vs fixed R G: final,0.0
+cov4,clarabel_native: R post vs Rust post,2.987732723447323e-07
+cov4,clarabel_fixed_r_g: R post vs Rust post,2.9877324347893364e-07
+cov4,dsdp_fixed_r_g: R post vs Rust post,3.999999576009827e-08
+cov4,Clarabel native vs fixed R G: raw,2.4313884239290928e-14
+cov4,DSDP fixed R G vs Clarabel fixed R G: raw,2.1780489667500014e-05
+cov4,DSDP raw Rust native G vs fixed R G: final,0.0
+rSig4,clarabel_native: R post vs Rust post,8.91276294160831e-05
+rSig4,clarabel_fixed_r_g: R post vs Rust post,8.906158210406079e-05
+rSig4,dsdp_fixed_r_g: R post vs Rust post,0.00010816570167646034
+rSig4,Clarabel native vs fixed R G: raw,2.7215313693623733e-08
+rSig4,DSDP fixed R G vs Clarabel fixed R G: raw,3.93056940354089e-06
+rSig4,DSDP raw Rust native G vs fixed R G: final,5.907774269786614e-13

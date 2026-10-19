@@ -1,0 +1,161 @@
+{
+  "timestamp": "2026-10-16T20:44:51.258414+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 36.88219209574163,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 838496256,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 36.70359076280147,
+      "python_glmnet_available": null
+    },
+    {
+      "backend": "rust",
+      "delta": 0.01,
+      "lam": 1.0,
+      "wall_seconds": 32.534666353836656,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 829571072,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 32.36182135529816,
+      "python_glmnet_available": null
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 27.149394009262323,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 855715840,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 26.97263894882053,
+      "python_glmnet_available": null
+    },
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 1.0,
+      "wall_seconds": 16.713065885938704,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 854556672,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 16.555806884542108,
+      "python_glmnet_available": null
+    }
+  ],
+  "comparisons": [],
+  "results": {
+    "rust_0.01_0.1": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z20",
+        "Z27",
+        "Z45"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z45:Z91"
+      ],
+      "score": 0.9707722011403415
+    },
+    "rust_0.01_1.0": {
+      "k": 172,
+      "n_sig_lfs": 5,
+      "sig_lfs": [
+        "Z136",
+        "Z18",
+        "Z27",
+        "Z45",
+        "Z73"
+      ],
+      "n_sig_interacts": 10,
+      "sig_interacts": [
+        "Z136:Z22",
+        "Z18:Z100",
+        "Z27:Z151",
+        "Z27:Z52",
+        "Z27:Z54",
+        "Z45:Z129",
+        "Z73:Z109",
+        "Z73:Z143",
+        "Z73:Z2",
+        "Z73:Z41"
+      ],
+      "score": 0.9759563425635757
+    },
+    "rust_0.1_0.1": {
+      "k": 88,
+      "n_sig_lfs": 11,
+      "sig_lfs": [
+        "Z10",
+        "Z25",
+        "Z32",
+        "Z33",
+        "Z38",
+        "Z44",
+        "Z5",
+        "Z53",
+        "Z66",
+        "Z78",
+        "Z84"
+      ],
+      "n_sig_interacts": 14,
+      "sig_interacts": [
+        "Z10:Z16",
+        "Z10:Z57",
+        "Z32:Z67",
+        "Z33:Z57",
+        "Z33:Z67",
+        "Z38:Z37",
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z53:Z68",
+        "Z66:Z3",
+        "Z66:Z81",
+        "Z78:Z56",
+        "Z84:Z0",
+        "Z84:Z28"
+      ],
+      "score": 1.0
+    },
+    "rust_0.1_1.0": {
+      "k": 88,
+      "n_sig_lfs": 4,
+      "sig_lfs": [
+        "Z25",
+        "Z33",
+        "Z44",
+        "Z69"
+      ],
+      "n_sig_interacts": 8,
+      "sig_interacts": [
+        "Z25:Z20",
+        "Z25:Z74",
+        "Z33:Z57",
+        "Z33:Z59",
+        "Z44:Z58",
+        "Z44:Z59",
+        "Z44:Z81",
+        "Z69:Z61"
+      ],
+      "score": 0.9291560752612568
+    }
+  }
+}

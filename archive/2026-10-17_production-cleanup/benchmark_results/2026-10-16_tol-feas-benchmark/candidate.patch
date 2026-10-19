@@ -1,0 +1,11 @@
+--- a/crates/slide-sdp/src/lib.rs
++++ b/crates/slide-sdp/src/lib.rs
+@@ -211,7 +211,7 @@
+         max_iter: settings.max_iter,
+         tol_gap_abs: settings.tol_gap_abs,
+         tol_gap_rel: settings.tol_gap_rel,
+-        tol_feas: settings.tol_feas,
++        tol_feas: 1.0e-8,
+         tol_infeas_abs: settings.tol_infeas_abs,
+         tol_infeas_rel: settings.tol_infeas_rel,
+         reduced_tol_gap_abs: settings.tol_gap_abs * 0.1,

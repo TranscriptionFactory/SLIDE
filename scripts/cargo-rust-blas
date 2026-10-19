@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+cargo_bin="$(command -v cargo)" || {
+  echo "Rust setup: cargo is not on PATH. Install or load the Rust toolchain." >&2
+  exit 1
+}
+
+export TMPDIR="${TMPDIR:-${repo_root}/.tmpfiles}"
+mkdir -p "${TMPDIR}"
+
+# Pitt CRC: keep Linuxbrew's newer-glibc assembler out of native builds.
+if [[ -z "${PIXI_ENVIRONMENT_NAME:-}" && -d /software/rhel9/spack/modules/Core/Core ]]; then
+  if ! type module >/dev/null 2>&1; then
+    source /etc/profile.d/lmod.sh
+  fi
+  module load llvm/17.0.6
+  LIBCLANG_PATH="$(llvm-config --libdir)"
+  export LIBCLANG_PATH
+  if [[ ! -f "${LIBCLANG_PATH}/libclang.so" ]]; then
+    echo "Rust setup: LLVM module did not provide ${LIBCLANG_PATH}/libclang.so." >&2
+    exit 1
+  fi
+  export PATH="/usr/bin:/bin:${PATH}"
+  export CC=/usr/bin/gcc
+  export CXX=/usr/bin/g++
+
+  for tool in "${CC}" "${CXX}" as cmake pkg-config; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+      echo "Rust setup: required build tool not found: ${tool}." >&2
+      exit 1
+    fi
+  done
+  if ! pkg-config --exists openblas cairo; then
+    echo "Rust setup: pkg-config must find OpenBLAS and Cairo. Load their development libraries." >&2
+    exit 1
+  fi
+fi
+
+exec "${script_dir}/with-rust-blas-env.sh" "${cargo_bin}" "$@"

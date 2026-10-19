@@ -1,0 +1,7 @@
+design,arm,frequent,findOptIter_selected,uncertain_at_spec
+marginal_chunk_1,rust_s,Z16;Z18;Z19;Z20;Z21,Z16;Z18;Z19;Z20;Z21,Z21
+marginal_chunk_1,r_s,Z16;Z18;Z19;Z20,Z16;Z18;Z19;Z20,Z21
+marginal_chunk_4,rust_s,Z72;Z73;Z75;Z79;Z83;Z87,Z73;Z75;Z79;Z83;Z87,Z79
+marginal_chunk_4,r_s,Z72;Z73;Z74;Z83;Z87,Z72;Z73;Z74;Z75;Z83;Z87,Z74;Z75;Z79;Z83
+rust_stage_two_union,rust_s,Z18;Z20;Z21;Z27;Z45;Z136,Z18;Z20;Z21;Z27;Z45;Z136,Z57;Z73
+rust_stage_two_union,r_s,Z18;Z20;Z21;Z27;Z45;Z136,Z18;Z20;Z21;Z27;Z45;Z136,Z57;Z73

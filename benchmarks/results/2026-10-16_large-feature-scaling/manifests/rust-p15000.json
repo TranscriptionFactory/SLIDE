@@ -1,0 +1,50 @@
+[
+  {
+    "dataset": "scale_n50_p15000",
+    "backend": "rust",
+    "seed": 20000,
+    "out": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/benchmark_results/2026-10-16_large-feature-scaling/results/scale_n50_p15000/rust/seed_20000",
+    "cells": [
+      [
+        0.1,
+        0.1
+      ]
+    ],
+    "args": [
+      "--backends",
+      "rust",
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "4b321116fde6b92d5eb7bd771e0357cfb8dd72c4",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/benchmark_results/2026-10-16_large-feature-scaling/inputs/scale_n50_p15000/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/benchmark_results/2026-10-16_large-feature-scaling/inputs/scale_n50_p15000/Y.csv",
+      "--delta",
+      "0.1",
+      "--lam",
+      "0.1",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--knockoff-base-seed",
+      "20000",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/benchmark_results/2026-10-16_large-feature-scaling/results/scale_n50_p15000/rust/seed_20000",
+      "--measure-process",
+      "--cell-timeout",
+      "7200",
+      "--profile"
+    ],
+    "ladder": null
+  }
+]

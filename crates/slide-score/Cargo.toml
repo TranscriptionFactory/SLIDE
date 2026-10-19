@@ -1,0 +1,23 @@
+[package]
+name = "slide-score"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "Scoring and evaluation metrics for SLIDE"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+rand.workspace = true
+ndarray.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+slide-types = { version = "1.0.0", path = "../slide-types" }

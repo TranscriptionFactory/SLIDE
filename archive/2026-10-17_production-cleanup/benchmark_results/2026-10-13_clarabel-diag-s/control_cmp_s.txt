@@ -1,0 +1,8 @@
+0 R-Sigma: max|d| 4.0e-07 bitwise False | py-Sigma: max|d| 2.2e-07 bitwise False
+1 R-Sigma: max|d| 8.0e-07 bitwise False | py-Sigma: max|d| 3.2e-06 bitwise False
+2 R-Sigma: max|d| 2.7e-09 bitwise False | py-Sigma: max|d| 3.0e-11 bitwise False
+3 R-Sigma: max|d| 2.4e-08 bitwise False | py-Sigma: max|d| 2.4e-08 bitwise False
+4 R-Sigma: max|d| 1.3e-08 bitwise False | py-Sigma: max|d| 7.3e-10 bitwise False
+5 R-Sigma: max|d| 2.3e-11 bitwise False | py-Sigma: max|d| 2.3e-11 bitwise False
+6 R-Sigma: max|d| 9.0e-10 bitwise False | py-Sigma: max|d| 4.7e-10 bitwise False
+7 R-Sigma: max|d| 8.1e-07 bitwise False | py-Sigma: max|d| 8.0e-07 bitwise False

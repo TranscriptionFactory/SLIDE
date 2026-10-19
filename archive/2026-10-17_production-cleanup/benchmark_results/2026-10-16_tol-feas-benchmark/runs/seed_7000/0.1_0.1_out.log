@@ -1,0 +1,20 @@
+environment overrides change knockoff results: SLIDE_KNOCKOFF_MATCH_R_COV=1, SLIDE_KNOCKOFF_MATCH_R_LAMBDA=1, SLIDE_KNOCKOFF_MAX_ITER=100000, SLIDE_KNOCKOFF_TOL=1e-7; recorded as config.env_overrides in the checkpoint
+Loading feature matrix from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/X.csv
+Loading response vector from /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/inputs/Y.csv
+Starting SLIDE optimization: 1 delta(s) x 1 lambda(s) = 1 evaluations
+Checkpoint: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_7000/rust/0.1_0.1_out/checkpoint.json
+SDP_BENCH status=Solved iterations=20 r_prim=5.34372217720856241e-9 r_dual=2.05659630026671143e-10 gap=4.90066589753368476e-7 solve_seconds=4.88309440000000011e-2
+SDP_BENCH status=Solved iterations=17 r_prim=6.85819318237172283e-9 r_dual=9.90652658761171660e-10 gap=6.69031203992531687e-7 solve_seconds=1.92650569999999986e-2
+SDP_BENCH status=Solved iterations=17 r_prim=6.81107669322231884e-9 r_dual=8.10064756219940111e-10 gap=6.67558613942631496e-7 solve_seconds=2.31364049999999988e-2
+SDP_BENCH status=Solved iterations=20 r_prim=5.76721298128691604e-9 r_dual=1.53948274600514275e-10 gap=5.35511436583480105e-7 solve_seconds=2.64721989999999983e-2
+SDP_BENCH status=Solved iterations=10 r_prim=5.98252835181501036e-9 r_dual=2.47757170342155514e-9 gap=3.55349198066789995e-7 solve_seconds=2.37080399999999979e-3
+SDP_BENCH status=Solved iterations=5 r_prim=3.91201862749495403e-9 r_dual=5.71216468141700673e-9 gap=3.13803801077483513e-6 solve_seconds=1.89842066699999990e0
+SDP_BENCH status=Solved iterations=5 r_prim=5.67309042045290549e-9 r_dual=9.19581383086477578e-9 gap=4.99852095003916475e-6 solve_seconds=1.84820391699999997e0
+SDP_BENCH status=Solved iterations=6 r_prim=1.11371881538297108e-10 r_dual=1.71299732726761241e-10 gap=9.20595226716613979e-8 solve_seconds=2.05076114000000009e0
+SDP_BENCH status=Solved iterations=6 r_prim=7.16957088667081612e-11 r_dual=1.04246667219264795e-10 gap=5.53790471258253092e-8 solve_seconds=1.90144658200000016e0
+=== SLIDE Optimization Complete ===
+Best score:  0.942240
+Best delta:  0.1
+Best lambda: 0.1
+Selected LFs: 4 marginal, 3 interactions
+Checkpoint written to: /vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_tol-feas-benchmark/results/rust/seed_7000/rust/0.1_0.1_out/checkpoint.json

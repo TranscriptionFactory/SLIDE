@@ -1,0 +1,2167 @@
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::OnceLock,
+};
+
+use ndarray::{Array1, Array2, Axis};
+use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand_distr::{Distribution, StandardNormal};
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use slide_glmnet::{
+    stat_glmnet_coefdiff_prebuilt, stat_glmnet_lambdadiff_prebuilt,
+    stat_glmnet_lambdasmax_prebuilt, stat_glmnet_lambdasmax_prebuilt_cached,
+    GaussianCdWorkspace, GaussianLassoPathConfig, GlmnetError, GlmnetFamily, HalfPreparedData,
+};
+use slide_sdp::{create_solve_asdp, create_solve_equi, create_solve_sdp, SdpError};
+use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
+use thiserror::Error;
+
+const COVARIANCE_EPSILON: Scalar = 1.0e-10;
+const DEFAULT_MAX_BLOCK_SIZE: usize = 500;
+/// Minimum eigenvalue a sample covariance must exceed to be treated as positive
+/// definite. R's `knockoff:::is_posdef` defaults to `tol=1e-9` but compares
+/// against `tol * 10`, as does Python's `slide_py.knockoff.utils.is_posdef`.
+const POSDEF_EIGENVALUE_TOL: Scalar = 1.0e-8;
+/// Maximum 2-norm condition number (largest/smallest eigenvalue) for the raw
+/// sample covariance to be used directly in native-performance mode. Python/R
+/// do not apply this extra gate; `SLIDE_KNOCKOFF_MATCH_R_COV=1` disables it.
+const MAX_RAW_COV_CONDITION: Scalar = 1.0e5;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum KnockoffMethod {
+    Asdp { max_block_size: usize },
+    Sdp,
+    Equi,
+}
+
+impl Default for KnockoffMethod {
+    fn default() -> Self {
+        Self::Asdp {
+            max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnockoffBackend {
+    #[default]
+    Rust,
+    R {
+        #[serde(default = "default_rscript")]
+        rscript: PathBuf,
+    },
+}
+
+fn default_rscript() -> PathBuf {
+    PathBuf::from("Rscript")
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum KnockoffStatistic {
+    GlmnetLambdasMax,
+    GlmnetLambdaDiff,
+    GlmnetCoefDiff,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KnockoffConfig {
+    pub fdr: Scalar,
+    pub spec: Scalar,
+    pub niter: usize,
+    pub knockoff_method: KnockoffMethod,
+    pub knockoff_backend: KnockoffBackend,
+    pub knockoff_offset: usize,
+    pub statistic: KnockoffStatistic,
+    pub nlambda: usize,
+    pub base_seed: u64,
+    /// Apply R `findOptIter` after voting: discard the frequency table and
+    /// report the single draw with maximal overlap with the frequent set.
+    /// Defaults to `true`, matching native-R SLIDE. Set `false` to report the
+    /// frequency (stability) set instead; that lowers run-to-run variance
+    /// within a backend but measurably widens cross-backend divergence, so it
+    /// is not the default (see docs/dev-notes/backend-benchmark.md).
+    pub slide_selection: bool,
+    pub f_size: Option<usize>,
+    pub family: GlmnetFamily,
+    /// Whether to use rayon parallelism for the voting iterations.
+    /// Set to `false` when called from an outer parallel context.
+    pub parallel: bool,
+}
+
+impl Default for KnockoffConfig {
+    fn default() -> Self {
+        Self {
+            fdr: 0.1,
+            spec: 0.2,
+            niter: 100,
+            knockoff_method: KnockoffMethod::default(),
+            knockoff_backend: KnockoffBackend::default(),
+            knockoff_offset: 0,
+            statistic: KnockoffStatistic::GlmnetLambdasMax,
+            nlambda: 250,
+            base_seed: 42,
+            slide_selection: true,
+            f_size: None,
+            family: GlmnetFamily::Gaussian,
+            parallel: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct KnockoffCache {
+    pub mu_k: Matrix,
+    pub l_trans: Matrix,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FindOptIterResult {
+    pub selected: Vec<usize>,
+    pub optimal_iter: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VotingResult {
+    pub selection_counts: Vec<usize>,
+    pub selection_frequency: Vector,
+    pub selected: Vec<usize>,
+    pub freq_selected: Vec<usize>,
+    pub threshold: Scalar,
+    pub niter: usize,
+    pub spec: Scalar,
+    pub min_selections: usize,
+    pub selected_list: Vec<Vec<usize>>,
+    pub optimal_iter: Option<usize>,
+    pub stage_one_union: Option<Vec<usize>>,
+}
+
+#[derive(Debug, Error, PartialEq)]
+pub enum KnockoffError {
+    #[error("input matrix must contain at least two rows and one column, got {rows}x{cols}")]
+    InvalidInputShape { rows: usize, cols: usize },
+    #[error("response length {actual} must match input row count {expected}")]
+    ResponseLengthMismatch { expected: usize, actual: usize },
+    #[error("mean length {actual} must match feature count {expected}")]
+    MeanLengthMismatch { expected: usize, actual: usize },
+    #[error("diag_s length {actual} must match feature count {expected}")]
+    DiagSLengthMismatch { expected: usize, actual: usize },
+    #[error("q must lie in (0, 1), got {actual}")]
+    InvalidFdr { actual: Scalar },
+    #[error("spec must lie in (0, 1], got {actual}")]
+    InvalidSpec { actual: Scalar },
+    #[error("offset must be 0 or 1, got {actual}")]
+    InvalidOffset { actual: usize },
+    #[error("niter must be at least 1")]
+    InvalidIterationCount,
+    #[error("nlambda must be at least 1")]
+    InvalidLambdaCount,
+    #[error("f_size must be at least 1, got {actual}")]
+    InvalidFeatureChunkSize { actual: usize },
+    #[error("external knockoff solver failed: {message}")]
+    ExternalSolver { message: String },
+    #[error("diag_s[{index}] must be finite and non-negative, got {value}")]
+    InvalidDiagSEntry { index: usize, value: Scalar },
+    #[error("feature variance at index {index} must be strictly positive, got {value:e}")]
+    NonPositiveVariance { index: usize, value: Scalar },
+    #[error(transparent)]
+    LinearAlgebra(#[from] LinearAlgebraError),
+    #[error(transparent)]
+    Sdp(#[from] SdpError),
+    #[error(transparent)]
+    Glmnet(#[from] GlmnetError),
+}
+
+impl KnockoffCache {
+    pub fn sample(&self, seed: u64) -> Matrix {
+        let (n, p) = self.mu_k.shape();
+        let mut rng = StdRng::seed_from_u64(seed);
+        let z = Array2::from_shape_fn((n, p), |_| StandardNormal.sample(&mut rng));
+        let sampled = z.dot(self.l_trans.as_ndarray()) + self.mu_k.as_ndarray();
+        Matrix::from_ndarray(sampled)
+    }
+}
+
+pub fn create_gaussian(
+    x: &Matrix,
+    mu: &Vector,
+    sigma: &Matrix,
+    diag_s: &Vector,
+    seed: u64,
+) -> Result<Matrix, KnockoffError> {
+    validate_create_gaussian_inputs(x, mu, sigma, diag_s)?;
+    let cache = build_knockoff_cache(x, mu, sigma, diag_s)?;
+    Ok(cache.sample(seed))
+}
+
+pub fn knockoff_threshold(
+    w: &Vector,
+    q: Scalar,
+    offset: usize,
+) -> Result<Option<Scalar>, KnockoffError> {
+    validate_threshold_inputs(q, offset)?;
+
+    let mut candidates: Vec<_> = std::iter::once(0.0)
+        .chain(w.as_ndarray().iter().copied().map(Scalar::abs))
+        .collect();
+    candidates.sort_by(Scalar::total_cmp);
+    candidates.dedup_by(|left, right| (*left - *right).abs() <= Scalar::EPSILON);
+
+    for threshold in candidates {
+        let negative = w
+            .as_ndarray()
+            .iter()
+            .filter(|&&value| value <= -threshold)
+            .count();
+        let positive = w
+            .as_ndarray()
+            .iter()
+            .filter(|&&value| value >= threshold)
+            .count();
+        let ratio = ((offset + negative) as Scalar) / (positive.max(1) as Scalar);
+        if ratio <= q {
+            return Ok(Some(threshold));
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn knockoff_filter(w: &Vector, q: Scalar, offset: usize) -> Result<Vec<usize>, KnockoffError> {
+    let threshold = knockoff_threshold(w, q, offset)?;
+    Ok(match threshold {
+        Some(value) => w
+            .as_ndarray()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, statistic)| (*statistic >= value).then_some(index))
+            .collect(),
+        None => Vec::new(),
+    })
+}
+
+pub fn find_opt_iter(selected_list: &[Vec<usize>], freq_selected: &[usize]) -> FindOptIterResult {
+    if selected_list.is_empty() {
+        return FindOptIterResult {
+            selected: Vec::new(),
+            optimal_iter: None,
+        };
+    }
+    if freq_selected.is_empty() {
+        return FindOptIterResult {
+            selected: Vec::new(),
+            optimal_iter: None,
+        };
+    }
+
+    let max_overlap = selected_list
+        .iter()
+        .map(|selection| overlap_size(selection, freq_selected))
+        .max()
+        .unwrap_or(0);
+
+    if max_overlap == 0 {
+        return FindOptIterResult {
+            selected: sorted_unique(freq_selected.to_vec()),
+            optimal_iter: None,
+        };
+    }
+
+    let mut best_iter = None;
+    let mut best_size = usize::MAX;
+    for (index, selection) in selected_list.iter().enumerate() {
+        let overlap = overlap_size(selection, freq_selected);
+        if overlap == max_overlap && selection.len() < best_size {
+            best_iter = Some(index);
+            best_size = selection.len();
+        }
+    }
+
+    let optimal_iter = best_iter.unwrap_or(0);
+    FindOptIterResult {
+        selected: sorted_unique(selected_list[optimal_iter].clone()),
+        optimal_iter: Some(optimal_iter),
+    }
+}
+
+pub fn prepare_knockoff_cache(
+    x: &Matrix,
+    method: &KnockoffMethod,
+) -> Result<KnockoffCache, KnockoffError> {
+    validate_feature_matrix(x)?;
+    let mu = estimate_mean(x);
+    // Native defaults add a condition-number gate to avoid expensive lasso fits
+    // on ill-conditioned designs. SLIDE_KNOCKOFF_MATCH_R_COV=1 keeps positive
+    // definite sample covariances, matching Python/R's shrinkage decision.
+    let sigma = match sample_covariance(x) {
+        Some(cov) if raw_covariance_is_usable(&cov) => cov,
+        _ => estimate_covariance(x)?,
+    };
+    let diag_s = solve_diag_s(&sigma, method)?;
+    build_knockoff_cache(x, &mu, &sigma, &diag_s)
+}
+
+pub fn knockoff_filter_voting(
+    x: &Matrix,
+    y: &Vector,
+    config: &KnockoffConfig,
+) -> Result<VotingResult, KnockoffError> {
+    validate_voting_inputs(x, y, config)?;
+    let (cache, r_samples) = match &config.knockoff_backend {
+        KnockoffBackend::Rust => (
+            Some(prepare_knockoff_cache(x, &config.knockoff_method)?),
+            None,
+        ),
+        KnockoffBackend::R { rscript } => (
+            None,
+            Some(generate_knockoffs_r(
+                x,
+                &config.knockoff_method,
+                config.niter,
+                config.base_seed,
+                rscript,
+            )?),
+        ),
+    };
+    let (n, p) = x.shape();
+
+    // Seed offset for column swap RNG, distinct from knockoff sampling seeds.
+    const SWAP_SEED_OFFSET: u64 = 1_000_000;
+
+    // Precompute X-half cache: centering, scaling, column norms, lambda_max.
+    // Reused across all iterations — only X_tilde is resampled.
+    let y_array = y.as_ndarray();
+    let y_mean = y_array.iter().copied().sum::<Scalar>() / (n as Scalar);
+    let y_centered = y_array.mapv(|value| value - y_mean);
+    let prepare_half = match config.family {
+        GlmnetFamily::Gaussian => HalfPreparedData::new_gaussian,
+        GlmnetFamily::Binomial => HalfPreparedData::new,
+    };
+    let x_cache = prepare_half(x, &y_centered, true);
+
+    // Check if we can use the cached path (lambdasmax only for now)
+    let use_cached_path = config.statistic == KnockoffStatistic::GlmnetLambdasMax;
+
+    let glmnet_config = GaussianLassoPathConfig {
+        nlambda: config.nlambda,
+        cv_folds: n.clamp(2, 5),
+        // Use ddof=1 to match R's knockoff package which calls scale() (sample std)
+        // before passing to glmnet with standardize=FALSE.
+        scale_ddof: 1,
+        ..GaussianLassoPathConfig::default()
+    };
+
+    let run_iteration_cached = |ws: &mut GaussianCdWorkspace, iteration: usize| {
+        let stage_started = std::time::Instant::now();
+        let x_tilde = match &r_samples {
+            Some(samples) => samples[iteration].clone(),
+            None => match &cache {
+                Some(native) => native.sample(config.base_seed + (iteration as u64)),
+                None => unreachable!("validated knockoff backend must provide samples"),
+            },
+        };
+        log_profile_stage("sample", iteration, stage_started);
+
+        // Prepare X_tilde half (fresh each iteration)
+        let stage_started = std::time::Instant::now();
+        let tilde_cache = prepare_half(&x_tilde, &y_centered, true);
+
+        // Generate swap mask
+        let mut rng = StdRng::seed_from_u64(
+            config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
+        );
+        let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
+        log_profile_stage("preparation", iteration, stage_started);
+
+        // Compute statistic using precomputed column stats and reusable workspace
+        let stage_started = std::time::Instant::now();
+        let w = stat_glmnet_lambdasmax_prebuilt_cached(
+            &x_cache,
+            &tilde_cache,
+            &swap,
+            p,
+            y,
+            y_mean,
+            &y_centered,
+            config.family,
+            &glmnet_config,
+            ws,
+        )?;
+        log_profile_stage("lasso_path", iteration, stage_started);
+
+        // Correct W-statistic signs for swapped columns
+        let mut w_array = w.into_ndarray();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                w_array[j] = -w_array[j];
+            }
+        }
+
+        let stage_started = std::time::Instant::now();
+        let selected = knockoff_filter(
+            &Vector::from_ndarray(w_array),
+            config.fdr,
+            config.knockoff_offset,
+        );
+        log_profile_stage("threshold", iteration, stage_started);
+        selected
+    };
+
+    let run_iteration_uncached = |augmented: &mut Matrix, swap_buf: &mut Vec<Scalar>, iteration: usize| {
+        let stage_started = std::time::Instant::now();
+        let x_tilde = match &r_samples {
+            Some(samples) => samples[iteration].clone(),
+            None => match &cache {
+                Some(native) => native.sample(config.base_seed + (iteration as u64)),
+                None => unreachable!("validated knockoff backend must provide samples"),
+            },
+        };
+        log_profile_stage("sample", iteration, stage_started);
+        let stage_started = std::time::Instant::now();
+        let buf = augmented.as_ndarray_mut();
+
+        // Fill X_tilde portion into right half of buffer
+        for (j, src_col) in x_tilde.as_ndarray().columns().into_iter().enumerate() {
+            buf.column_mut(p + j).assign(&src_col);
+        }
+
+        // Column swap using bulk copy via temp buffer
+        let mut rng = StdRng::seed_from_u64(
+            config.base_seed + (iteration as u64) + SWAP_SEED_OFFSET,
+        );
+        let swap: Vec<bool> = (0..p).map(|_| rng.gen_bool(0.5)).collect();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                for i in 0..n {
+                    swap_buf[i] = buf[(i, j)];
+                }
+                for i in 0..n {
+                    buf[(i, j)] = buf[(i, p + j)];
+                }
+                for i in 0..n {
+                    buf[(i, p + j)] = swap_buf[i];
+                }
+            }
+        }
+        log_profile_stage("preparation", iteration, stage_started);
+
+        let stage_started = std::time::Instant::now();
+        let w = compute_statistic_prebuilt(augmented, p, y, config)?;
+        log_profile_stage("lasso_path", iteration, stage_started);
+
+        // Un-swap to restore X columns for next iteration
+        let buf = augmented.as_ndarray_mut();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                for i in 0..n {
+                    swap_buf[i] = buf[(i, j)];
+                }
+                for i in 0..n {
+                    buf[(i, j)] = buf[(i, p + j)];
+                }
+                for i in 0..n {
+                    buf[(i, p + j)] = swap_buf[i];
+                }
+            }
+        }
+
+        // Correct W-statistic signs for swapped columns
+        let mut w_array = w.into_ndarray();
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                w_array[j] = -w_array[j];
+            }
+        }
+
+        let stage_started = std::time::Instant::now();
+        let selected = knockoff_filter(
+            &Vector::from_ndarray(w_array),
+            config.fdr,
+            config.knockoff_offset,
+        );
+        log_profile_stage("threshold", iteration, stage_started);
+        selected
+    };
+
+    let init_augmented = || {
+        let mut buf = Array2::zeros((n, 2 * p));
+        buf.columns_mut()
+            .into_iter()
+            .zip(x.as_ndarray().columns())
+            .for_each(|(mut dst, src)| dst.assign(&src));
+        Matrix::from_ndarray(buf)
+    };
+
+    let selected_list: Vec<Vec<usize>> = if use_cached_path {
+        if config.parallel {
+            (0..config.niter)
+                .into_par_iter()
+                .map_init(
+                    || GaussianCdWorkspace::new(n, 2 * p),
+                    |ws, iteration| run_iteration_cached(ws, iteration),
+                )
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let mut ws = GaussianCdWorkspace::new(n, 2 * p);
+            (0..config.niter)
+                .map(|iteration| run_iteration_cached(&mut ws, iteration))
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    } else if config.parallel {
+        (0..config.niter)
+            .into_par_iter()
+            .map_init(
+                || (init_augmented(), vec![0.0; n]),
+                |(augmented, swap_buf), iteration| {
+                    run_iteration_uncached(augmented, swap_buf, iteration)
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let mut augmented = init_augmented();
+        let mut swap_buf = vec![0.0; n];
+        (0..config.niter)
+            .map(|iteration| run_iteration_uncached(&mut augmented, &mut swap_buf, iteration))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    build_voting_result(x.ncols(), config, selected_list, None)
+}
+
+fn log_profile_stage(stage: &str, iteration: usize, started: std::time::Instant) {
+    if std::env::var_os("SLIDE_KNOCKOFF_PROFILE").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "{{\"event\":\"slide_knockoff_profile\",\"backend\":\"rust\",\"stage\":\"{}\",\"iteration\":{},\"seconds\":{:.9}}}",
+            stage, iteration, started.elapsed().as_secs_f64()
+        );
+    }
+}
+
+pub fn knockoff_filter_voting_slide(
+    x: &Matrix,
+    y: &Vector,
+    config: &KnockoffConfig,
+) -> Result<VotingResult, KnockoffError> {
+    let mut result = knockoff_filter_voting(x, y, config)?;
+    if config.slide_selection {
+        let refined = find_opt_iter(&result.selected_list, &result.freq_selected);
+        result.selected = refined.selected;
+        result.optimal_iter = refined.optimal_iter;
+    }
+    Ok(result)
+}
+
+pub fn calc_default_fsize(n_rows: usize, k: usize) -> usize {
+    let mut f_size = k;
+    if n_rows <= k && k < 100 {
+        if n_rows.abs_diff(k) <= 2 {
+            f_size = n_rows.saturating_sub(2);
+        } else {
+            f_size = n_rows;
+        }
+    }
+    if n_rows > k && k < 100 {
+        f_size = k;
+    }
+    if n_rows < k {
+        f_size = n_rows;
+    }
+    f_size
+}
+
+pub fn subproblem_base_seed(base_seed: u64, niter: usize, index: usize) -> u64 {
+    base_seed + (niter as u64) * (index as u64)
+}
+
+pub fn select_short_freq(
+    x: &Matrix,
+    y: &Vector,
+    config: &KnockoffConfig,
+) -> Result<VotingResult, KnockoffError> {
+    validate_voting_inputs(x, y, config)?;
+    let (n, p) = x.shape();
+    let f_size = config.f_size.unwrap_or_else(|| calc_default_fsize(n, p));
+    if f_size == 0 {
+        return Err(KnockoffError::InvalidFeatureChunkSize { actual: f_size });
+    }
+
+    let n_splits = p.div_ceil(f_size);
+    if n_splits <= 1 {
+        let mut direct = knockoff_filter_voting_slide(x, y, config)?;
+        direct.stage_one_union = Some(direct.selected.clone());
+        return Ok(direct);
+    }
+
+    let feature_split = p.div_ceil(n_splits);
+
+    let chunk_results: Vec<Vec<usize>> = (0..n_splits)
+        .map(|chunk_index| {
+            let start = chunk_index * feature_split;
+            let stop = (start + feature_split).min(p);
+            let chunk = Matrix::from_ndarray(select_column_range(x, start, stop));
+            let mut chunk_config = config.clone();
+            chunk_config.base_seed =
+                subproblem_base_seed(config.base_seed, config.niter, chunk_index);
+            let chunk_result = knockoff_filter_voting_slide(&chunk, y, &chunk_config)?;
+            Ok(chunk_result
+                .selected
+                .into_iter()
+                .map(|index| index + start)
+                .collect::<Vec<usize>>())
+        })
+        .collect::<Result<Vec<_>, KnockoffError>>()?;
+
+    let stage_one_union = sorted_unique(chunk_results.into_iter().flatten().collect());
+    if stage_one_union.len() <= 1 {
+        let mut result = empty_voting_result(p, config, Some(stage_one_union.clone()));
+        // R returns the sole screened factor without running aggregation draws.
+        // As in Python, counts here mark selection at the frequency threshold.
+        for &index in &stage_one_union {
+            result.selection_counts[index] = result.min_selections;
+        }
+        result.selection_frequency = Vector::from_ndarray(Array1::from_iter(
+            result
+                .selection_counts
+                .iter()
+                .map(|&count| (count as Scalar) / (config.niter as Scalar)),
+        ));
+        result.selected = stage_one_union.clone();
+        result.freq_selected = stage_one_union;
+        return Ok(result);
+    }
+
+    let screened = Matrix::from_ndarray(select_columns(x, &stage_one_union));
+    let mut stage_two_config = config.clone();
+    stage_two_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, n_splits);
+    let mut stage_two = knockoff_filter_voting_slide(&screened, y, &stage_two_config)?;
+    // R's stage two calls findOptIter even when no variable reaches spec
+    // (selectShortFreq.R tests is.null, and character(0) is not NULL). With
+    // zero overlap everywhere, findOptIter returns the first shortest draw.
+    if config.slide_selection && stage_two.freq_selected.is_empty() {
+        if let Some(shortest) = stage_two.selected_list.iter().min_by_key(|draw| draw.len()) {
+            stage_two.selected = sorted_unique(shortest.clone());
+        }
+    }
+    stage_two.selected = stage_two
+        .selected
+        .into_iter()
+        .map(|index| stage_one_union[index])
+        .collect();
+    stage_two.freq_selected = stage_two
+        .freq_selected
+        .into_iter()
+        .map(|index| stage_one_union[index])
+        .collect();
+
+    let mut counts = vec![0; p];
+    let mut frequencies = Array1::zeros(p);
+    for (local_index, &global_index) in stage_one_union.iter().enumerate() {
+        counts[global_index] = stage_two.selection_counts[local_index];
+        frequencies[global_index] = stage_two.selection_frequency.as_ndarray()[local_index];
+    }
+
+    stage_two.selection_counts = counts;
+    stage_two.selection_frequency = Vector::from_ndarray(frequencies);
+    stage_two.stage_one_union = Some(stage_one_union);
+    Ok(stage_two)
+}
+
+fn build_knockoff_cache(
+    x: &Matrix,
+    mu: &Vector,
+    sigma: &Matrix,
+    diag_s: &Vector,
+) -> Result<KnockoffCache, KnockoffError> {
+    let sigma_inv_diag_s = solve_sigma_inv_diag_s(sigma, diag_s)?;
+    let mu_k = compute_mu_k(x, mu, &sigma_inv_diag_s)?;
+    let l_trans = compute_l_trans(diag_s, &sigma_inv_diag_s)?;
+
+    Ok(KnockoffCache { mu_k, l_trans })
+}
+
+fn build_voting_result(
+    feature_count: usize,
+    config: &KnockoffConfig,
+    selected_list: Vec<Vec<usize>>,
+    stage_one_union: Option<Vec<usize>>,
+) -> Result<VotingResult, KnockoffError> {
+    let mut selection_counts = vec![0; feature_count];
+    for selected in &selected_list {
+        for &index in selected {
+            selection_counts[index] += 1;
+        }
+    }
+
+    let selection_frequency = Vector::from_ndarray(Array1::from_iter(
+        selection_counts
+            .iter()
+            .map(|count| (*count as Scalar) / (config.niter as Scalar)),
+    ));
+    let min_selections = ((config.niter as Scalar) * config.spec).ceil() as usize;
+    let freq_selected: Vec<_> = selection_counts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, count)| (*count >= min_selections).then_some(index))
+        .collect();
+
+    Ok(VotingResult {
+        selection_counts,
+        selection_frequency,
+        selected: freq_selected.clone(),
+        freq_selected,
+        threshold: config.spec,
+        niter: config.niter,
+        spec: config.spec,
+        min_selections,
+        selected_list,
+        optimal_iter: None,
+        stage_one_union,
+    })
+}
+
+fn empty_voting_result(
+    feature_count: usize,
+    config: &KnockoffConfig,
+    stage_one_union: Option<Vec<usize>>,
+) -> VotingResult {
+    VotingResult {
+        selection_counts: vec![0; feature_count],
+        selection_frequency: Vector::from_ndarray(Array1::zeros(feature_count)),
+        selected: Vec::new(),
+        freq_selected: Vec::new(),
+        threshold: config.spec,
+        niter: config.niter,
+        spec: config.spec,
+        min_selections: ((config.niter as Scalar) * config.spec).ceil() as usize,
+        selected_list: Vec::new(),
+        optimal_iter: None,
+        stage_one_union,
+    }
+}
+
+fn compute_statistic_prebuilt(
+    augmented: &Matrix,
+    p: usize,
+    y: &Vector,
+    config: &KnockoffConfig,
+) -> Result<Vector, KnockoffError> {
+    let glmnet_config = GaussianLassoPathConfig {
+        nlambda: config.nlambda,
+        cv_folds: augmented.nrows().clamp(2, 5),
+        scale_ddof: 1,
+        ..GaussianLassoPathConfig::default()
+    };
+
+    match config.statistic {
+        KnockoffStatistic::GlmnetLambdasMax => Ok(stat_glmnet_lambdasmax_prebuilt(
+            augmented,
+            p,
+            y,
+            config.family,
+            &glmnet_config,
+        )?),
+        KnockoffStatistic::GlmnetLambdaDiff => Ok(stat_glmnet_lambdadiff_prebuilt(
+            augmented,
+            p,
+            y,
+            config.family,
+            &glmnet_config,
+        )?),
+        KnockoffStatistic::GlmnetCoefDiff => Ok(stat_glmnet_coefdiff_prebuilt(
+            augmented,
+            p,
+            y,
+            config.family,
+            &glmnet_config,
+        )?),
+    }
+}
+
+
+fn estimate_mean(x: &Matrix) -> Vector {
+    let mean = x
+        .as_ndarray()
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    Vector::from_ndarray(mean)
+}
+
+/// Sample covariance with `ddof=1`, matching `np.cov(X, ddof=1)` and R's `cov(X)`.
+/// Returns `None` if the matrix has fewer than 2 rows.
+fn sample_covariance(x: &Matrix) -> Option<Matrix> {
+    let (n, p) = x.shape();
+    if n < 2 {
+        return None;
+    }
+    let x_nd = x.as_ndarray();
+    let mean = x_nd.mean_axis(Axis(0))?;
+    let centered = x_nd - &mean.clone().insert_axis(Axis(0));
+    let denom = (n - 1) as Scalar;
+    let mut cov = Array2::zeros((p, p));
+    for i in 0..p {
+        for j in i..p {
+            let val = centered.column(i).dot(&centered.column(j)) / denom;
+            cov[(i, j)] = val;
+            cov[(j, i)] = val;
+        }
+    }
+    Some(Matrix::from_ndarray(cov))
+}
+
+/// Whether the raw sample covariance is a sound basis for knockoff construction:
+/// positive definite (smallest eigenvalue > `POSDEF_EIGENVALUE_TOL`, as in R's
+/// `knockoff:::is_posdef` and Python's `is_posdef`) AND well-conditioned (2-norm
+/// condition number ≤ `MAX_RAW_COV_CONDITION`) unless the R-compatible gate is
+/// enabled. Otherwise the caller falls back to shrinkage.
+///
+/// Using an eigenvalue margin rather than a bare Cholesky keeps the decision
+/// deterministic across BLAS builds and CPUs: a Cholesky on a near-singular n≈p
+/// covariance can succeed or fail on floating-point rounding alone, flipping the
+/// chosen Sigma (and the resulting knockoffs and selected factors) between
+/// machines; a fixed eigenvalue threshold does not. The condition check
+/// short-circuits the (single) max-eigenvalue computation when the matrix is not
+/// positive definite, which is the common n<=p case.
+fn raw_covariance_is_usable(sigma: &Matrix) -> bool {
+    let min = minimum_eigenvalue(sigma);
+    if min <= POSDEF_EIGENVALUE_TOL {
+        return false;
+    }
+    if match_r_covariance_gate() {
+        // R gates on positive-definiteness ALONE.
+        return true;
+    }
+    maximum_eigenvalue(sigma) <= MAX_RAW_COV_CONDITION * min
+}
+
+/// Whether to drop the condition-number half of the covariance gate.
+///
+/// Native-R SLIDE decides raw-vs-shrunk with `knockoff:::is_posdef` only — it has
+/// no condition-number test — so on a chunk that is positive definite but
+/// ill-conditioned, R keeps the raw sample covariance where we shrink. That flips
+/// Sigma, diag_s and every knockoff draw for the chunk. Python also retains
+/// positive definite sample covariances without a condition-number gate.
+/// Set `SLIDE_KNOCKOFF_MATCH_R_COV=1` to match R.
+fn match_r_covariance_gate() -> bool {
+    static MATCH_R_COVARIANCE_GATE: OnceLock<bool> = OnceLock::new();
+    *MATCH_R_COVARIANCE_GATE.get_or_init(|| {
+        std::env::var("SLIDE_KNOCKOFF_MATCH_R_COV")
+            .map(|value| matches!(value.trim(), "1" | "true" | "TRUE"))
+            .unwrap_or(false)
+    })
+}
+
+fn maximum_eigenvalue(matrix: &Matrix) -> Scalar {
+    matrix
+        .symmetric_eigendecomposition_unchecked()
+        .eigenvalues()
+        .as_ndarray()
+        .iter()
+        .copied()
+        .fold(Scalar::NEG_INFINITY, Scalar::max)
+}
+
+/// Estimate a shrinkage-regularised covariance matrix using the Schäfer-Strimmer
+/// (2005) method, matching R's `corpcor::cov.shrink` and our Python implementation
+/// in `_cov_shrink_corpcor`. Variances are shrunk toward the median variance and
+/// correlations toward the identity matrix, with data-adaptive intensities.
+fn estimate_covariance(x: &Matrix) -> Result<Matrix, KnockoffError> {
+    let (n, p) = x.shape();
+    let nf = n as Scalar;
+
+    // Uniform weights: w_i = 1/n
+    let w2 = 1.0 / nf; // sum(w^2)
+    let h1 = 1.0 / (1.0 - w2); // n/(n-1)
+    let h1w2 = w2 / (1.0 - w2); // 1/(n-1)
+
+    let x_nd = x.as_ndarray();
+    let wm = x_nd
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+
+    // Centered data
+    let xc = x_nd - &wm.clone().insert_axis(Axis(0));
+
+    // Weighted variance = sample variance (ddof=1)
+    let x2_mean = x_nd
+        .mapv(|v| v * v)
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    let wv = (&x2_mean - &wm.mapv(|v| v * v)).mapv(|v| (v * h1).max(0.0));
+
+    // ── Variance shrinkage intensity (lambda_var) ──
+    let zz = xc.mapv(|v| v * v);
+    let q1 = zz
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    let zz2_mean = zz
+        .mapv(|v| v * v)
+        .mean_axis(Axis(0))
+        .unwrap_or_else(|| unreachable!("validated non-empty input"));
+    let q2 = &zz2_mean - &q1.mapv(|v| v * v);
+
+    let target_var = median_scalar(&wv);
+    let num_var: Scalar = q2.sum();
+    let den_var: Scalar = (&q1 - target_var / h1).mapv(|v| v * v).sum();
+    let lambda_var = if den_var != 0.0 {
+        (num_var / den_var * h1w2).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    // Shrunk variances and standard deviations
+    let vs = wv.mapv(|v| lambda_var * target_var + (1.0 - lambda_var) * v);
+    let sc_shrunk = vs.mapv(Scalar::sqrt);
+
+    // ── Correlation shrinkage intensity (lambda_cor) ──
+    // Standardise with ORIGINAL sample sd (not shrunk), matching R's estimate.lambda
+    let sc_orig = wv.mapv(Scalar::sqrt);
+    let sc_safe = sc_orig.mapv(|v| if v > 0.0 { v } else { 1.0 });
+
+    let mut xs = &xc / &sc_safe.insert_axis(Axis(0));
+    // Zero out columns where original variance was zero
+    for j in 0..p {
+        if sc_orig[j] == 0.0 {
+            xs.column_mut(j).fill(0.0);
+        }
+    }
+
+    let sw_val = (1.0 / nf).sqrt();
+    let xsw = &xs * sw_val; // xs * sqrt(w), shape (n, p)
+
+    // sE2R = ||S||_F^2 - sum(diag(S)^2)  where S = xsw^T @ xsw
+    // This equals the sum of squared off-diagonal elements of the Gram matrix.
+    let s_gram = xsw.t().dot(&xsw);
+    let s_frob_sq: Scalar = s_gram.iter().map(|v| v * v).sum();
+    let s_diag_sq: Scalar = (0..p).map(|i| s_gram[(i, i)] * s_gram[(i, i)]).sum();
+    let s_e2r = s_frob_sq - s_diag_sq;
+
+    // sER2 = sum(rowsums^2) - ||xs2w||_F^2  where xs2w = xs^2 * sqrt(w)
+    let xs2w = xs.mapv(|v| v * v) * sw_val;
+    let row_sums = xs2w.sum_axis(Axis(1));
+    let ser2_term1: Scalar = row_sums.iter().map(|v| v * v).sum();
+    let ser2_term2: Scalar = xs2w.iter().map(|v| v * v).sum();
+    let s_er2 = ser2_term1 - ser2_term2;
+
+    let den_cor = s_e2r;
+    let num_cor = s_er2 - s_e2r;
+    let lambda_cor = if den_cor != 0.0 {
+        (num_cor / den_cor * h1w2).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    // Shrunk correlation: R_shrunk = (1 - lambda_cor) * R_sample + lambda_cor * I
+    // where R_sample = h1 * (xsw^T @ xsw)
+    let mut r_shrunk = &s_gram * (h1 * (1.0 - lambda_cor));
+    for i in 0..p {
+        r_shrunk[(i, i)] = 1.0;
+    }
+
+    // Combine: Sigma_shrunk = diag(sc_shrunk) @ R_shrunk @ diag(sc_shrunk)
+    let mut sigma = Array2::zeros((p, p));
+    for i in 0..p {
+        for j in 0..p {
+            sigma[(i, j)] = r_shrunk[(i, j)] * sc_shrunk[i] * sc_shrunk[j];
+        }
+    }
+
+    Ok(Matrix::from_ndarray(symmetrize(sigma)))
+}
+
+fn median_scalar(arr: &Array1<Scalar>) -> Scalar {
+    let mut sorted: Vec<Scalar> = arr.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = sorted.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
+}
+
+fn solve_diag_s(sigma: &Matrix, method: &KnockoffMethod) -> Result<Vector, KnockoffError> {
+    Ok(match method {
+        KnockoffMethod::Asdp { max_block_size } => create_solve_asdp(sigma, *max_block_size)?,
+        KnockoffMethod::Sdp => create_solve_sdp(sigma)?,
+        KnockoffMethod::Equi => create_solve_equi(sigma)?,
+    })
+}
+
+pub fn generate_knockoffs_r(
+    x: &Matrix,
+    method: &KnockoffMethod,
+    niter: usize,
+    base_seed: u64,
+    rscript: &Path,
+) -> Result<Vec<Matrix>, KnockoffError> {
+    const SCRIPT: &str = r#"
+args <- commandArgs(trailingOnly=TRUE)
+n <- as.integer(args[[1]])
+p <- as.integer(args[[2]])
+niter <- as.integer(args[[3]])
+base_seed <- as.numeric(args[[4]])
+method <- args[[5]]
+X <- matrix(scan(file("stdin"), quiet=TRUE), nrow=n, ncol=p, byrow=TRUE)
+suppressPackageStartupMessages(library(knockoff))
+mu <- colMeans(X)
+Sigma <- cov(X)
+if (!knockoff:::is_posdef(Sigma)) {
+  if (!requireNamespace("corpcor", quietly=TRUE)) stop("corpcor is not installed")
+  Sigma <- suppressWarnings(matrix(as.numeric(corpcor::cov.shrink(X, verbose=FALSE)), nrow=p))
+}
+diag_s <- switch(method,
+  asdp=knockoff::create.solve_asdp(Sigma),
+  sdp=knockoff::create.solve_sdp(Sigma),
+  equi=knockoff::create.solve_equi(Sigma))
+for (iteration in seq_len(niter)) {
+  set.seed(base_seed + iteration - 1)
+  Xk <- knockoff::create.gaussian(X, mu, Sigma, diag_s=diag_s)
+  cat(sprintf("%.17g", as.numeric(Xk)), sep="\n")
+}
+"#;
+    let (rows, columns) = x.shape();
+    let method_name = match method {
+        KnockoffMethod::Asdp { .. } => "asdp",
+        KnockoffMethod::Sdp => "sdp",
+        KnockoffMethod::Equi => "equi",
+    };
+    let mut child = Command::new(rscript)
+        .args([
+            "--vanilla",
+            "-e",
+            SCRIPT,
+            &rows.to_string(),
+            &columns.to_string(),
+            &niter.to_string(),
+            &base_seed.to_string(),
+            method_name,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| KnockoffError::ExternalSolver {
+            message: format!("could not start {}: {error}", rscript.display()),
+        })?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        for value in x.as_ndarray() {
+            writeln!(stdin, "{value:.17}").map_err(|error| KnockoffError::ExternalSolver {
+                message: format!("could not write features to R: {error}"),
+            })?;
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| KnockoffError::ExternalSolver {
+            message: format!("could not wait for R knockoff generator: {error}"),
+        })?;
+    if !output.status.success() {
+        return Err(KnockoffError::ExternalSolver {
+            message: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+    let expected_values = niter
+        .checked_mul(rows)
+        .and_then(|count| count.checked_mul(columns))
+        .ok_or_else(|| KnockoffError::ExternalSolver {
+            message: "R knockoff output size overflowed usize".to_owned(),
+        })?;
+    let values = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .map(|value| {
+            value
+                .parse::<Scalar>()
+                .map_err(|error| KnockoffError::ExternalSolver {
+                    message: format!("invalid R generator output {value:?}: {error}"),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() != expected_values {
+        return Err(KnockoffError::ExternalSolver {
+            message: format!(
+                "R generator returned {} values; expected {expected_values}",
+                values.len()
+            ),
+        });
+    }
+    let values_per_iteration = rows * columns;
+    Ok(values
+        .chunks_exact(values_per_iteration)
+        .map(|iteration| {
+            let mut matrix = Array2::zeros((rows, columns));
+            for column in 0..columns {
+                for row in 0..rows {
+                    matrix[(row, column)] = iteration[column * rows + row];
+                }
+            }
+            Matrix::from_ndarray(matrix)
+        })
+        .collect())
+}
+
+fn solve_sigma_inv_diag_s(sigma: &Matrix, diag_s: &Vector) -> Result<Matrix, KnockoffError> {
+    let diag_s_matrix = Array2::from_diag(diag_s.as_ndarray());
+    if let Ok(cholesky) = sigma.cholesky_unchecked("sigma") {
+        return Ok(cholesky.solve_matrix(&Matrix::from_ndarray(diag_s_matrix), "sigma")?);
+    }
+
+    let sigma_pinv = sigma.pseudoinverse()?;
+    Ok(Matrix::from_ndarray(
+        sigma_pinv
+            .as_ndarray()
+            .dot(&Array2::from_diag(diag_s.as_ndarray())),
+    ))
+}
+
+fn compute_mu_k(
+    x: &Matrix,
+    mu: &Vector,
+    sigma_inv_diag_s: &Matrix,
+) -> Result<Matrix, KnockoffError> {
+    let centered = x.as_ndarray() - &mu.as_ndarray().clone().insert_axis(Axis(0));
+    let mu_k = x.as_ndarray() - &centered.dot(sigma_inv_diag_s.as_ndarray());
+    Ok(Matrix::from_ndarray(mu_k))
+}
+
+fn compute_l_trans(diag_s: &Vector, sigma_inv_diag_s: &Matrix) -> Result<Matrix, KnockoffError> {
+    let diag_s_matrix = Array2::from_diag(diag_s.as_ndarray());
+    let sigma_k = (2.0 * &diag_s_matrix) - diag_s_matrix.dot(sigma_inv_diag_s.as_ndarray());
+    let lower = regularized_cholesky(symmetrize(sigma_k))?;
+    Ok(Matrix::from_ndarray(lower.t().to_owned()))
+}
+
+fn regularized_cholesky(mut matrix: Array2<Scalar>) -> Result<Array2<Scalar>, KnockoffError> {
+    let p = matrix.nrows();
+    let max_diag = (0..p)
+        .map(|index| matrix[(index, index)])
+        .fold(0.0, Scalar::max);
+    let mut epsilon = COVARIANCE_EPSILON * max_diag.max(1.0);
+
+    for _ in 0..10 {
+        let candidate = Matrix::from_ndarray(symmetrize(matrix.clone()));
+        if let Ok(cholesky) = candidate.cholesky_unchecked("sigma_k") {
+            return Ok(cholesky.lower_factor().into_ndarray());
+        }
+
+        for index in 0..p {
+            matrix[(index, index)] += epsilon;
+        }
+        epsilon *= 10.0;
+    }
+
+    let candidate = Matrix::from_ndarray(matrix);
+    Ok(candidate.cholesky_unchecked("sigma_k")?.lower_factor().into_ndarray())
+}
+
+fn validate_feature_matrix(x: &Matrix) -> Result<(), KnockoffError> {
+    let (rows, cols) = x.shape();
+    if rows < 2 || cols == 0 {
+        return Err(KnockoffError::InvalidInputShape { rows, cols });
+    }
+    Ok(())
+}
+
+fn validate_create_gaussian_inputs(
+    x: &Matrix,
+    mu: &Vector,
+    sigma: &Matrix,
+    diag_s: &Vector,
+) -> Result<(), KnockoffError> {
+    validate_feature_matrix(x)?;
+    let p = x.ncols();
+    if mu.len() != p {
+        return Err(KnockoffError::MeanLengthMismatch {
+            expected: p,
+            actual: mu.len(),
+        });
+    }
+    if diag_s.len() != p {
+        return Err(KnockoffError::DiagSLengthMismatch {
+            expected: p,
+            actual: diag_s.len(),
+        });
+    }
+    if sigma.nrows() != p || sigma.ncols() != p {
+        return Err(KnockoffError::InvalidInputShape {
+            rows: sigma.nrows(),
+            cols: sigma.ncols(),
+        });
+    }
+    for (index, value) in diag_s.as_ndarray().iter().copied().enumerate() {
+        if !value.is_finite() || value < 0.0 {
+            return Err(KnockoffError::InvalidDiagSEntry { index, value });
+        }
+    }
+    for index in 0..p {
+        let variance = sigma.as_ndarray()[(index, index)];
+        if variance <= 0.0 {
+            return Err(KnockoffError::NonPositiveVariance {
+                index,
+                value: variance,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_threshold_inputs(q: Scalar, offset: usize) -> Result<(), KnockoffError> {
+    if !(0.0..1.0).contains(&q) {
+        return Err(KnockoffError::InvalidFdr { actual: q });
+    }
+    if offset > 1 {
+        return Err(KnockoffError::InvalidOffset { actual: offset });
+    }
+    Ok(())
+}
+
+fn validate_voting_inputs(
+    x: &Matrix,
+    y: &Vector,
+    config: &KnockoffConfig,
+) -> Result<(), KnockoffError> {
+    validate_feature_matrix(x)?;
+    if y.len() != x.nrows() {
+        return Err(KnockoffError::ResponseLengthMismatch {
+            expected: x.nrows(),
+            actual: y.len(),
+        });
+    }
+    validate_threshold_inputs(config.fdr, config.knockoff_offset)?;
+    if !(0.0..=1.0).contains(&config.spec) || config.spec == 0.0 {
+        return Err(KnockoffError::InvalidSpec {
+            actual: config.spec,
+        });
+    }
+    if config.niter == 0 {
+        return Err(KnockoffError::InvalidIterationCount);
+    }
+    if config.nlambda == 0 {
+        return Err(KnockoffError::InvalidLambdaCount);
+    }
+    if let Some(f_size) = config.f_size {
+        if f_size == 0 {
+            return Err(KnockoffError::InvalidFeatureChunkSize { actual: f_size });
+        }
+    }
+    Ok(())
+}
+
+fn overlap_size(selection: &[usize], target: &[usize]) -> usize {
+    selection
+        .iter()
+        .filter(|index| target.binary_search(index).is_ok())
+        .count()
+}
+
+fn sorted_unique(mut values: Vec<usize>) -> Vec<usize> {
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn minimum_eigenvalue(matrix: &Matrix) -> Scalar {
+    matrix
+        .symmetric_eigendecomposition_unchecked()
+        .eigenvalues()
+        .as_ndarray()
+        .iter()
+        .copied()
+        .min_by(Scalar::total_cmp)
+        .unwrap_or_else(|| unreachable!("validated square matrix has eigenvalues"))
+}
+
+fn symmetrize(matrix: Array2<Scalar>) -> Array2<Scalar> {
+    (&matrix + &matrix.t()) * 0.5
+}
+
+fn select_columns(x: &Matrix, indices: &[usize]) -> Array2<Scalar> {
+    let n = x.nrows();
+    let mut selected = Array2::zeros((n, indices.len()));
+    for (target_col, &source_col) in indices.iter().enumerate() {
+        selected
+            .column_mut(target_col)
+            .assign(&x.as_ndarray().column(source_col));
+    }
+    selected
+}
+
+fn select_column_range(x: &Matrix, start: usize, stop: usize) -> Array2<Scalar> {
+    let n = x.nrows();
+    let width = stop.saturating_sub(start);
+    let mut selected = Array2::zeros((n, width));
+    for (target_col, source_col) in (start..stop).enumerate() {
+        selected
+            .column_mut(target_col)
+            .assign(&x.as_ndarray().column(source_col));
+    }
+    selected
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::{arr1, arr2};
+
+    #[test]
+    fn default_lambda_count_uses_rust_grid() {
+        assert_eq!(KnockoffConfig::default().nlambda, 250);
+    }
+
+    fn simple_config() -> KnockoffConfig {
+        KnockoffConfig {
+            niter: 8,
+            spec: 0.25,
+            nlambda: 40,
+            knockoff_method: KnockoffMethod::Equi,
+            statistic: KnockoffStatistic::GlmnetLambdasMax,
+            ..KnockoffConfig::default()
+        }
+    }
+
+    /// Diagnostic harness (not a parity assertion): reads a Z matrix CSV
+    /// (no header/index, comma-separated) from `SLIDE_COV_Z_CSV`, emits the
+    /// shrinkage covariance that `prepare_knockoff_cache` would use in the n<=p
+    /// regime to `SLIDE_COV_OUT_CSV`, and prints whether the raw sample
+    /// covariance is usable (i.e. whether the gate would pick raw or shrink).
+    /// Used to A/B rust's Schäfer-Strimmer Sigma against python's
+    /// `_cov_shrink_corpcor` on the same Z. Run with:
+    ///   cargo test -p slide-knockoff emit_shrinkage_covariance -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_COV_Z_CSV / SLIDE_COV_OUT_CSV and run with --ignored"]
+    fn emit_shrinkage_covariance() {
+        let z_path = std::env::var("SLIDE_COV_Z_CSV")
+            .unwrap_or_else(|_| panic!("set SLIDE_COV_Z_CSV"));
+        let out_path = std::env::var("SLIDE_COV_OUT_CSV")
+            .unwrap_or_else(|_| panic!("set SLIDE_COV_OUT_CSV"));
+        let text = std::fs::read_to_string(&z_path)
+            .unwrap_or_else(|error| panic!("read {z_path}: {error}"));
+        let rows: Vec<Vec<Scalar>> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.split(',')
+                    .map(|cell| {
+                        cell.trim()
+                            .parse::<Scalar>()
+                            .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                    })
+                    .collect()
+            })
+            .collect();
+        let n = rows.len();
+        let p = rows.first().map(Vec::len).unwrap_or(0);
+        let flat: Vec<Scalar> = rows.into_iter().flatten().collect();
+        let arr = Array2::from_shape_vec((n, p), flat)
+            .unwrap_or_else(|error| panic!("reshape {n}x{p}: {error}"));
+        let z = Matrix::from_ndarray(arr);
+
+        let raw_usable = sample_covariance(&z)
+            .as_ref()
+            .map(raw_covariance_is_usable)
+            .unwrap_or(false);
+        let sigma = estimate_covariance(&z)
+            .unwrap_or_else(|error| panic!("estimate_covariance: {error}"));
+        let s = sigma.as_ndarray();
+        eprintln!(
+            "Z={n}x{p}  raw_cov_usable={raw_usable} (gate -> {})  emitting shrinkage Sigma {}x{}",
+            if raw_usable { "RAW" } else { "SHRINK" },
+            s.nrows(),
+            s.ncols()
+        );
+
+        let mut out = String::new();
+        for i in 0..s.nrows() {
+            let row: Vec<String> = (0..s.ncols())
+                .map(|j| format!("{:.15e}", s[(i, j)]))
+                .collect();
+            out.push_str(&row.join(","));
+            out.push('\n');
+        }
+        std::fs::write(&out_path, out)
+            .unwrap_or_else(|error| panic!("write {out_path}: {error}"));
+
+        // Optionally emit the ASDP diag_s solved from that same Sigma, to A/B
+        // against R's `knockoff::create.solve_asdp` on identical input.
+        if let Ok(diag_s_path) = std::env::var("SLIDE_COV_DIAGS_OUT_CSV") {
+            let method = KnockoffMethod::Asdp {
+                max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+            };
+            let diag_s = solve_diag_s(&sigma, &method)
+                .unwrap_or_else(|error| panic!("solve_diag_s: {error}"));
+            let values = diag_s.as_ndarray();
+            eprintln!(
+                "diag_s: len={} min={:.6e} max={:.6e} sum={:.6e}",
+                values.len(),
+                values.iter().copied().fold(Scalar::INFINITY, Scalar::min),
+                values.iter().copied().fold(Scalar::NEG_INFINITY, Scalar::max),
+                values.sum(),
+            );
+            let text: String = values
+                .iter()
+                .map(|value| format!("{value:.15e}\n"))
+                .collect();
+            std::fs::write(&diag_s_path, text)
+                .unwrap_or_else(|error| panic!("write {diag_s_path}: {error}"));
+        }
+    }
+
+    /// Diagnostic harness: given Z (`SLIDE_W_Z_CSV`), y (`SLIDE_W_Y_CSV`) and a
+    /// seed (`SLIDE_W_SEED`), builds the ASDP knockoff cache, samples ONE
+    /// knockoff draw X̃, and emits both X̃ (`SLIDE_W_XTILDE_OUT`) and the
+    /// lambdasmax W statistic (`SLIDE_W_OUT`) the pipeline would compute. Feed
+    /// the emitted X̃ to python's _compute_glmnet_lambdasmax to A/B the W
+    /// statistic (rust CD lasso vs python sklearn) on the identical draw.
+    ///   cargo test -p slide-knockoff emit_knockoff_w -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_W_* and run with --ignored"]
+    fn emit_knockoff_w() {
+        let read_grid = |path: &str| -> Vec<Vec<Scalar>> {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read {path}: {error}"));
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    line.split(',')
+                        .map(|cell| {
+                            cell.trim()
+                                .parse::<Scalar>()
+                                .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let z_path = std::env::var("SLIDE_W_Z_CSV").unwrap_or_else(|_| panic!("set SLIDE_W_Z_CSV"));
+        let y_path = std::env::var("SLIDE_W_Y_CSV").unwrap_or_else(|_| panic!("set SLIDE_W_Y_CSV"));
+        let xt_out =
+            std::env::var("SLIDE_W_XTILDE_OUT").unwrap_or_else(|_| panic!("set SLIDE_W_XTILDE_OUT"));
+        let w_out = std::env::var("SLIDE_W_OUT").unwrap_or_else(|_| panic!("set SLIDE_W_OUT"));
+        let seed: u64 = std::env::var("SLIDE_W_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42);
+
+        let zrows = read_grid(&z_path);
+        let n = zrows.len();
+        let p = zrows.first().map(Vec::len).unwrap_or(0);
+        let zflat: Vec<Scalar> = zrows.into_iter().flatten().collect();
+        let z = Matrix::from_ndarray(
+            Array2::from_shape_vec((n, p), zflat)
+                .unwrap_or_else(|error| panic!("z reshape {n}x{p}: {error}")),
+        );
+        let yflat: Vec<Scalar> = read_grid(&y_path).into_iter().flatten().collect();
+        let y = Vector::from_ndarray(Array1::from_vec(yflat));
+
+        let cache = prepare_knockoff_cache(&z, &KnockoffMethod::default())
+            .unwrap_or_else(|error| panic!("cache: {error}"));
+        let x_tilde = cache.sample(seed);
+
+        let config = GaussianLassoPathConfig {
+            nlambda: 250,
+            scale_ddof: 1,
+            ..GaussianLassoPathConfig::default()
+        };
+        let w = slide_glmnet::stat_glmnet_lambdasmax(
+            &z,
+            &x_tilde,
+            &y,
+            GlmnetFamily::Gaussian,
+            &config,
+        )
+        .unwrap_or_else(|error| panic!("stat_glmnet_lambdasmax: {error}"));
+        eprintln!(
+            "Z={n}x{p} seed={seed} -> X̃ + W (len {}) emitted",
+            w.as_ndarray().len()
+        );
+
+        let xt = x_tilde.as_ndarray();
+        let mut xs = String::new();
+        for i in 0..xt.nrows() {
+            let row: Vec<String> = (0..xt.ncols())
+                .map(|j| format!("{:.15e}", xt[(i, j)]))
+                .collect();
+            xs.push_str(&row.join(","));
+            xs.push('\n');
+        }
+        std::fs::write(&xt_out, xs).unwrap_or_else(|error| panic!("write {xt_out}: {error}"));
+
+        let w_lines: Vec<String> = w.as_ndarray().iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(&w_out, w_lines.join("\n"))
+            .unwrap_or_else(|error| panic!("write {w_out}: {error}"));
+    }
+
+    /// Bundled attribution harness for the CD4 delta=0.1 seed-invariant Z17/Z26
+    /// over-selection. Reads Z (`SLIDE_ATTR_Z_CSV`, no header) + y
+    /// (`SLIDE_ATTR_Y_CSV`) and, in ONE pass over `SLIDE_ATTR_NDRAWS` knockoff
+    /// draws (seed = `SLIDE_ATTR_BASE_SEED` + k), emits everything needed to
+    /// decompose the gap vs native-R into a sampling term (H1) and a lasso term
+    /// (H2). All draws share rust's EXACT cov/mean/diag_s so R's create.gaussian
+    /// can sample from identical inputs.
+    ///
+    /// Outputs under `SLIDE_ATTR_OUTDIR`:
+    ///   sigma.csv, mu.csv, diag_s.csv       rust's cov / colMeans / ASDP diag_s
+    ///   rust_counts.csv  (lf_index,count)   (a)  production voting WITH swap
+    ///   rust_counts_noswap.csv              (a') per-draw lasso, NO swap
+    ///   xtilde/xt_<k>.csv                    byte-identical X-tilde draw k
+    ///   rust_realized_corr.csv (j,mean_abs_corr)  mean_k |corr(Z_j, X~_j)|
+    ///
+    /// Then `archive/2026-10-17_production-cleanup/benchmarks/attrib_xinject.R` reads sigma/mu/diag_s + each xt_<k> and
+    /// emits (c) R-glmnet on rust's X-tilde and (b) R-glmnet on R's own draws, so
+    /// `archive/2026-10-17_production-cleanup/benchmarks/attrib_report.py` can print H2=(a')-(c), H1=(c)-(b), swap=(a)-(a').
+    ///   cargo test -p slide-knockoff emit_knockoff_attribution -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_ATTR_* and run with --ignored"]
+    fn emit_knockoff_attribution() {
+        let read_grid = |path: &str| -> Vec<Vec<Scalar>> {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read {path}: {error}"));
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    line.split(',')
+                        .map(|cell| {
+                            cell.trim()
+                                .parse::<Scalar>()
+                                .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let env_or = |key: &str| std::env::var(key).unwrap_or_else(|_| panic!("set {key}"));
+        let z_path = env_or("SLIDE_ATTR_Z_CSV");
+        let y_path = env_or("SLIDE_ATTR_Y_CSV");
+        let outdir = env_or("SLIDE_ATTR_OUTDIR");
+        let ndraws: usize = std::env::var("SLIDE_ATTR_NDRAWS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+        let base_seed: u64 = std::env::var("SLIDE_ATTR_BASE_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42);
+        let fdr: Scalar = std::env::var("SLIDE_ATTR_FDR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.1);
+        let spec: Scalar = std::env::var("SLIDE_ATTR_SPEC")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.1);
+        // Knockoff-path grid length (default 250 = Rust production). Set to 500 to
+        // probe whether matching R's lasso_max_lambda grid closes the gap.
+        let nlambda: usize = std::env::var("SLIDE_ATTR_NLAMBDA")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(250);
+        let method = match std::env::var("SLIDE_ATTR_METHOD").as_deref() {
+            Ok("equi") => KnockoffMethod::Equi,
+            Ok("asdp") | Err(_) => KnockoffMethod::default(),
+            other => panic!("unsupported SLIDE_ATTR_METHOD: {other:?}"),
+        };
+
+        let zrows = read_grid(&z_path);
+        let n = zrows.len();
+        let p = zrows.first().map(Vec::len).unwrap_or(0);
+        let zflat: Vec<Scalar> = zrows.into_iter().flatten().collect();
+        let z = Matrix::from_ndarray(
+            Array2::from_shape_vec((n, p), zflat)
+                .unwrap_or_else(|error| panic!("z reshape {n}x{p}: {error}")),
+        );
+        let yflat: Vec<Scalar> = read_grid(&y_path).into_iter().flatten().collect();
+        let y = Vector::from_ndarray(Array1::from_vec(yflat));
+
+        std::fs::create_dir_all(&outdir).unwrap_or_else(|e| panic!("mkdir {outdir}: {e}"));
+        let xt_dir = format!("{outdir}/xtilde");
+        std::fs::create_dir_all(&xt_dir).unwrap_or_else(|e| panic!("mkdir {xt_dir}: {e}"));
+
+        // Replicate prepare_knockoff_cache so we can emit the EXACT sigma/mu/diag_s
+        // that feed the cache, then build the same cache from them.
+        let mu = estimate_mean(&z);
+        let sigma = match sample_covariance(&z) {
+            Some(cov) if raw_covariance_is_usable(&cov) => cov,
+            _ => estimate_covariance(&z).unwrap_or_else(|e| panic!("estimate_covariance: {e}")),
+        };
+        let diag_s = solve_diag_s(&sigma, &method).unwrap_or_else(|e| panic!("solve_diag_s: {e}"));
+        let cache = build_knockoff_cache(&z, &mu, &sigma, &diag_s)
+            .unwrap_or_else(|e| panic!("build_knockoff_cache: {e}"));
+
+        // Emit sigma (p x p), mu (p), diag_s (p).
+        let sg = sigma.as_ndarray();
+        let mut sigma_s = String::new();
+        for i in 0..p {
+            let row: Vec<String> = (0..p).map(|j| format!("{:.15e}", sg[(i, j)])).collect();
+            sigma_s.push_str(&row.join(","));
+            sigma_s.push('\n');
+        }
+        std::fs::write(format!("{outdir}/sigma.csv"), sigma_s).expect("write sigma");
+        let mu_s: Vec<String> = mu.as_ndarray().iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(format!("{outdir}/mu.csv"), mu_s.join("\n")).expect("write mu");
+        let ds_s: Vec<String> = diag_s.as_ndarray().iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(format!("{outdir}/diag_s.csv"), ds_s.join("\n")).expect("write diag_s");
+
+        // (a) Production single-stage voting WITH swap (faithful CD4 path).
+        let config = KnockoffConfig {
+            fdr,
+            spec,
+            niter: ndraws,
+            knockoff_method: method,
+            knockoff_backend: KnockoffBackend::default(),
+            knockoff_offset: 0,
+            statistic: KnockoffStatistic::GlmnetLambdasMax,
+            nlambda,
+            base_seed,
+            slide_selection: true,
+            f_size: None,
+            family: GlmnetFamily::Gaussian,
+            parallel: true,
+        };
+        let voting = knockoff_filter_voting(&z, &y, &config)
+            .unwrap_or_else(|e| panic!("knockoff_filter_voting: {e}"));
+        let mut counts_a = String::from("lf_index,count\n");
+        for (j, c) in voting.selection_counts.iter().enumerate() {
+            counts_a.push_str(&format!("{j},{c}\n"));
+        }
+        std::fs::write(format!("{outdir}/rust_counts.csv"), counts_a).expect("write rust_counts");
+
+        // Per-draw pass: emit byte-identical X-tilde, compute (a') NO-swap counts,
+        // and accumulate mean |corr(Z_j, X~_j)|.
+        let glmnet_config = slide_glmnet::GaussianLassoPathConfig {
+            nlambda,
+            scale_ddof: 1,
+            ..slide_glmnet::GaussianLassoPathConfig::default()
+        };
+        let pearson = |a: ndarray::ArrayView1<Scalar>, b: ndarray::ArrayView1<Scalar>| -> Scalar {
+            let m = a.len() as Scalar;
+            let ma = a.iter().sum::<Scalar>() / m;
+            let mb = b.iter().sum::<Scalar>() / m;
+            let (mut sab, mut saa, mut sbb) = (0.0, 0.0, 0.0);
+            for (xi, yi) in a.iter().zip(b.iter()) {
+                let (da, db) = (xi - ma, yi - mb);
+                sab += da * db;
+                saa += da * da;
+                sbb += db * db;
+            }
+            if saa > 0.0 && sbb > 0.0 {
+                sab / (saa.sqrt() * sbb.sqrt())
+            } else {
+                0.0
+            }
+        };
+        // Set SLIDE_ATTR_SKIP_XTILDE=1 to skip writing the (large) X-tilde files when only
+        // rust's own (a)/(a') counts are wanted (e.g. CD tolerance probes) — sampling is
+        // independent of the CD tunables, so the X-tilde would be identical to a prior run.
+        let skip_xtilde = std::env::var("SLIDE_ATTR_SKIP_XTILDE").is_ok();
+        let za = z.as_ndarray();
+        let mut counts_noswap = vec![0usize; p];
+        let mut corr_accum = vec![0.0; p];
+        for k in 0..ndraws {
+            let seed = base_seed + (k as u64);
+            let x_tilde = cache.sample(seed);
+            let xta = x_tilde.as_ndarray();
+
+            // Emit X-tilde draw k.
+            if !skip_xtilde {
+                let mut s = String::with_capacity(n * p * 18);
+                for i in 0..n {
+                    for j in 0..p {
+                        if j > 0 {
+                            s.push(',');
+                        }
+                        s.push_str(&format!("{:.17e}", xta[(i, j)]));
+                    }
+                    s.push('\n');
+                }
+                std::fs::write(format!("{xt_dir}/xt_{k}.csv"), s)
+                    .unwrap_or_else(|e| panic!("write xt_{k}: {e}"));
+                let mut rng = StdRng::seed_from_u64(seed + 1_000_000);
+                let swap: Vec<u8> = (0..p).map(|_| u8::from(rng.gen_bool(0.5))).collect();
+                std::fs::write(format!("{xt_dir}/swap_{k}.raw"), swap)
+                    .unwrap_or_else(|e| panic!("write swap_{k}: {e}"));
+            }
+
+            // (a') NO-swap per-draw selection, identical W path as R uses.
+            let w = slide_glmnet::stat_glmnet_lambdasmax(
+                &z,
+                &x_tilde,
+                &y,
+                GlmnetFamily::Gaussian,
+                &glmnet_config,
+            )
+            .unwrap_or_else(|e| panic!("stat_glmnet_lambdasmax draw {k}: {e}"));
+            let selected = knockoff_filter(&w, fdr, 0)
+                .unwrap_or_else(|e| panic!("knockoff_filter draw {k}: {e}"));
+            for idx in selected {
+                counts_noswap[idx] += 1;
+            }
+
+            for (j, accum) in corr_accum.iter_mut().enumerate().take(p) {
+                *accum += pearson(za.column(j), xta.column(j)).abs();
+            }
+        }
+
+        let mut counts_b = String::from("lf_index,count\n");
+        for (j, c) in counts_noswap.iter().enumerate() {
+            counts_b.push_str(&format!("{j},{c}\n"));
+        }
+        std::fs::write(format!("{outdir}/rust_counts_noswap.csv"), counts_b)
+            .expect("write rust_counts_noswap");
+
+        let mut corr_s = String::from("lf_index,mean_abs_corr\n");
+        for (j, acc) in corr_accum.iter().enumerate() {
+            corr_s.push_str(&format!("{j},{:.10e}\n", acc / (ndraws as Scalar)));
+        }
+        std::fs::write(format!("{outdir}/rust_realized_corr.csv"), corr_s)
+            .expect("write rust_realized_corr");
+
+        eprintln!(
+            "attribution: Z={n}x{p} ndraws={ndraws} base_seed={base_seed} fdr={fdr} spec={spec} -> {outdir}"
+        );
+    }
+
+    /// Diagnostic harness: given a covariance matrix Sigma (`SLIDE_S_SIGMA_CSV`),
+    /// runs the ASDP `solve_diag_s` and emits the resulting `diag_s` vector
+    /// (`SLIDE_S_OUT`). Also emits the downstream `l_trans` cache matrix
+    /// (`SLIDE_S_LTRANS_OUT`, optional) which depends only on Sigma + diag_s.
+    /// Feed the same Sigma to python's `create_solve_asdp` (or R's
+    /// `knockoff::create.solve_asdp`) to A/B the knockoff construction solve.
+    ///   cargo test -p slide-knockoff emit_diag_s -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: set SLIDE_S_SIGMA_CSV / SLIDE_S_OUT and run with --ignored"]
+    fn emit_diag_s() {
+        let sigma_path =
+            std::env::var("SLIDE_S_SIGMA_CSV").unwrap_or_else(|_| panic!("set SLIDE_S_SIGMA_CSV"));
+        let out_path = std::env::var("SLIDE_S_OUT").unwrap_or_else(|_| panic!("set SLIDE_S_OUT"));
+        let text = std::fs::read_to_string(&sigma_path)
+            .unwrap_or_else(|error| panic!("read {sigma_path}: {error}"));
+        let rows: Vec<Vec<Scalar>> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.split(',')
+                    .map(|cell| {
+                        cell.trim()
+                            .parse::<Scalar>()
+                            .unwrap_or_else(|error| panic!("parse '{cell}': {error}"))
+                    })
+                    .collect()
+            })
+            .collect();
+        let n = rows.len();
+        let p = rows.first().map(Vec::len).unwrap_or(0);
+        let flat: Vec<Scalar> = rows.into_iter().flatten().collect();
+        let sigma = Matrix::from_ndarray(
+            Array2::from_shape_vec((n, p), flat)
+                .unwrap_or_else(|error| panic!("sigma reshape {n}x{p}: {error}")),
+        );
+
+        // Optional tolerance override (SLIDE_S_TOL) so a single run can A/B the
+        // solver tolerance on the SAME node (e.g. 1e-9 vs 1e-6); unset = default.
+        let diag_s = match std::env::var("SLIDE_S_TOL").ok().and_then(|s| s.parse::<Scalar>().ok()) {
+            Some(tol) => {
+                let settings = slide_sdp::SdpSettings {
+                    max_iter: 200,
+                    tol_gap_abs: tol,
+                    tol_gap_rel: tol,
+                    tol_feas: tol,
+                    tol_infeas_abs: tol,
+                    tol_infeas_rel: tol,
+                };
+                eprintln!("using SLIDE_S_TOL override = {tol:e}");
+                slide_sdp::create_solve_asdp_with_settings(&sigma, DEFAULT_MAX_BLOCK_SIZE, &settings)
+                    .unwrap_or_else(|error| panic!("create_solve_asdp_with_settings: {error}"))
+            }
+            None => solve_diag_s(&sigma, &KnockoffMethod::default())
+                .unwrap_or_else(|error| panic!("solve_diag_s: {error}")),
+        };
+        let s = diag_s.as_ndarray();
+        eprintln!(
+            "Sigma={n}x{p} -> diag_s (len {}, min {:.6e}, max {:.6e})",
+            s.len(),
+            s.iter().cloned().fold(Scalar::INFINITY, Scalar::min),
+            s.iter().cloned().fold(Scalar::NEG_INFINITY, Scalar::max),
+        );
+
+        let s_lines: Vec<String> = s.iter().map(|v| format!("{v:.15e}")).collect();
+        std::fs::write(&out_path, s_lines.join("\n"))
+            .unwrap_or_else(|error| panic!("write {out_path}: {error}"));
+
+        if let Ok(ltrans_path) = std::env::var("SLIDE_S_LTRANS_OUT") {
+            let sigma_inv_diag_s = solve_sigma_inv_diag_s(&sigma, &diag_s)
+                .unwrap_or_else(|error| panic!("solve_sigma_inv_diag_s: {error}"));
+            let l_trans = compute_l_trans(&diag_s, &sigma_inv_diag_s)
+                .unwrap_or_else(|error| panic!("compute_l_trans: {error}"));
+            let lt = l_trans.as_ndarray();
+            let mut out = String::new();
+            for i in 0..lt.nrows() {
+                let row: Vec<String> = (0..lt.ncols())
+                    .map(|j| format!("{:.15e}", lt[(i, j)]))
+                    .collect();
+                out.push_str(&row.join(","));
+                out.push('\n');
+            }
+            std::fs::write(&ltrans_path, out)
+                .unwrap_or_else(|error| panic!("write {ltrans_path}: {error}"));
+            eprintln!("  emitted l_trans {}x{}", lt.nrows(), lt.ncols());
+        }
+
+        // Optional saved-design sampler audit; production paths are unchanged.
+        if let Ok(directory) = std::env::var("SLIDE_S_AUDIT_DIR") {
+            let directory = Path::new(&directory);
+            let bytes = std::fs::read(directory.join("z.raw")).expect("read z.raw");
+            assert_eq!(bytes.len() % (8 * p), 0);
+            let values: Vec<f64> = bytes.chunks_exact(8)
+                .map(|value| f64::from_le_bytes(value.try_into().unwrap())).collect();
+            let x = Matrix::from_ndarray(Array2::from_shape_vec((values.len() / p, p), values).unwrap());
+            let mu = estimate_mean(&x);
+            let fixed_sigma = std::env::var("SLIDE_S_AUDIT_FIXED_SIGMA").as_deref() == Ok("1");
+            let native_sigma = if fixed_sigma {
+                sigma.clone()
+            } else {
+                match sample_covariance(&x) {
+                    Some(cov) if raw_covariance_is_usable(&cov) => cov,
+                    _ => estimate_covariance(&x).unwrap(),
+                }
+            };
+            let r_s = Vector::from_ndarray(Array1::from_vec(
+                std::fs::read_to_string(directory.join("r_s.csv")).unwrap()
+                    .lines().map(|line| line.parse::<f64>().unwrap()).collect(),
+            ));
+            let native = if fixed_sigma {
+                build_knockoff_cache(&x, &mu, &sigma, &diag_s).unwrap()
+            } else {
+                prepare_knockoff_cache(&x, &KnockoffMethod::default()).unwrap()
+            };
+            let shared_sigma = build_knockoff_cache(&x, &mu, &sigma, &diag_s).unwrap();
+            let shared_s = build_knockoff_cache(&x, &mu, &sigma, &r_s).unwrap();
+            let noise = KnockoffCache {
+                mu_k: Matrix::from_ndarray(Array2::zeros(x.shape())),
+                l_trans: Matrix::from_ndarray(Array2::eye(p)),
+            };
+            let write_matrix = |name: &str, matrix: &Matrix| {
+                let mut bytes = Vec::new();
+                for value in matrix.as_ndarray() { bytes.extend_from_slice(&value.to_le_bytes()); }
+                std::fs::write(directory.join(name), bytes).unwrap();
+            };
+            write_matrix("rust_sigma.raw", &native_sigma);
+            let native_s = if fixed_sigma {
+                diag_s.clone()
+            } else {
+                solve_diag_s(&native_sigma, &KnockoffMethod::default()).unwrap()
+            };
+            let native_inv_s = solve_sigma_inv_diag_s(&native_sigma, &native_s).unwrap();
+            let s_matrix = Array2::from_diag(native_s.as_ndarray());
+            let native_target = Matrix::from_ndarray(symmetrize(
+                2.0 * &s_matrix - s_matrix.dot(native_inv_s.as_ndarray()),
+            ));
+            write_matrix("rust_native_s.raw", &Matrix::from_ndarray(s_matrix));
+            write_matrix("rust_native_target.raw", &native_target);
+            let shared_inv_s = solve_sigma_inv_diag_s(&sigma, &r_s).unwrap();
+            let shared_s_matrix = Array2::from_diag(r_s.as_ndarray());
+            let shared_target = Matrix::from_ndarray(symmetrize(
+                2.0 * &shared_s_matrix - shared_s_matrix.dot(shared_inv_s.as_ndarray()),
+            ));
+            write_matrix("rust_shared_s_target.raw", &shared_target);
+            eprintln!("shared_s unregularized Cholesky succeeds: {}",
+                shared_target.cholesky_unchecked("sigma_k").is_ok());
+            eprintln!("native unregularized Cholesky succeeds: {}",
+                native_target.cholesky_unchecked("sigma_k").is_ok());
+            for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s)] {
+                write_matrix(&format!("rust_{label}_mean.raw"), &cache.mu_k);
+                write_matrix(&format!("rust_{label}_factor.raw"), &cache.l_trans);
+            }
+            let draws: u64 = std::env::var("SLIDE_S_AUDIT_DRAWS").unwrap().parse().unwrap();
+            let base_seed: u64 = std::env::var("SLIDE_S_AUDIT_BASE_SEED")
+                .unwrap_or_else(|_| "42".into()).parse().unwrap();
+            assert!(draws >= 2);
+            for (label, cache) in [("native", &native), ("shared_sigma", &shared_sigma), ("shared_s", &shared_s), ("noise", &noise)] {
+                let mut file = std::fs::File::create(directory.join(format!("rust_{label}_draws.raw"))).unwrap();
+                for seed in base_seed..base_seed + draws {
+                    let draw = cache.sample(seed);
+                    if seed == base_seed { assert_eq!(draw.as_ndarray(), cache.sample(seed).as_ndarray()); }
+                    for value in draw.as_ndarray() { file.write_all(&value.to_le_bytes()).unwrap(); }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn knockoff_threshold_matches_spec_formula() {
+        let w = Vector::from_ndarray(arr1(&[3.0, 2.0, -2.0, 0.5]));
+        let threshold = knockoff_threshold(&w, 0.5, 0)
+            .unwrap_or_else(|error| panic!("threshold failed: {error}"));
+        assert_eq!(threshold, Some(0.0));
+        let selected =
+            knockoff_filter(&w, 0.5, 0).unwrap_or_else(|error| panic!("filter failed: {error}"));
+        assert_eq!(selected, vec![0, 1, 3]);
+    }
+
+    #[test]
+    fn knockoff_threshold_applies_offset_to_numerator() {
+        let w = Vector::from_ndarray(arr1(&[5.0, 4.5, 4.0, 3.5, 3.0, 2.5, -0.1, -0.2]));
+        let threshold = knockoff_threshold(&w, 0.2, 1)
+            .unwrap_or_else(|error| panic!("threshold failed: {error}"));
+        assert_eq!(threshold, Some(2.5));
+    }
+
+    #[test]
+    fn knockoff_threshold_can_return_zero_candidate() {
+        let w = Vector::from_ndarray(arr1(&[1.0, 2.0, 3.0, 4.0, 5.0]));
+        let threshold = knockoff_threshold(&w, 0.2, 1)
+            .unwrap_or_else(|error| panic!("threshold failed: {error}"));
+        assert_eq!(threshold, Some(0.0));
+    }
+
+    #[test]
+    fn find_opt_iter_uses_overlap_then_smallest_set_tiebreak() {
+        let selected_list = vec![vec![0, 2, 5, 7], vec![0, 2, 5], vec![0, 2]];
+        let result = find_opt_iter(&selected_list, &[0, 2, 5]);
+        assert_eq!(result.optimal_iter, Some(1));
+        assert_eq!(result.selected, vec![0, 2, 5]);
+    }
+
+    #[test]
+    fn find_opt_iter_returns_freq_selected_when_no_overlap() {
+        let selected_list = vec![vec![4, 5], vec![6], vec![7, 8]];
+        let result = find_opt_iter(&selected_list, &[0, 1]);
+        assert_eq!(result.optimal_iter, None);
+        assert_eq!(result.selected, vec![0, 1]);
+    }
+
+    #[test]
+    fn calc_default_fsize_matches_python_reference_cases() {
+        assert_eq!(calc_default_fsize(50, 20), 20);
+        assert_eq!(calc_default_fsize(20, 50), 20);
+        assert_eq!(calc_default_fsize(48, 50), 48);
+        assert_eq!(calc_default_fsize(60, 150), 60);
+    }
+
+    #[test]
+    fn create_gaussian_is_deterministic_for_fixed_seed() {
+        let x = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]));
+        let mu = Vector::from_ndarray(arr1(&[0.0, 0.0]));
+        let sigma = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.0, 1.0]]));
+        let diag_s = Vector::from_ndarray(arr1(&[0.5, 0.5]));
+        let first = create_gaussian(&x, &mu, &sigma, &diag_s, 7)
+            .unwrap_or_else(|error| panic!("create_gaussian failed: {error}"));
+        let second = create_gaussian(&x, &mu, &sigma, &diag_s, 7)
+            .unwrap_or_else(|error| panic!("create_gaussian failed: {error}"));
+        assert_eq!(first, second);
+        assert_eq!(first.shape(), x.shape());
+    }
+
+    #[test]
+    fn knockoff_voting_is_deterministic_with_cached_sampling() {
+        let x = Matrix::from_ndarray(arr2(&[
+            [2.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, 1.0],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[3.0, 2.0, 0.5, 0.25, 0.1, 0.0]));
+        let config = simple_config();
+
+        let left = knockoff_filter_voting(&x, &y, &config)
+            .unwrap_or_else(|error| panic!("voting failed: {error}"));
+        let right = knockoff_filter_voting(&x, &y, &config)
+            .unwrap_or_else(|error| panic!("voting failed: {error}"));
+
+        assert_eq!(left.selection_counts, right.selection_counts);
+        assert_eq!(left.selected, right.selected);
+        assert_eq!(left.freq_selected, right.freq_selected);
+    }
+
+    #[test]
+    fn select_short_freq_honors_chunk_size_when_n_exceeds_p() {
+        let x = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.8, 0.1], [0.0, 1.0], [0.1, 0.7]]));
+        let y = Vector::from_ndarray(arr1(&[2.0, 1.5, 0.1, 0.0]));
+        let config = KnockoffConfig {
+            base_seed: 7,
+            fdr: 0.5,
+            f_size: Some(1),
+            niter: 4,
+            spec: 0.25,
+            nlambda: 30,
+            knockoff_method: KnockoffMethod::Equi,
+            ..KnockoffConfig::default()
+        };
+
+        let result = select_short_freq(&x, &y, &config)
+            .unwrap_or_else(|error| panic!("select_short_freq failed: {error}"));
+        let mut expected_union = Vec::new();
+        for index in 0..x.ncols() {
+            let chunk = Matrix::from_ndarray(select_column_range(&x, index, index + 1));
+            let mut chunk_config = config.clone();
+            chunk_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, index);
+            let chunk_result = knockoff_filter_voting_slide(&chunk, &y, &chunk_config)
+                .unwrap_or_else(|error| panic!("chunk voting failed: {error}"));
+            expected_union.extend(chunk_result.selected.into_iter().map(|local| local + index));
+        }
+        assert_eq!(expected_union, vec![0, 1]);
+        assert_eq!(result.stage_one_union, Some(expected_union));
+    }
+
+    #[test]
+    fn select_short_freq_returns_singleton_without_second_stage_draws() {
+        let x = Matrix::from_ndarray(arr2(&[[1.0, 0.0], [0.8, 0.1], [0.0, 1.0], [0.1, 0.7]]));
+        let y = Vector::from_ndarray(arr1(&[2.0, 1.5, 0.1, 0.0]));
+        let config = KnockoffConfig {
+            f_size: Some(1),
+            niter: 4,
+            spec: 1.0,
+            nlambda: 30,
+            knockoff_method: KnockoffMethod::Equi,
+            base_seed: 0,
+            ..KnockoffConfig::default()
+        };
+        let mut union = Vec::new();
+        for index in 0..2 {
+            let chunk = Matrix::from_ndarray(select_column_range(&x, index, index + 1));
+            let mut chunk_config = config.clone();
+            chunk_config.base_seed = subproblem_base_seed(config.base_seed, config.niter, index);
+            let chunk_result = knockoff_filter_voting_slide(&chunk, &y, &chunk_config)
+                .unwrap_or_else(|error| panic!("chunk voting failed: {error}"));
+            union.extend(chunk_result.selected.into_iter().map(|local| local + index));
+        }
+        assert_eq!(union, vec![0]);
+        let result = select_short_freq(&x, &y, &config)
+            .unwrap_or_else(|error| panic!("select_short_freq failed: {error}"));
+        assert_eq!(result.stage_one_union, Some(union.clone()));
+        assert_eq!(result.selected, union);
+        assert_eq!(result.freq_selected, vec![0]);
+        assert!(result.selected_list.is_empty());
+        assert_eq!(result.optimal_iter, None);
+        assert_eq!(result.selection_counts, vec![4, 0]);
+        assert_eq!(result.selection_frequency.as_ndarray(), &arr1(&[1.0, 0.0]));
+    }
+
+    #[test]
+    fn select_short_freq_runs_two_stage_screening_when_chunking_is_required() {
+        let x = Matrix::from_ndarray(arr2(&[
+            [2.0, 0.0, 0.0, 0.0],
+            [1.5, 0.1, 0.0, 0.0],
+            [0.0, 2.0, 0.1, 0.0],
+            [0.0, 1.5, 0.0, 0.1],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[3.0, 2.5, 0.5, 0.25]));
+        let config = KnockoffConfig {
+            f_size: Some(2),
+            niter: 4,
+            spec: 0.25,
+            nlambda: 30,
+            knockoff_method: KnockoffMethod::Equi,
+            ..KnockoffConfig::default()
+        };
+
+        let result = select_short_freq(&x, &y, &config)
+            .unwrap_or_else(|error| panic!("select_short_freq failed: {error}"));
+        assert!(result.stage_one_union.is_some());
+        let union = result.stage_one_union.unwrap_or_default();
+        for index in result.selected {
+            assert!(union.binary_search(&index).is_ok());
+        }
+    }
+
+    #[test]
+    fn subproblem_seeds_use_disjoint_iteration_ranges() {
+        assert_eq!(subproblem_base_seed(42, 500, 0), 42);
+        assert_eq!(subproblem_base_seed(42, 500, 1), 542);
+        assert_eq!(subproblem_base_seed(42, 500, 4), 2042);
+    }
+
+    #[test]
+    fn cached_lambdasmax_matches_uncached() {
+        use slide_glmnet::{
+            stat_glmnet_lambdasmax_prebuilt, stat_glmnet_lambdasmax_prebuilt_cached,
+            GaussianLassoPathConfig, HalfPreparedData,
+        };
+
+        let x = Matrix::from_ndarray(arr2(&[
+            [2.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, 1.0],
+        ]));
+        let y = Vector::from_ndarray(arr1(&[3.0, 2.0, 0.5, 0.25, 0.1, 0.0]));
+        let p = 3;
+
+        let cache = prepare_knockoff_cache(&x, &KnockoffMethod::Equi)
+            .unwrap_or_else(|error| panic!("cache failed: {error}"));
+        let x_tilde = cache.sample(42);
+
+        // Build augmented matrix with a swap
+        let mut augmented = Array2::zeros((6, 6));
+        for j in 0..p {
+            augmented.column_mut(j).assign(&x.as_ndarray().column(j));
+        }
+        for j in 0..p {
+            augmented
+                .column_mut(p + j)
+                .assign(&x_tilde.as_ndarray().column(j));
+        }
+        // Apply a deterministic swap: swap column 1
+        let swap = vec![false, true, false];
+        for (j, &swapped) in swap.iter().enumerate() {
+            if swapped {
+                for i in 0..6 {
+                    let tmp = augmented[(i, j)];
+                    augmented[(i, j)] = augmented[(i, p + j)];
+                    augmented[(i, p + j)] = tmp;
+                }
+            }
+        }
+        let augmented = Matrix::from_ndarray(augmented);
+
+        let config = GaussianLassoPathConfig {
+            nlambda: 40,
+            scale_ddof: 1,
+            ..GaussianLassoPathConfig::default()
+        };
+
+        // Uncached path
+        let w_uncached = stat_glmnet_lambdasmax_prebuilt(
+            &augmented, p, &y, GlmnetFamily::Gaussian, &config,
+        )
+        .unwrap_or_else(|error| panic!("uncached failed: {error}"));
+
+        // Cached path
+        let n = 6usize;
+        let y_arr = y.as_ndarray();
+        let y_mean = y_arr.iter().copied().sum::<f64>() / (n as f64);
+        let y_centered = y_arr.mapv(|v| v - y_mean);
+        let x_cache = HalfPreparedData::new_gaussian(&x, &y_centered, true);
+        let tilde_cache = HalfPreparedData::new_gaussian(&x_tilde, &y_centered, true);
+
+        let mut ws = slide_glmnet::GaussianCdWorkspace::new(n, 2 * p);
+        let w_cached = stat_glmnet_lambdasmax_prebuilt_cached(
+            &x_cache, &tilde_cache, &swap, p, &y, y_mean, &y_centered, GlmnetFamily::Gaussian, &config, &mut ws,
+        )
+        .unwrap_or_else(|error| panic!("cached failed: {error}"));
+
+        // Results should match
+        for j in 0..p {
+            let diff = (w_uncached.as_ndarray()[j] - w_cached.as_ndarray()[j]).abs();
+            assert!(
+                diff < 1e-10,
+                "mismatch at j={}: uncached={}, cached={}",
+                j,
+                w_uncached.as_ndarray()[j],
+                w_cached.as_ndarray()[j],
+            );
+        }
+    }
+}

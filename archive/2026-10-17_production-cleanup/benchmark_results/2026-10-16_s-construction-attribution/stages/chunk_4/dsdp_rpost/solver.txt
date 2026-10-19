@@ -1,0 +1,5 @@
+PDFeasible
+List of 3
+ $ stype: chr "PDFeasible"
+ $ dobj : num 0.57
+ $ pobj : num 0.57

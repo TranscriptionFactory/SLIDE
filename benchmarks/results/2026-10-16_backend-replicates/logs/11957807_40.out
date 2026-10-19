@@ -1,0 +1,2 @@
+task=40 arm=r_knockoffs backend=r_knockoffs seed=42 host=htc-n70.crc.pitt.edu start=2026-10-16T04:16:51-04:00
+slurmstepd: error: *** JOB 11957858 ON htc-n70 CANCELLED AT 2026-10-16T04:37:02 DUE TO TIME LIMIT ***
