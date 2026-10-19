@@ -52,9 +52,10 @@ tests/                         # Configs, fixtures, test scripts
 
 Use the preferred [Pixi source-build setup](README.md#source-checkout-and-platform-coverage)
 for the locked native libraries and compiler environment. Rust builds use the
-isolated `rust` environment and rustup 1.99.1 (MSRV 1.88). The README retains
-manual system-package and Pitt CRC wrapper instructions as alternatives. Check
-its platform table before treating any target as verified.
+isolated `rust` environment and rustup 1.99.1 (MSRV 1.88). See
+[manual Rust source builds](docs/rust-source-alternatives.md) for system-package
+and Pitt CRC wrapper alternatives. Check the README platform table before treating
+any target as verified.
 
 ### Python
 
@@ -64,8 +65,9 @@ keeps CVXPY, and excludes R. Use `pixi install --locked -e dev` only for the
 Linux x86-64 R-enabled development environment; R and `rpy2` are not native
 Python build requirements.
 
-For a uv/pip alternative, follow the system-prerequisite instructions in the
-README and install development extras in the virtual environment:
+For a uv/pip alternative, follow the
+[manual Python source instructions](docs/python-source-alternatives.md) and
+install development extras in the virtual environment:
 
 ```bash
 uv pip install --python .venv/bin/python -e ".[dev]"
@@ -77,18 +79,87 @@ environment includes `knockoff`, `glmnet`, `MASS`, `linprog`, and `lpSolve`.
 
 ---
 
+### Rebuilding editable Python installations
+
+The default Python installation is editable. After restoring or switching source
+snapshots, force a native rebuild if needed with
+`pixi reinstall --locked -e default slide-py`; an unchanged editable install can
+reuse existing extension files.
+
 ## Candidate builds and installation
 
-Use the [README installation guide](README.md#candidate-installations-and-platform-coverage)
-for the candidate matrix, exact artifact names/layouts, installation steps, and
-source-build requirements. It is the authoritative installation recipe.
+The manual [Build candidates](.github/workflows/artifacts.yml) workflow makes
+candidate artifacts for verification. It does not publish to PyPI or create a
+GitHub Release. No portable artifact is verified yet. Once CI runs, download
+artifacts only from passing individual jobs and review their checks before installing. The current required matrix cannot complete because the
+Windows Python native build gate is intentionally blocked. Linux and macOS
+Python wheels and platform Rust archives can upload only when their own checks
+pass.
 
-The manual `artifacts.yml` workflow builds candidates only. It does not publish
-to PyPI or create a GitHub Release. The full candidate matrix remains blocked by
-Windows Python native build feasibility; native portability and redistribution
-review also remain open.
+| Candidate artifact | Target | Contents |
+| --- | --- | --- |
+| `slide-py-linux-x86_64-cp39`, `slide-py-linux-x86_64-cp310`, `slide-py-linux-x86_64-cp311`, `slide-py-linux-x86_64-cp312` | Linux x86-64, CPython 3.9–3.12, manylinux_2_28 | One wheel per artifact. |
+| `slide-py-macos-arm64-cp39`, `slide-py-macos-arm64-cp310`, `slide-py-macos-arm64-cp311`, `slide-py-macos-arm64-cp312` | macOS 15+, arm64, CPython 3.9–3.12 | One wheel per artifact. |
+| `slide-py-macos-x86_64-cp39`, `slide-py-macos-x86_64-cp310`, `slide-py-macos-x86_64-cp311`, `slide-py-macos-x86_64-cp312` | macOS 15+, x86-64, CPython 3.9–3.12 | One wheel per artifact. |
+| `slide-py-sdist` | Source distribution | One `.tar.gz`; source build required. |
+| `slide-rs-linux-x86_64-glibc235` | Linux x86-64, glibc ≥2.35 | `slide-linux-x86_64.tar.gz`. |
+| `slide-rs-macos-arm64`, `slide-rs-macos-x86_64` | macOS 15+, separate native architectures | `slide-macos-arm64.tar.gz` or `slide-macos-x86_64.tar.gz`. |
+| `slide-rs-windows-x86_64` | Windows x86-64, MSVC | `slide-windows-x86_64.zip`. |
+
+No Windows Python wheel artifact is produced. Windows Rust uses a pinned
+LAPACK-enabled OpenBLAS provider; its native checks remain pending. macOS and
+Linux artifact jobs also await hosted native CI. These build and packaging
+checks do not establish backend equivalence or cross-platform numerical
+equivalence. Do not infer Linux ARM, Windows ARM, or universal2 support. WSL is not native Windows support. Server 2022 is the Windows CI target; a desktop minimum is unverified.
+
+For a Python wheel, download the single artifact matching the OS, architecture,
+and CPython version, extract the artifact, then install its `.whl` file. Require
+binary wheels for dependencies with uv (Linux/macOS example; choose the Python
+version matching your wheel):
+
+```bash
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python --only-binary=:all: ./wheel-dir/*.whl
+source .venv/bin/activate
+slide-py --version
+```
+
+This checks dependency-wheel availability for the target separately from SLIDE
+wheel availability: the command uses the exact downloaded SLIDE wheel, and uv
+fails rather than building a dependency from source if no compatible wheel
+exists. No PyPI wheel is promised by this candidate workflow.
+
+For Rust, extract the whole downloaded archive and run its launcher, not the
+naked executable:
+
+```bash
+tar -xzf slide-linux-x86_64.tar.gz
+./slide-linux-x86_64/slide --version
+```
+
+On macOS use `tar -xzf` and the extracted directory's `slide` launcher. On
+Windows extract the ZIP and run `slide.cmd --version`. Keep each extracted
+directory intact. Archive users do not need a compiler or Rust toolchain.
 
 ---
+
+### Recorded validation status (2026-10-19)
+
+| Platform / version | Verification status |
+| --- | --- |
+| Linux x86-64, Python 3.11 | Local Pixi DSDP, Gaussian/binomial glmnet and native pipeline tests passed, as did the earlier source-to-wheel checks. Other matrix versions and repaired manylinux portability await CI. |
+| Linux x86-64, Rust | Local Rust 1.99.1 optimized build and Rust 1.88.0 all-target check passed. The Pixi-isolated Rust release build, pipeline/final-CV, PDF and Unix TUI smoke passed; native archive portability remains pending. |
+| macOS 15+, arm64 and x86-64 | Pixi and candidate recipes are configured; native install, build, relocation, runtime and plot checks await CI. |
+| Windows x86-64, Rust MSVC | Pixi and candidate recipe are configured; provider-backed native CI and runtime checks remain pending. Server 2022 is the CI target only. |
+| Windows, Python | Pixi is configured, but native source install and runtime checks remain pending. The Windows Python wheel build remains blocked on Flang availability and mixed C/Fortran runtime linking. |
+| Pitt CRC, RHEL 9 | Rust [setup wrapper](docs/rust-source-alternatives.md); Python development environment uses Pixi on Linux x86-64. |
+
+The full local Pixi Rust test suite did not complete: the committed HIV parity
+fixture exceeded the allotted check time. No test failure was observed; the
+successful build and smoke tests above do not imply a full-suite pass.
+
+Python metadata permits Python ≥3.9; this does not establish support beyond the
+tested or proposed CPython 3.9–3.12 matrix.
 
 ## Publishing Python releases
 
@@ -127,6 +198,37 @@ workflow does not create a Rust GitHub Release or publish Rust archives.
 
 See the [PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
 and [GitHub environment documentation](https://docs.github.com/en/actions/deployment/targeting-different-environments/managing-environments-for-deployment).
+
+### Release checklist
+
+- Resolve remaining statistical-selection differences before claiming backend
+  equivalence; matching output formats does not establish matching selections.
+- Choose one duplicate-feature-name policy. The bundled example contains repeated
+  CSV headers: Python adds suffixes such as `.1`, while Rust preserves duplicates.
+  Use unique feature names for unambiguous cross-backend exports meanwhile.
+- Native platform builds and archive relocation await hosted CI. The Windows
+  Python gate remains blocked on Flang and mixed C/Fortran runtime linking.
+  macOS ad-hoc signatures are not notarization; Windows native console and
+  desktop-minimum checks remain pending. No production-readiness claim follows
+  from local builds or packaging alone.
+- Qualified redistribution review remains open for GPLv2 glmnet and GPLv3-or-later
+  DSDP against MIT metadata, Rust/native dependencies, fonts, and the OpenBLAS
+  GCC/libgfortran/libquadmath and MinGW runtime notices. Bundled notices do not
+  provide legal clearance.
+- R package metadata/version and lockfile alignment, including optional `rpy2`,
+  remain separate maintenance issues. Python rerun state restoration also needs
+  repair and testing before that workflow is advertised.
+
+```bash
+gh workflow run artifacts.yml --ref main
+gh workflow run publish.yml --ref main -f candidate_run_id=RUN_ID -f publish=false
+# Publication only after the stated gates and explicit user approval:
+gh workflow run publish.yml --ref main -f candidate_run_id=RUN_ID \
+  -f publish=true -f redistribution_approved=true -f runtime_visual_approved=true
+```
+
+Checkpoint-error reporting and narrow-terminal rendering have regression tests;
+live-terminal usability remains unverified.
 
 ## Running the pipeline
 

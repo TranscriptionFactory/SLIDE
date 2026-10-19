@@ -15,7 +15,7 @@ Run repository-root commands with paths beginning `examples/`.
   not validated cross-backend reference results.
 
 The HIV feature table contains duplicate headers; see the
-[duplicate-name limitation](../README.md#before-publication) before comparing
+[duplicate-name limitation](../README.md#known-limitations) before comparing
 feature names across backends.
 
 ## Saved backend examples

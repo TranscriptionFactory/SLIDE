@@ -34,6 +34,50 @@ Commands recorded inside frozen runs may use the original `benchmarks/<script>`
 layout after entering a frozen source tree; maintained current-checkout tools
 live under `benchmarks/scripts/`.
 
+## Runtime and memory comparisons
+
+These are profiled measurements of frozen source `4b32111`, not benchmarks of
+every subsequent change. All rows use 500 knockoff draws, four workers, one BLAS
+thread and homogeneous LOVE; final predictive CV is excluded. CD4 and synthetic
+capacity runs use Gaussian parity settings. The localized scleroderma (LS) dataset uses native binary-response
+settings, whose solver/grid differences are intentional. Delta/lambda are 0.1/0.1.
+
+| Dataset (samples n × features p) | Runs per backend | Estimated factors K (Rust / Python / R) | Rust wall seconds | Python wall seconds | R wall seconds |
+| --- | ---: | --- | ---: | ---: | ---: |
+| CD4 (2,482 × 1,776) | 10 | 39 / 39 / 39 | 5.31 [5.03–5.58] | 22.07 [21.85–22.83] | 93.52 [91.32–98.60] |
+| Synthetic (50 × 10,000) | 1 | 178 / 178 / unavailable | 115.93 | 111.85 | timeout at 7,200 |
+| Synthetic (50 × 15,000) | 1 | 136 / 136 / unavailable | 76.86 | 114.00 | timeout at 7,200 |
+| Synthetic (50 × 20,000) | 1 | 109 / 109 / unavailable | 90.69 | 137.00 | timeout at 7,200 |
+| LS skin transcriptomics (44 × 15,496) | 1 | 434 / 434 / unavailable | 1,305.27 | 4,817.10 | timeout at 7,200 |
+
+The LS benchmark uses processed, cluster-specific expression summaries from
+skin single-cell RNA sequencing: 44 samples and 15,496 features, with a binary
+LS/control response. The study includes adult and pediatric participants;
+see [Rosen et al., *JCI Insight* (2025), DOI: 10.1172/jci.insight.185758](https://doi.org/10.1172/jci.insight.185758).
+The benchmark uses the full cohort, rather than an age subgroup; it does not
+rerun the paper's predictive cross-validation.
+
+CD4 entries are median [25th–75th percentile], not confidence intervals. Sources:
+[CD4 analysis and provenance](results/2026-10-16_production-readiness/README.md),
+[capacity results](results/2026-10-16_large-feature-scaling/README.md)
+and [LS skin transcriptomics results and provenance](results/2026-10-17_torok-all-binary/README.md).
+For original-to-rewritten source revisions, see the
+[revision mapping](#source-revisions-after-history-cleanup).
+Capacity factor counts come from the corresponding per-backend
+`results/<dataset>/<backend>/seed_20000/benchmark_summary.json` files retained
+on the shared filesystem. The synthetic inputs have planted K=20, far below
+estimated K=109–178: successful execution does not establish factor recovery.
+Different p values use nonnested datasets, so runtime need not increase with p.
+
+Peak sampled process-group RSS for Rust/Python was 2.30/4.73 GiB at p=10,000,
+5.02/10.31 GiB at p=15,000, 8.97/18.13 GiB at p=20,000, and 3.79/9.43 GiB for
+LS skin transcriptomics (bytes divided by 2³⁰). Sampling every 50 ms can miss peaks and double-count
+shared pages; these are not exact cgroup peaks. Timings include fresh-process
+startup, imports, input I/O and preprocessing. Profiling overhead is unmeasured;
+caches were not flushed. Shared AMD EPYC 9575F nodes can experience interference.
+Singleton rows provide capacity observations, not timing uncertainty or universal
+speedup claims. R timeouts are bounded observations, not completed runtimes.
+
 ## Latent-factor comparisons
 
 ### Rust, Python and R pilot
@@ -56,6 +100,13 @@ Mean cross-run Jaccard averages all 100 combinations of ten runs from two arms.
 Those pairs reuse runs; they are neither 100 independent observations nor
 paired-seed comparisons. Ten repeats do not establish equivalence.
 
+![SSc marginal selection rates](results/2026-10-16_production-readiness/ssc/factor_rates.png)
+
+*Ten runs per backend. The heatmap shows factors with selection rates of at
+least 20% in any arm. See the benchmark CSVs for pointwise Wilson intervals;
+the colors show no uncertainty. Compare factor identities within a
+dataset/parameter cell, not across cells.*
+
 ### R-knockoff hybrid comparisons
 
 The separate `c4726e3` campaign compares native Rust, native Python, pure R,
@@ -77,6 +128,19 @@ R 9/10, Rust hybrid 6/10 and Python hybrid 8/10.
   we resubmitted ten Python-hybrid tasks with two hours each. Use the original
   figures until we validate the rerun.
 
+Median wall seconds per completed cell (ten repeats unless noted):
+
+| Delta | Lambda | Rust | Python | R | Rust with R knockoffs | Python with R knockoffs |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 0.01 | 0.1 | 35.66 | 27.64 | 61.43 | 43.53 | 581.0 (10 completed) |
+| 0.01 | 1.0 | 29.61 | 24.13 | 58.36 | 45.86 | 521.7 (7 completed) |
+| 0.1 | 0.1 | 14.49 | 12.35 | 25.49 | 15.85 | No completed cells |
+| 0.1 | 1.0 | 14.23 | 12.40 | 23.76 | 14.28 | Not started |
+
+These timing boundaries differ from the pilot's fresh-process timings;
+see the [replicate report](results/2026-10-16_backend-replicates/README.md)
+for details.
+
 ### Interpretation limits
 
 SSc input/response identifiers differ; the benchmark preserves historical positional
@@ -90,7 +154,16 @@ establish selection equivalence or FDR control. See the
 [pilot limits and controlled replay](results/2026-10-16_production-readiness/README.md)
 for solver interventions and incomplete simulation coverage.
 
+Independent random streams and near-singular least-squares rank decisions can
+produce different control-performance scores. KDE uses R's Gaussian kernel and
+`bw.nrd0` bandwidth, not identical FFT discretization or pixel layout.
+
 ## Configuration modes
+
+`SLIDE_KNOCKOFF_TOL`, `SLIDE_KNOCKOFF_MAX_ITER`, `SLIDE_KNOCKOFF_MATCH_R_LAMBDA`
+and `SLIDE_KNOCKOFF_MATCH_R_COV` override knockoff fitting for R-parity
+experiments. When any is set, `slide` warns and stores it under
+`config.env_overrides` in the checkpoint.
 
 Use `--configuration parity` for a Gaussian configuration-matched comparison.
 The default, `--configuration native`, preserves backend solver defaults and
