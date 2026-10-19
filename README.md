@@ -283,10 +283,46 @@ Python also exports network plots and pickled state; Rust retains checkpoints.
 
 ## Benchmarks
 
-See the [backend benchmarks](benchmarks/README.md) for runtime, memory, and
-latent-factor comparisons across R, Python, and Rust, including datasets,
-measurement conditions, and reproducibility details. The measurements describe
-specific source revisions and configurations, not a general speedup guarantee.
+### Runtime
+
+Frozen-source measurements: 500 knockoff draws, four workers, one BLAS thread;
+final predictive CV excluded. Wall time includes process startup and I/O.
+
+| Dataset (samples × features) | Rust (s) | Python (s) | R (s) |
+| --- | ---: | ---: | ---: |
+| CD4 (2,482 × 1,776) | 5.31 | 22.07 | 93.52 |
+| Synthetic (50 × 20,000) | 90.69 | 137.00 | Timeout at 7,200 |
+| LS skin transcriptomics (44 × 15,496) | 1,305.27 | 4,817.10 | Timeout at 7,200 |
+
+CD4 values are medians of ten runs; other rows are single runs. CD4/synthetic
+use Gaussian parity settings; LS uses native binary settings. These are
+configuration-specific observations, not universal speedups. See
+[measurement conditions, memory and full results](benchmarks/README.md#runtime-and-memory-comparisons).
+
+### Latent-factor selection and repeat overlap
+
+Matching latent scores does **not** guarantee matching selected factors.
+The separate five-backend SSc campaign compares native Rust/Python, pure R,
+and Rust/Python with R-generated knockoffs.
+
+![Marginal factor selection frequencies](benchmarks/results/2026-10-19_backend-overlap/factor_rates.png)
+
+Counts / completed repeats; display includes factors selected in ≥20% of runs
+in any backend. Compare factor identities only within a parameter cell.
+
+![Overall selected-set overlap across backends](benchmarks/results/2026-10-19_backend-overlap/overlap_marginal_backends.png)
+
+Mean Jaccard overlap uses **all selected marginal factors**, including rare ones.
+Off-diagonal entries compare all cross-backend repeat pairs; diagonal entries
+compare distinct repeats within a backend. Two empty sets count as 1; gray
+means no eligible pairs. Pairs reuse runs and are not independent observations.
+
+[Repeat-by-repeat heatmaps, CSVs and reproduction command](benchmarks/results/2026-10-19_backend-overlap/README.md)
+show variation behind these averages. Native backends and the Rust hybrid have
+ten repeats per cell; the Python hybrid has 10/7/0/0 completed runs, with timeout
+bias in the seven-run cell. Colors show no uncertainty or equivalence test.
+SSc preserves historical positional sample pairing; biological sample identity
+was not verified. See [benchmark details and limits](benchmarks/README.md#latent-factor-comparisons).
 
 ## Known limitations
 

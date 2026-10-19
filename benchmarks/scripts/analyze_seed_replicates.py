@@ -313,7 +313,87 @@ def plot(df, factors, order, heatmap_cells, out):
     plt.close(fig)
 
 
-def saved_selection_rates(source):
+def selection_overlap(df, order):
+    """All cross-run pairs; within-arm pairs exclude self-comparisons."""
+    rows = []
+    for cell, group in df.groupby("cell", sort=False):
+        for kind in ("marginal", "interaction"):
+            if kind not in group:
+                continue
+            for left, right in itertools.product(order, repeat=2):
+                a = list(group.loc[group.arm == left, kind])
+                b = list(group.loc[group.arm == right, kind])
+                pairs = list(itertools.combinations(a, 2) if left == right else itertools.product(a, b))
+                values = [_jaccard(x, y) for x, y in pairs]
+                rows.append(dict(cell=cell, kind=kind, left=left, right=right,
+                                 left_runs=len(a), right_runs=len(b), pairs=len(pairs),
+                                 both_empty_pairs=sum(not x and not y for x, y in pairs),
+                                 mean_jaccard=np.mean(values) if values else np.nan))
+    return pd.DataFrame(rows)
+
+
+def plot_overlap(df, order, out):
+    """Backend overview and repeat-level matrices, using every selected factor."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    summary = selection_overlap(df, order)
+    summary.to_csv(out / "overlap.csv", index=False)
+    labels = {"rust": "Rust", "python": "Python", "pure_r": "R",
+              "rust_r_knockoffs": "Rust + R KO", "r_knockoffs": "Python + R KO"}
+    for kind, data in summary.groupby("kind", sort=False):
+        cells = list(data.cell.unique())
+        for repeats in (False, True):
+            fig, axes = plt.subplots((len(cells) + 1) // 2, 2,
+                                     figsize=(14, 6 * ((len(cells) + 1) // 2)), squeeze=False)
+            for ax, cell in zip(axes.flat, cells):
+                group = df[df.cell == cell]
+                if repeats:
+                    group = pd.concat([group[group.arm == arm] for arm in order])
+                    sets = list(group[kind])
+                    matrix = np.array([[_jaccard(a, b) for b in sets] for a in sets])
+                    ticks, names, start = [], [], 0
+                    for arm in order:
+                        n = (group.arm == arm).sum()
+                        if n:
+                            ticks.append(start + n / 2)
+                            names.append(f"{labels.get(arm, arm)} (n={n})")
+                            start += n
+                    sns.heatmap(matrix, ax=ax, vmin=0, vmax=1, cmap="viridis", square=True,
+                                cbar_kws={"label": "Jaccard overlap"})
+                    ax.set_xticks(ticks, names)
+                    ax.set_yticks(ticks, names)
+                    boundaries = group.groupby("arm", sort=False).size().cumsum().values[:-1]
+                    ax.hlines(boundaries, 0, len(group), colors="white", linewidth=1)
+                    ax.vlines(boundaries, 0, len(group), colors="white", linewidth=1)
+                else:
+                    matrix = data[data.cell == cell].pivot(index="left", columns="right", values="mean_jaccard")
+                    matrix = matrix.reindex(index=order, columns=order)
+                    ax.set_facecolor("#dedede")
+                    sns.heatmap(matrix, ax=ax, vmin=0, vmax=1, cmap="viridis", annot=True, fmt=".2f",
+                                square=True, cbar_kws={"label": "Mean Jaccard overlap"})
+                    ax.set_xticklabels([labels.get(a, a) for a in order])
+                    ax.set_yticklabels([labels.get(a, a) for a in order])
+                ax.set(title=cell, xlabel="", ylabel="")
+                ax.tick_params(axis="x", rotation=25)
+                plt.setp(ax.get_xticklabels(), ha="right")
+                ax.tick_params(axis="y", rotation=0)
+            for ax in list(axes.flat)[len(cells):]:
+                ax.set_visible(False)
+            scope = "Individual repeats, grouped by backend" if repeats else "Mean overlap across repeats; diagonal excludes self-pairs"
+            fig.suptitle(f"{kind.capitalize()} selected-set overlap\n{scope}", fontsize=15)
+            fig.text(.5, .01, "Jaccard = intersection / union; two empty sets = 1. All selected factors included; identities are cell-local.\n"
+                     "Descriptive, dependent pairs; no uncertainty shown. Gray = no eligible pairs; absent repeat blocks = no completed runs.",
+                     ha="center", fontsize=10)
+            fig.tight_layout(rect=(0, .05, 1, .95), h_pad=3)
+            suffix = "repeats" if repeats else "backends"
+            fig.savefig(out / f"overlap_{kind}_{suffix}.png", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+
+def load_saved_selections(source):
     """Describe saved replicate selections, including only successful hybrid cells."""
     df = pd.read_csv(source / "timings.csv").fillna({"marginal": ""})
     rows = df[["arm", "cell", "marginal"]].to_dict("records")
@@ -327,6 +407,11 @@ def saved_selection_rates(source):
     runs = pd.DataFrame(rows)
     runs["marginal"] = runs.marginal.map(lambda text: set(text.split()))
     order = list(df.arm.unique()) + ["r_knockoffs"]
+    return runs, order
+
+
+def saved_selection_rates(source):
+    runs, order = load_saved_selections(source)
     rates = []
     for cell, group in runs.groupby("cell", sort=False):
         factors = sorted(set().union(*group.marginal), key=lambda f: int(f[1:]))
@@ -348,6 +433,8 @@ def plot_saved_selections(source, out):
     import matplotlib.pyplot as plt
     import seaborn as sns
 
+    runs, order = load_saved_selections(source)
+    plot_overlap(runs, order, out)
     rates, order = saved_selection_rates(source)
     rates.to_csv(out / "factor_rates.csv", index=False)
     labels = {"rust": "Rust", "python": "Python", "pure_r": "R",
@@ -641,6 +728,7 @@ def main():
     df[["arm", "cell", "seed", "run", "node", "k", "wall_seconds", "knockoff_seconds", "score", "n_marginal", "n_interaction"]].assign(
         marginal=df.marginal.map(lambda s: " ".join(sorted(s, key=lambda f: int(f[1:]))))).to_csv(
         args.out / "timings.csv", index=False)
+    plot_overlap(df, order, args.out)
     plot(df, factors, order, args.heatmap_cell or list(df.cell.unique()), args.out)
     logging.info("%s", summary.to_string(index=False))
     logging.info("%s", tests.to_string(index=False))

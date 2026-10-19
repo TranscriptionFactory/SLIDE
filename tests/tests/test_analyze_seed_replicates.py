@@ -201,3 +201,30 @@ def test_saved_hybrid_rates_preserve_partial_and_missing_cells():
         actual = rates[rates.arm == arm].set_index(["cell", "factor"])
         expected = original.set_index(["cell", "factor"])
         np.testing.assert_allclose(actual.loc[expected.index, "rate"], expected[f"{arm}_rate"])
+
+
+def test_overlap_uses_all_factors_excludes_self_and_preserves_missing():
+    df = runs([{'Z1', 'Z99'}, {'Z1'}], [{'Z1'}, set()])
+    result = analysis.selection_overlap(df, ['a', 'r', 'missing'])
+    marginal = result[result.kind == 'marginal'].set_index(['left', 'right'])
+    assert marginal.loc[('a', 'a'), 'mean_jaccard'] == .5
+    assert marginal.loc[('a', 'a'), 'pairs'] == 1
+    assert marginal.loc[('a', 'r'), 'mean_jaccard'] == .375
+    assert marginal.loc[('a', 'r'), 'pairs'] == 4
+    assert marginal.loc[('r', 'a'), 'mean_jaccard'] == .375
+    assert np.isnan(marginal.loc[('missing', 'a'), 'mean_jaccard'])
+    interactions = result[(result.kind == 'interaction') & (result.left == 'a') & (result.right == 'r')].iloc[0]
+    assert interactions.mean_jaccard == 1
+    assert interactions.both_empty_pairs == 4
+    singleton = analysis.selection_overlap(df.iloc[:1], ['a'])
+    assert singleton.mean_jaccard.isna().all()
+
+
+def test_overlap_renders_both_selection_kinds(tmp_path):
+    from PIL import Image
+    analysis.plot_overlap(runs([{'Z1'}, set()], [{'Z2'}, set()]), ['a', 'r', 'missing'], tmp_path)
+    assert len(list(tmp_path.glob('overlap_*.png'))) == 4
+    assert (tmp_path / 'overlap.csv').exists()
+    for path in tmp_path.glob('*.png'):
+        with Image.open(path) as image:
+            image.verify()

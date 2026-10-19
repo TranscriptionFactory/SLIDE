@@ -1,6 +1,8 @@
 # Backend benchmarks
 
 Compare runtime, memory use, and factor selection across R, Python, and Rust.
+The [repository README](../README.md#benchmarks) contains the concise runtime
+and heatmap overview; this page retains measurement and reproduction details.
 The saved results describe specific source revisions and configurations; they
 do not establish backend equivalence.
 
@@ -97,12 +99,8 @@ Mean cross-run Jaccard averages all 100 combinations of ten runs from two arms.
 Those pairs reuse runs; they are neither 100 independent observations nor
 paired-seed comparisons. Ten repeats do not establish equivalence.
 
-![SSc marginal selection rates](results/2026-10-16_production-readiness/ssc/factor_rates.png)
-
-*Ten runs per backend. The heatmap shows factors with selection rates of at
-least 20% in any arm. See the benchmark CSVs for pointwise Wilson intervals;
-the colors show no uncertainty. Compare factor identities within a
-dataset/parameter cell, not across cells.*
+See the [repository README](../README.md#latent-factor-selection-and-repeat-overlap)
+for selection-frequency and overall overlap heatmaps.
 
 ### R-knockoff hybrid comparisons
 
