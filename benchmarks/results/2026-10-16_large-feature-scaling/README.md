@@ -1,9 +1,11 @@
 # Large-feature capacity benchmark
 
-Follow-up to the readiness pilot, submitted 2026-10-16.
-Nine independent cells: Rust, Python and R at p=10,000, 15,000 and 20,000;
-n=50 and planted K=20. This is capacity screening, not a truth-validation sweep.
-One run per cell; actual estimated K can differ from planted K.
+Capacity benchmark submitted 2026-10-16: Rust, Python, and R at p=10,000,
+15,000, and 20,000, with n=50 and planted K=20. Each of the nine cells has one
+run. The benchmark measures execution time and memory, not factor recovery.
+Estimated K can differ from planted K.
+
+## Configuration
 
 Each cell requests four CPUs, 128 GiB and 2h15m on htc-n73 (Turin).
 The harness stops a cell after 7,200 seconds. Jobs run sequentially using
@@ -36,8 +38,8 @@ done
 bash "$OUT/submit.sh"
 ```
 
-These commands intentionally refuse existing inputs/submission records. For a
-new run, use a new dated directory and update manifest paths; do not overwrite.
+The commands reject existing inputs and submission records. For a new run,
+use a new dated directory and update the manifest paths.
 `manifests/` holds exact per-cell harness arguments; `cell.sh` reuses the existing
 manifest runner. `inputs.sha256` identifies input content. Each job verifies the
 pilot's source/binary/package manifest and this run's inputs before benchmarking.

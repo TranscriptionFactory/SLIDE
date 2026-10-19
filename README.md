@@ -24,7 +24,34 @@ You can install each implementation independently.
 Use Pixi for Python and Rust source installations. Precompiled distributions
 are not yet available as verified releases.
 
-### R install and usage
+Choose an implementation: [R](#r-installation) · [Python](#python-installation) ·
+[Rust](#rust-installation). You do not need to install all three.
+
+### Source checkout and platform coverage
+
+Pixi is the preferred source-build environment on Linux x86-64, macOS 15+
+(arm64 or x86-64), and native Windows x86-64. Install [Pixi](https://pixi.sh/latest/)
+for Python or Rust. Pixi uses the locked Python 3.11 default environment for native Python work and the isolated `rust`
+environment for Rust builds. See the platform status below before installing.
+
+#### Prerequisites
+
+- Linux x86-64: Pixi.
+- macOS 15+ (Intel or Apple Silicon): Pixi and Xcode
+  Command Line Tools (`xcode-select --install`).
+- Windows x86-64: Pixi, Visual Studio 2022 C++ Build
+  Tools, and the Windows SDK. Use PowerShell. Pixi does not install Visual
+  Studio or the SDK.
+
+For Python or Rust, clone the repository once. R installation does not need
+Pixi or a local checkout:
+
+```bash
+git clone https://github.com/TranscriptionFactory/SLIDE.git
+cd SLIDE
+```
+
+### R installation
 
 Requires R ≥ 4.2:
 
@@ -37,33 +64,32 @@ library(SLIDE)
 R SLIDE does not require Python or Rust. See the [R vignettes](vignettes/) and
 [R examples](examples/) for usage.
 
-### Source checkout and platform coverage
+### Python installation
 
-Pixi is the preferred source-build environment on Linux x86-64, macOS 15+
-(arm64 or x86-64), and native Windows x86-64. Install [Pixi](https://pixi.sh/latest/)
-and, for Rust builds, [rustup](https://rustup.rs/). Pixi uses the locked
-Python 3.11 default environment for native Python work and the isolated `rust`
-environment for Rust builds. See the platform status below before installing.
-
-#### Prerequisites
-
-- Linux x86-64: Pixi and rustup for Rust builds.
-- macOS 15+ (Intel or Apple Silicon): Pixi, rustup for Rust builds, and Xcode
-  Command Line Tools (`xcode-select --install`).
-- Windows x86-64: Pixi, rustup for Rust builds, Visual Studio 2022 C++ Build
-  Tools, and the Windows SDK. Use PowerShell. Pixi does not install Visual
-  Studio or the SDK.
-
-Clone the repository, then choose Rust, Python, or both:
+Complete the [shared source setup](#source-checkout-and-platform-coverage).
+Pixi supplies Python 3.11; Rust and R are not required for the native Python backend.
 
 ```bash
-git clone https://github.com/TranscriptionFactory/SLIDE.git
-cd SLIDE
+pixi install --locked -e default
+pixi run --locked -e default check
 ```
 
-#### Rust source build with Pixi
+Run Python commands through the same environment:
 
-These commands apply on Linux, macOS, and Windows PowerShell:
+```bash
+pixi run --locked -e default slide-py --version
+```
+
+Select `knockoff_backend: python` to run without R. For optional R integration,
+see [Python development setup](CONTRIBUTING.md#python).
+
+Alternative: [Python uv/pip and system packages](docs/python-source-alternatives.md).
+
+### Rust installation
+
+Complete the [shared source setup](#source-checkout-and-platform-coverage),
+then install [rustup](https://rustup.rs/). Python and R installations are not
+required. These commands apply on Linux, macOS, and Windows PowerShell:
 
 ```bash
 rustup toolchain install 1.99.1 --profile minimal
@@ -91,26 +117,9 @@ Keep the Pixi environment available at runtime; moving the bare executable does
 not make a portable installation. Linux and macOS Rust builds use the compilers
 and numerical libraries supplied by Pixi; Windows also needs MSVC and the SDK.
 
-#### Python source install with Pixi
+Alternative: [Rust system packages and cluster modules](docs/rust-source-alternatives.md).
 
-```bash
-pixi install --locked -e default
-pixi run --locked -e default check
-```
-
-Run Python commands through the same environment:
-
-```bash
-pixi run --locked -e default slide-py --version
-```
-
-Select `knockoff_backend: python` to run without R. For optional R integration,
-see [Python development setup](CONTRIBUTING.md#python).
-
-Alternative installation instructions: [Rust system packages and cluster modules](docs/rust-source-alternatives.md)
-· [Python uv/pip and system packages](docs/python-source-alternatives.md).
-
-#### Platform status
+### Platform status
 
 | Platform | Rust | Python |
 | --- | --- | --- |

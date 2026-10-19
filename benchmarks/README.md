@@ -1,12 +1,22 @@
 # Backend benchmarks
 
+Compare runtime, memory use, and factor selection across R, Python, and Rust.
+The saved results describe specific source revisions and configurations; they
+do not establish backend equivalence.
+
+**Contents:** [Tools](#maintained-tools-and-saved-results) ·
+[Run a benchmark](#running) · [Configuration](#configuration-modes) ·
+[Runtime and memory](#runtime-and-memory-comparisons) ·
+[Factor selection](#latent-factor-comparisons) ·
+[Limitations](#interpretation-and-limits)
+
 ## Maintained tools and saved results
 
 Use the tools in [`scripts/`](scripts/) and find saved measurements in
 [`results/`](results/).
 
-See the [retained-evidence index](results/README.md) for current
-runtime, memory and significant-LF comparisons. Keep each new run in a dated,
+See the [results index](results/README.md) for saved comparisons.
+Keep each new run in a dated,
 descriptive directory under `benchmarks/results/`, with its command/configuration
 and differences from the preceding run in a `README.md`.
 
@@ -21,23 +31,10 @@ and differences from the preceding run in a `README.md`.
   `analyze_paired_xtilde.py`, `replay_paired_xtilde.py`: saved-draw preparation,
   replay and analysis for investigating selection differences.
 
-The 13 files above support benchmark execution, analysis and paired-draw checks.
-The fixed-dataset diagnostics [replay_jitter.py](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/benchmarks/scripts/replay_jitter.py),
-[replay_gaussian_parity.py](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/benchmarks/scripts/replay_gaussian_parity.py) and its
-[r_stat.R helper](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/archive/2026-10-17_production-cleanup/benchmark_results/2026-10-13_s-zero-handling/r_stat.R) are historical source, not maintained
-entrypoints. They require private scratch trees or fixed historical controls.
-
-Find one-off diagnostics, old plotting tools and machine-specific launchers in
-the historical [cleanup archive](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/archive/2026-10-17_production-cleanup/README.md).
-Use the retained run commands rather than those historical launchers.
-Commands recorded inside frozen runs may use the original `benchmarks/<script>`
-layout after entering a frozen source tree; maintained current-checkout tools
-live under `benchmarks/scripts/`.
-
 ## Runtime and memory comparisons
 
-These are profiled measurements of frozen source `4b32111`, not benchmarks of
-every subsequent change. All rows use 500 knockoff draws, four workers, one BLAS
+Measurements use frozen source `4b32111` with profiling enabled.
+All rows use 500 knockoff draws, four workers, one BLAS
 thread and homogeneous LOVE; final predictive CV is excluded. CD4 and synthetic
 capacity runs use Gaussian parity settings. The localized scleroderma (LS) dataset uses native binary-response
 settings, whose solver/grid differences are intentional. Delta/lambda are 0.1/0.1.
@@ -231,9 +228,8 @@ as well as time when evaluating parity settings.
 
 The basic harness has these limitations: backend-specific RNG streams and swaps;
 Python excludes imports from timing while Rust/R include subprocess startup;
-one pass per cell in fixed order. A future equal-work study needs paired saved
-draws, convergence diagnostics, aligned timing boundaries, repeated cells, and
-randomized backend order. The [readiness pilot](results/2026-10-16_production-readiness/README.md#measurement)
+one pass per cell in fixed order. Equal-work comparisons require paired saved draws, convergence diagnostics,
+aligned timing boundaries, repeated cells, and randomized backend order. The [readiness pilot](results/2026-10-16_production-readiness/README.md#measurement)
 uses fresh processes and repeated cells; consult each campaign for its timing boundaries.
 
 ## Saved-draw S-only selection replay
@@ -252,6 +248,20 @@ repeats each arm's first fit, and checks tied-entry statistics and thresholds.
 It saves per-draw fits/W, paired vote differences and Monte Carlo SE,
 prefix/findOptIter summaries, input hashes, and a vote-difference figure.
 This diagnoses fixed-design sensitivity, not full-pipeline parity or FDR control.
+
+## Historical tools
+
+The fixed-dataset diagnostics [replay_jitter.py](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/benchmarks/scripts/replay_jitter.py),
+[replay_gaussian_parity.py](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/benchmarks/scripts/replay_gaussian_parity.py) and its
+[r_stat.R helper](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/archive/2026-10-17_production-cleanup/benchmark_results/2026-10-13_s-zero-handling/r_stat.R) are historical source, not maintained
+entrypoints. They require private scratch trees or fixed historical controls.
+
+Find one-off diagnostics, old plotting tools and machine-specific launchers in
+the historical [cleanup archive](https://github.com/TranscriptionFactory/SLIDE/blob/0c030651bf4db5dd0d184e09f7274ab319d66bce/archive/2026-10-17_production-cleanup/README.md).
+Use the retained run commands rather than those historical launchers.
+Commands recorded inside frozen runs may use the original `benchmarks/<script>`
+layout after entering a frozen source tree; maintained current-checkout tools
+live under `benchmarks/scripts/`.
 
 ## Source revisions after history cleanup
 

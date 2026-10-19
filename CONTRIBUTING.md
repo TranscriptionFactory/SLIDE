@@ -50,7 +50,7 @@ tests/                         # Configs, fixtures, test scripts
 
 ### Rust
 
-Use the preferred [Pixi source-build setup](README.md#source-checkout-and-platform-coverage)
+Use the preferred [Rust installation](README.md#rust-installation)
 for the locked native libraries and compiler environment. Rust builds use the
 isolated `rust` environment and rustup 1.99.1 (MSRV 1.88). See
 [manual Rust source builds](docs/rust-source-alternatives.md) for system-package
@@ -59,7 +59,7 @@ any target as verified.
 
 ### Python
 
-Use the preferred [Pixi source-build setup](README.md#source-checkout-and-platform-coverage)
+Use the preferred [Python installation](README.md#python-installation)
 for native Python development. The default environment selects Python 3.11,
 keeps CVXPY, and excludes R. Use `pixi install --locked -e dev` only for the
 Linux x86-64 R-enabled development environment; R and `rpy2` are not native

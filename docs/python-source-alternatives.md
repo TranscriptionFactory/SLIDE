@@ -1,6 +1,6 @@
 # Manual Python source installation
 
-Prefer the [Pixi installation](../README.md#source-checkout-and-platform-coverage).
+Prefer the [Pixi installation](../README.md#python-installation).
 The recipes below use system compilers and libraries. Run commands from the
 repository root.
 

@@ -1,20 +1,19 @@
 # Production-readiness pilot
 
-As of 2026-10-17, saved summaries contain all 120 SSc and 30 CD4 observations
-and the bounded scaling results. The remaining simulations were cancelled; unrun cells are
-not successes. These partial results do not establish production readiness or
-backend equivalence. See [coverage and jobs](#coverage-and-jobs),
+The 2026-10-17 results contain all 120 SSc and 30 CD4 observations and the
+bounded scaling runs. Cancellation left the simulation study incomplete, so
+the results do not establish production readiness or backend equivalence.
+See [coverage and jobs](#coverage-and-jobs),
 [replicate summaries](#completed-replicate-summaries), and
 [factor identities and frequencies](#backend-selection-details).
 
-Preflight findings: SSc X uses V1…V24 while Y uses subject identifiers. Both
+## Input alignment
+
+SSc X uses V1…V24 while Y uses subject identifiers. Both
 files match historical/original hashes exactly. Preserve their positional pairing
 for computational comparison; biological X/Y identity is unverified. CD4 has
-matching ordered IDs and actual n=2482,p=1776 (old comments counted headers).
-Build job 11961811 compiled the release binary successfully, then failed its
-optional `emit_sdp_stages` diagnostic because `sigma.csv` was absent. This setup
-failure is retained; the build script now runs ordinary SDP tests instead of a
-fixture-dependent ignored diagnostic. No model-cell retry follows this correction.
+matching ordered IDs and n=2482,p=1776; earlier comments included headers
+in those counts.
 
 ## Scope and frozen inputs
 
@@ -132,10 +131,15 @@ in this result directory.
 
 ## Coverage and jobs
 
-The user cancelled the remaining simulations after about 7 hours 14 minutes of
-job 11962087, prioritizing scaling above 5,000 input features. Applied
-`scancel 11962087`; preserve partial outputs and count unrun cells as unrun, not
-successful. The `afterany` dependency allowed analysis of the partial run.
+Build job 11961811 compiled the release binary successfully, then failed its
+optional `emit_sdp_stages` diagnostic because `sigma.csv` was absent. This setup
+failure is retained; the build script now runs ordinary SDP tests instead of a
+fixture-dependent ignored diagnostic. No model-cell retry follows this correction.
+
+Job 11962087 was cancelled with `scancel 11962087` after about 7 hours
+14 minutes to prioritize scaling above 5,000 input features. The saved results
+include partial outputs; unrun cells remain excluded from successful counts.
+The `afterany` dependency allowed analysis of the partial run.
 Scaling job 11962088 had already completed.
 Its 600-second cell cap was a pilot compute guardrail, not a capacity limit;
 R's timeout at p=4,000 caused p=8,000 and p=12,000 to be skipped under the approved

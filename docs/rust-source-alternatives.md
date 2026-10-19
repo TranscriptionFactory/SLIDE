@@ -1,6 +1,6 @@
 # Manual Rust source builds
 
-Use the [Pixi source-build recipe](../README.md#source-checkout-and-platform-coverage)
+Use the [Pixi source-build recipe](../README.md#rust-installation)
 unless you need system packages or cluster modules. Run the commands below from
 the repository root.
 

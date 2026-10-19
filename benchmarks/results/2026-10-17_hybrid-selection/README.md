@@ -4,7 +4,7 @@
 
 Compare Rust and Python with native or R-generated knockoffs against pure R.
 The results come from the [October 16 replicate campaign](../2026-10-16_backend-replicates/README.md);
-we did not pool them with the production-readiness pilot.
+they are separate from the production-readiness pilot.
 
 Annotations give selected/completed runs. Colors show selection rates for
 factors selected in at least 20% of completed runs in any arm within that cell.
@@ -36,6 +36,6 @@ corresponding `sig_LFs.txt` files. No benchmark jobs or statistical tests reran.
 
 ## Extended-limit rerun
 
-We submitted a [ten-task Python/R-knockoff rerun](../2026-10-17_python-r-knockoffs-extended/README.md)
-as array 11967812 with two hours per task. This figure retains the original
-results until we validate the completed rerun.
+The [ten-task Python/R-knockoff rerun](../2026-10-17_python-r-knockoffs-extended/README.md)
+uses array 11967812 with two hours per task. This figure shows the original
+results; rerun results require validation before inclusion.

@@ -1,7 +1,8 @@
 # Four-arm backend statistical analysis
 
-Source: `c4726e3`. Analysis job 11958124 (exit 0) covers 40 runs /
-160 successful cells, ten repeats per arm and cell.
+Four-arm comparison of factor selection and runtime: 40 runs and 160 successful
+cells, with ten repeats per arm and cell. Source: `c4726e3`; analysis job
+11958124 completed with exit code 0.
 Python-with-R-knockoffs is excluded from this four-arm analysis after all ten
 tasks timed out; see [completed cells and timeout coverage](SETUP.md#python-with-r-knockoffs-partial-evidence-only).
 
@@ -10,9 +11,9 @@ tasks timed out; see [completed cells and timeout coverage](SETUP.md#python-with
 Arms: Rust, Python (DSDP), pure R, Rust-with-R-knockoffs. In the harness,
 `rust_r_knockoffs` means the Rust CLI with R-generated knockoffs (R SDP and Gaussian draws);
 `r_knockoffs` means `slide-py` with Python LOVE and R knockoffs via `rpy2`.
-These are distinct arms, as defined in
+The harness defines these arms in
 [`benchmarks/scripts/benchmark_backends.py`](../../scripts/benchmark_backends.py).
-The latter arm had no completed statistical analysis and remains excluded.
+The four-arm statistical analysis excludes Python with R knockoffs.
 Delta 0.01/0.1 × lambda 0.1/1.0; 500 iterations, specificity 0.1,
 SLIDE selection, parity settings, four workers and one BLAS thread.
 Seed labels: 42, 1000 through 9000 by 1000. Fresh pure R is the reference.

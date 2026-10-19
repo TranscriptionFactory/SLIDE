@@ -1,10 +1,13 @@
-# Test Fixtures
+# Test fixtures
 
-Reference outputs from the canonical R LOVE package, R `glmnet`, and R `knockoff` for parity testing of the Rust implementation.
+Reference outputs from R LOVE, R `glmnet`, and R `knockoff` for Rust parity
+tests. Individual fixture READMEs describe their inputs, expected values, and
+comparison limits.
 
 See [fixture generation](generate/README.md) for regeneration instructions.
 
-Current fixture groups:
+## Fixture groups
+
 - `love/` — R LOVE outputs on the portable SSc snapshot
 - `glmnet/` — R `glmnet` path and knockoff-stat snapshots
 - `sdp/` — R `knockoff` solver diagonals

@@ -1,8 +1,7 @@
 # Localized scleroderma skin transcriptomics: binary-response capacity benchmark
 
-Three-cell run submitted 2026-10-17. Rust, Python and installed
-R SLIDE 0.1.1 use all 44 samples and 15,496 cluster-specific expression features.
-These are processed expression summaries, not raw single-cell counts.
+Capacity comparison submitted 2026-10-17: one run each of Rust, Python, and
+R SLIDE 0.1.1 on 44 samples and 15,496 cluster-specific expression features.
 
 ## Dataset and publication
 
@@ -16,9 +15,8 @@ Source: Rosen et al., *Unique and shared transcriptomic signatures underlying
 localized scleroderma pathogenesis identified using interpretable machine learning*,
 *JCI Insight* (2025), [DOI: 10.1172/jci.insight.185758](https://doi.org/10.1172/jci.insight.185758).
 
-Historical paths and dataset IDs retain `Torok` / `torok_all_binary` so saved
-commands and provenance remain valid. This is a backend capacity benchmark;
-we did not rerun the paper's predictive cross-validation.
+Saved paths and dataset IDs use `Torok` / `torok_all_binary`. This capacity
+benchmark does not repeat the paper's predictive cross-validation.
 
 ## Inputs and checks
 
