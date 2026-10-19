@@ -10,8 +10,7 @@ You can install each implementation independently.
 
 **Contents:** [Installation](#installation) · [Quick start](#quick-start) ·
 [Outputs](#result-files-and-plots) · [Documentation](#documentation) ·
-[Benchmarks](#benchmarks) · [Known limitations](#known-limitations) ·
-[Contributing](#development) · [License and citation](#license-and-citation)
+[Benchmarks](#benchmarks) · [Contributing](#development) · [License and citation](#license-and-citation)
 
 | Implementation | Features | Entry point |
 | --- | --- | --- |
@@ -323,18 +322,6 @@ ten repeats per cell; the Python hybrid has 10/7/0/0 completed runs, with timeou
 bias in the seven-run cell. Colors show no uncertainty or equivalence test.
 SSc preserves historical positional sample pairing; biological sample identity
 was not verified. See [benchmark details and limits](benchmarks/README.md#latent-factor-comparisons).
-
-## Known limitations
-
-- The implementations can select different factors even when latent scores
-  agree. Do not assume backend equivalence.
-- Configuration keys and relative-path rules differ between implementations;
-  YAML files are not interchangeable.
-- Use unique feature names. Python adds suffixes to duplicate CSV headers,
-  while Rust preserves duplicates.
-- macOS and Windows source recipes are experimental; native validation is
-  pending. See [platform status](#platform-status).
-- Python rerun state restoration needs repair; do not rely on it to resume work.
 
 ## Development
 
