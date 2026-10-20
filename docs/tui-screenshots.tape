@@ -20,7 +20,7 @@ Type "clear"
 Enter
 Show
 
-Type "./target/debug/slide view --checkpoint .tmp/tui-smoke/tui-smoke-checkpoint.json --config .tmp/tui-smoke/tui-smoke.yaml --no-follow"
+Type '"${SLIDE_RS_BIN:-./target/debug/slide}" view --checkpoint "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke-checkpoint.json" --config "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke.yaml" --no-follow'
 Enter
 Wait+Screen /LOVE -> SLIDE Monitor/
 Sleep 800 ms
@@ -41,12 +41,12 @@ Wait+Screen /Factors/
 Sleep 700 ms
 Screenshot docs/assets/tui/factor-1.png
 
-PageDown
+Type "j"
 Wait+Screen /factor 2/
 Sleep 700 ms
 Screenshot docs/assets/tui/factor-2.png
 
-PageDown
+Type "j"
 Wait+Screen /factor 3/
 Sleep 700 ms
 Screenshot docs/assets/tui/factor-3.png

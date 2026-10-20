@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -19,8 +19,8 @@ use ratatui::symbols;
 use ratatui::text::Text;
 use ratatui::widgets::canvas::Canvas;
 use ratatui::widgets::{
-    Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, Gauge, GraphType,
-    Paragraph, Row, Sparkline, Table, Tabs, Wrap,
+    Axis, Block, Borders, Cell, Chart, Dataset, Gauge, GraphType, Paragraph, Row, Sparkline, Table,
+    Tabs, Wrap,
 };
 use ratatui::{DefaultTerminal, Frame};
 use slide_core::{
@@ -108,56 +108,11 @@ fn run_app(
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                    _ if app.quit_confirm => {
-                        if app.quit_key(key.code) {
-                            break;
-                        }
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if app.handle_key(key.code, key.modifiers)? {
+                        break;
                     }
-                    _ if app.feature_search_editing => app.handle_feature_search_key(key.code),
-                    KeyCode::Char('q') => {
-                        if app.quit_key(key.code) {
-                            break;
-                        }
-                    }
-                    KeyCode::Char('/') => app.start_feature_search(),
-                    KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => app.next_tab(),
-                    KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => app.prev_tab(),
-                    KeyCode::Down | KeyCode::Char('j') => app.next_run(),
-                    KeyCode::Up | KeyCode::Char('k') => app.prev_run(),
-                    KeyCode::PageDown => app.next_factor(),
-                    KeyCode::PageUp => app.prev_factor(),
-                    KeyCode::Char('r') => app.reload()?,
-                    KeyCode::Char('v') => match app.tab {
-                        Tab::Love => app.love_sub_view = app.love_sub_view.next(),
-                        Tab::Factors => app.factor_sub_view = app.factor_sub_view.next(),
-                        Tab::Slide => {
-                            app.selection_sub_view = app.selection_sub_view.next();
-                        }
-                        Tab::Performance => {
-                            if let Some(data) = app.data.as_ref() {
-                                app.performance_sub_view =
-                                    app.performance_sub_view.next(data.response_type);
-                            }
-                        }
-                        _ => {}
-                    },
-                    KeyCode::Char('g') if app.tab == Tab::Overview => {
-                        app.grid_metric = app.grid_metric.next();
-                    }
-                    KeyCode::Char('m')
-                        if app.tab == Tab::Love
-                            && app.love_sub_view == LoveSubView::LoadingMatrix =>
-                    {
-                        app.loading_row_mode = app.loading_row_mode.next();
-                    }
-                    KeyCode::Char(c @ '1'..='7') if app.tab == Tab::Love => {
-                        if let Some(view) = LoveSubView::from_number(c as u8 - b'0') {
-                            app.love_sub_view = view;
-                        }
-                    }
-                    _ => {}
-                },
+                }
                 Event::Resize(_, _) => {}
                 _ => {}
             }
@@ -188,6 +143,7 @@ impl Tab {
 enum SelectionSubView {
     Marginal,
     Interactions,
+    Response,
     Network,
 }
 
@@ -195,7 +151,8 @@ impl SelectionSubView {
     fn next(self) -> Self {
         match self {
             Self::Marginal => Self::Interactions,
-            Self::Interactions => Self::Network,
+            Self::Interactions => Self::Response,
+            Self::Response => Self::Network,
             Self::Network => Self::Marginal,
         }
     }
@@ -350,6 +307,10 @@ struct App {
     log_path: Option<PathBuf>,
     startup: String,
     quit_confirm: bool,
+    row: usize,
+    viewport: std::cell::Cell<usize>,
+    row_count: std::cell::Cell<usize>,
+    help: bool,
     tab: Tab,
     data: Option<DashboardData>,
     selected_run: usize,
@@ -373,6 +334,158 @@ struct App {
 }
 
 impl App {
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
+        if self.quit_confirm {
+            return Ok(self.quit_key(code));
+        }
+        if self.feature_search_editing {
+            self.handle_feature_search_key(code);
+            return Ok(false);
+        }
+        if self.help {
+            self.help = false;
+            return Ok(false);
+        }
+        if modifiers == KeyModifiers::CONTROL {
+            match code {
+                KeyCode::Char('d') => self.move_primary(true, self.viewport.get().max(2) / 2),
+                KeyCode::Char('u') => self.move_primary(false, self.viewport.get().max(2) / 2),
+                _ => {}
+            }
+            return Ok(false);
+        }
+        if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+            return Ok(false);
+        }
+        match code {
+            KeyCode::Char('q') => return Ok(self.quit_key(code)),
+            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('/') => self.start_feature_search(),
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                self.next_tab();
+                self.row = 0;
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                self.prev_tab();
+                self.row = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.move_primary(true, 1),
+            KeyCode::Up | KeyCode::Char('k') => self.move_primary(false, 1),
+            KeyCode::Char('J') => {
+                self.next_run();
+                self.row = 0;
+            }
+            KeyCode::Char('K') => {
+                self.prev_run();
+                self.row = 0;
+            }
+            KeyCode::PageDown => self.next_factor(),
+            KeyCode::PageUp => self.prev_factor(),
+            KeyCode::Char('r') => self.reload()?,
+            KeyCode::Char('v') => {
+                self.row = 0;
+                match self.tab {
+                    Tab::Love => self.love_sub_view = self.love_sub_view.next(),
+                    Tab::Factors => self.factor_sub_view = self.factor_sub_view.next(),
+                    Tab::Slide => self.selection_sub_view = self.selection_sub_view.next(),
+                    Tab::Performance => {
+                        if let Some(data) = self.data.as_ref() {
+                            self.performance_sub_view =
+                                self.performance_sub_view.next(data.response_type);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char('g') if self.tab == Tab::Overview => {
+                self.grid_metric = self.grid_metric.next()
+            }
+            KeyCode::Char('m')
+                if self.tab == Tab::Love && self.love_sub_view == LoveSubView::LoadingMatrix =>
+            {
+                self.loading_row_mode = self.loading_row_mode.next()
+            }
+            KeyCode::Char(c @ '1'..='7') if self.tab == Tab::Love => {
+                if let Some(view) = LoveSubView::from_number(c as u8 - b'0') {
+                    self.love_sub_view = view;
+                    self.row = 0;
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn move_primary(&mut self, forward: bool, amount: usize) {
+        let (position, count) = match self.tab {
+            Tab::Overview => (
+                self.selected_run,
+                self.data.as_ref().map_or(0, |d| d.runs.len()),
+            ),
+            Tab::Factors => (
+                self.selected_factor,
+                self.current_run().map_or(0, |r| r.love.k),
+            ),
+            _ => (self.row, self.row_count.get()),
+        };
+        let next = if forward {
+            position.saturating_add(amount).min(count.saturating_sub(1))
+        } else {
+            position.saturating_sub(amount)
+        };
+        match self.tab {
+            Tab::Overview => {
+                self.selected_run = next;
+                self.selected_factor = self
+                    .selected_factor
+                    .min(self.current_run().map_or(0, |r| r.love.k.saturating_sub(1)));
+            }
+            Tab::Factors => self.selected_factor = next,
+            _ => self.row = next,
+        }
+    }
+
+    fn render_rows(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: String,
+        headers: Vec<&str>,
+        rows: Vec<Vec<String>>,
+        widths: Vec<Constraint>,
+    ) {
+        let height = area.height.saturating_sub(3) as usize;
+        self.viewport.set(height.max(1));
+        self.row_count.set(rows.len());
+        let selected = self.row.min(rows.len().saturating_sub(1));
+        let start = selected.saturating_sub(height.saturating_sub(1));
+        let total = rows.len();
+        let visible = rows
+            .into_iter()
+            .enumerate()
+            .skip(start)
+            .take(height)
+            .map(|(i, row)| {
+                Row::new(row).style(if i == selected {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                })
+            });
+        frame.render_widget(
+            Table::new(visible, widths)
+                .header(Row::new(headers).style(Style::default().fg(Color::Yellow)))
+                .block(Block::default().borders(Borders::ALL).title(format!(
+                    "{}/{} | {title}",
+                    if total == 0 { 0 } else { selected + 1 },
+                    total
+                ))),
+            area,
+        );
+    }
+
     fn quit_key(&mut self, key: KeyCode) -> bool {
         if self.quit_confirm {
             self.quit_confirm = false;
@@ -470,6 +583,10 @@ impl App {
             log_path: None,
             startup: "Read-only viewer; external process status unknown".into(),
             quit_confirm: false,
+            row: 0,
+            viewport: std::cell::Cell::new(1),
+            row_count: std::cell::Cell::new(0),
+            help: false,
             tab: Tab::Overview,
             selected_run: 0,
             selected_factor: 0,
@@ -904,11 +1021,17 @@ impl App {
     }
 
     fn render(&self, frame: &mut Frame) {
+        if self.quit_confirm {
+            frame.render_widget(Paragraph::new("Stop owned worker? y/Enter stops; any other key cancels. Uncheckpointed work may be lost.").wrap(Wrap {trim:true}).block(Block::default().borders(Borders::ALL).title("Confirm quit")),frame.area());
+            return;
+        }
+        self.row_count.set(0);
+        self.viewport.set(1);
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Length(4),
+                Constraint::Length(if frame.area().height < 25 { 2 } else { 4 }),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
@@ -952,21 +1075,24 @@ impl App {
             );
         frame.render_widget(titles, layout[0]);
 
-        let message = if self.quit_confirm {
-            "Stop the active owned worker and quit? y/Enter: stop | any other key: cancel (uncheckpointed work may be lost)".to_owned()
-        } else {
-            self.execution_status()
-        };
+        let message = self.execution_status();
         let log = self
             .log_path
             .as_ref()
             .map(|p| format!("Log: {}", p.display()))
             .unwrap_or_default();
         frame.render_widget(
-            Paragraph::new(format!("{message}\n{}\n{log}", self.startup)).wrap(Wrap { trim: true }),
+            Paragraph::new(if frame.area().height < 25 {
+                format!("{message}\n{log}")
+            } else {
+                format!("{message}\n{}\n{log}", self.startup)
+            })
+            .wrap(Wrap { trim: true }),
             layout[1],
         );
-        if self.data.is_none() {
+        if self.help {
+            frame.render_widget(Paragraph::new("j/k or arrows: primary list (Factors: factors; Overview: evaluations)\nJ/K: global evaluation | Ctrl-d/u: half viewport\nTab/Shift-Tab, h/l: tabs | v: subview | PgUp/Down: legacy factors\nLOVE 1-7: view | g: grid metric | m: row mode\n/: feature search | Enter: apply | Esc: clear | r: reload | q: quit\nAny key closes help").block(Block::default().borders(Borders::ALL).title("Keys")), layout[2]);
+        } else if self.data.is_none() {
             self.render_waiting(frame, layout[2]);
         } else {
             match self.tab {
@@ -978,15 +1104,25 @@ impl App {
             }
         }
 
-        let mut footer_spans = vec![
-            "q quit".into(),
-            " | tab switch".dark_gray(),
-            " | j/k run".dark_gray(),
-            " | r reload".dark_gray(),
-            " | / feat".dark_gray(),
-        ];
+        let target = match self.tab {
+            Tab::Overview => "evaluations",
+            Tab::Factors => "factors",
+            Tab::Slide => match self.selection_sub_view {
+                SelectionSubView::Marginal | SelectionSubView::Interactions => "selection",
+                SelectionSubView::Response => "response",
+                SelectionSubView::Network => "(Pg: factor)",
+            },
+            Tab::Love => match self.love_sub_view {
+                LoveSubView::GammaDistribution => "gamma",
+                LoveSubView::InteractionNetwork => "pairs",
+                _ => "(Pg: factor)",
+            },
+            Tab::Performance => "rows",
+        };
+        let mut footer_spans =
+            vec![format!("q quit | ? keys | j/k {target} | J/K eval | Tab tabs | / feat").into()];
         match self.tab {
-            Tab::Factors => footer_spans.push(" | v view | pgup/pgdn factor".dark_gray()),
+            Tab::Factors => footer_spans.push(" | v view | j/k factor".dark_gray()),
             Tab::Love => {
                 if self.love_sub_view.is_advanced() {
                     footer_spans.push(" | adv | 1-5 primary | v diag".dark_gray());
@@ -997,7 +1133,7 @@ impl App {
                     footer_spans.push(" | m row mode".dark_gray());
                 }
             }
-            Tab::Slide => footer_spans.push(" | v view | pgup/pgdn factor".dark_gray()),
+            Tab::Slide => footer_spans.push(" | v view | ^d/u half".dark_gray()),
             Tab::Performance => footer_spans.push(" | v sub-view".dark_gray()),
             Tab::Overview => footer_spans.push(" | g grid metric".dark_gray()),
         }
@@ -1075,7 +1211,7 @@ impl App {
             .split(area);
 
         self.render_summary(frame, sections[0]);
-        frame.render_widget(self.run_table(), sections[1]);
+        frame.render_widget(self.run_table(sections[1].height), sections[1]);
         frame.render_widget(
             self.grid_widget(self.grid_metric.title(), self.grid_metric),
             sections[2],
@@ -1084,6 +1220,8 @@ impl App {
     }
 
     fn render_factors(&self, frame: &mut Frame, area: Rect) {
+        self.viewport
+            .set(area.height.saturating_sub(3).max(1) as usize);
         match self.factor_sub_view {
             FactorSubView::TextPlot => {
                 self.render_feature_text(frame, area);
@@ -1094,6 +1232,21 @@ impl App {
                 return;
             }
             FactorSubView::Tables => {}
+        }
+        if area.width < 100 {
+            self.viewport
+                .set(area.height.saturating_sub(3).max(1) as usize);
+            frame.render_widget(
+                self.factor_feature_table(FactorMetric::Loading).block(
+                    Block::default().borders(Borders::ALL).title(format!(
+                        "Factor {}/{} | top 10 loading | compact",
+                        self.selected_factor + 1,
+                        self.current_run().map_or(0, |r| r.love.k)
+                    )),
+                ),
+                area,
+            );
+            return;
         }
         let sections = Layout::default()
             .direction(Direction::Vertical)
@@ -1147,6 +1300,8 @@ impl App {
             )
             .split(sections[1]);
 
+        self.viewport
+            .set(body[1].height.saturating_sub(3).max(1) as usize);
         frame.render_widget(self.factor_overview_widget(), body[0]);
         frame.render_widget(self.factor_feature_table(FactorMetric::Loading), body[1]);
         frame.render_widget(
@@ -1158,7 +1313,7 @@ impl App {
 
     fn render_feature_text(&self, frame: &mut Frame, area: Rect) {
         let title = format!(
-            "Feature text plot | Z{} | v view | PgUp/PgDn factor",
+            "Feature text plot | Z{} | v view | j/k factor",
             self.selected_factor
         );
         let result = (|| -> Result<Vec<crate::output::Feature>> {
@@ -1348,7 +1503,7 @@ impl App {
             })
             .collect();
         let title = format!(
-            "Selected interaction network | Z{factor} | {}/{} pairs | PgUp/PgDn factor",
+            "Selected interaction network | Z{factor} | {}/{} pairs | j/k factor",
             edges.len(),
             pairs.len()
         );
@@ -1386,10 +1541,10 @@ impl App {
                 self.render_block_correlation_heatmap(frame, sections[1]);
             }
             LoveSubView::GammaDistribution => {
-                frame.render_widget(self.gamma_distribution_widget(), sections[1]);
+                self.render_gamma(frame, sections[1]);
             }
             LoveSubView::InteractionNetwork => {
-                frame.render_widget(self.interaction_network_widget(), sections[1]);
+                self.render_interaction_ranking(frame, sections[1]);
             }
         }
     }
@@ -1399,7 +1554,7 @@ impl App {
     }
 
     fn render_summary(&self, frame: &mut Frame, area: Rect) {
-        let completed = self.data().runs.len();
+        let completed = self.data().completed_grid;
         let total = self.data().total_grid_points;
         let progress_pct = if total == 0 {
             0.0
@@ -1520,7 +1675,7 @@ impl App {
             .wrap(Wrap { trim: true })
     }
 
-    fn run_table(&self) -> Table<'static> {
+    fn run_table(&self, height: u16) -> Table<'static> {
         let header = Row::new([
             "sel",
             "delta",
@@ -1537,19 +1692,29 @@ impl App {
                 .add_modifier(Modifier::BOLD),
         );
 
-        let rows = self.data().runs.iter().enumerate().map(|(index, run)| {
-            let selected = if index == self.selected_run { ">" } else { "" };
-            Row::new([
-                selected.to_owned(),
-                format!("{:.4}", run.delta),
-                format!("{:.4}", run.lambda),
-                format!("{:.4}", run.score),
-                run.love.k.to_string(),
-                run.love.pure_vec.len().to_string(),
-                run.marginal.sig_lfs.len().to_string(),
-                run.interactions.sig_interacts.len().to_string(),
-            ])
-        });
+        let viewport = height.saturating_sub(3).max(1) as usize;
+        self.viewport.set(viewport);
+        let start = self.selected_run.saturating_sub(viewport - 1);
+        let rows = self
+            .data()
+            .runs
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(viewport)
+            .map(|(index, run)| {
+                let selected = if index == self.selected_run { ">" } else { "" };
+                Row::new([
+                    selected.to_owned(),
+                    format!("{:.4}", run.delta),
+                    format!("{:.4}", run.lambda),
+                    format!("{:.4}", run.score),
+                    run.love.k.to_string(),
+                    run.love.pure_vec.len().to_string(),
+                    run.marginal.sig_lfs.len().to_string(),
+                    run.interactions.sig_interacts.len().to_string(),
+                ])
+            });
 
         Table::new(
             rows,
@@ -1565,11 +1730,15 @@ impl App {
             ],
         )
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Completed Evaluations"),
-        )
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Evaluations | {}/{}",
+            if self.data().runs.is_empty() {
+                0
+            } else {
+                self.selected_run + 1
+            },
+            self.data().runs.len()
+        )))
     }
 
     fn factor_overview_widget(&self) -> Paragraph<'static> {
@@ -1741,9 +1910,9 @@ impl App {
             rows,
             [
                 Constraint::Length(4),
-                Constraint::Percentage(56),
-                Constraint::Length(10),
-                Constraint::Length(10),
+                Constraint::Min(8),
+                Constraint::Length(8),
+                Constraint::Length(8),
             ],
         )
         .header(
@@ -2282,69 +2451,59 @@ impl App {
         frame.render_widget(sparkline, parts[1]);
     }
 
-    fn gamma_distribution_widget(&self) -> BarChart<'static> {
-        let title = "Gamma Noise";
+    fn render_gamma(&self, frame: &mut Frame, area: Rect) {
         let Some(run) = self.current_run() else {
-            return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
+            frame.render_widget(empty_widget("Gamma"), area);
+            return;
         };
+        let names = self.current_feature_names();
         let gamma = run.love.gamma.as_ndarray();
-        if gamma.is_empty() {
-            return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
-        }
-
-        let feature_names = self.current_feature_names();
-        let mut indexed: Vec<(usize, Scalar)> = gamma.iter().copied().enumerate().collect();
-        indexed.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let mut indexed = gamma.iter().copied().enumerate().collect::<Vec<_>>();
+        indexed.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         indexed.truncate(30);
-
-        let max_gamma = indexed.first().map_or(1.0, |e| e.1).max(1.0e-10);
-        let med_gamma = median(gamma.to_vec());
-        let n_features = gamma.len();
-
-        let scale = 1000.0 / max_gamma;
-        let bars: Vec<Bar<'static>> = indexed
-            .iter()
-            .map(|(idx, val)| {
-                let name = feature_names
-                    .get(*idx)
-                    .cloned()
-                    .unwrap_or_else(|| format!("f{}", idx + 1));
-                let truncated: String = name.chars().take(12).collect();
-                let color = if *val < med_gamma * 0.5 {
-                    Color::Green
-                } else if *val < med_gamma * 1.5 {
-                    Color::Yellow
-                } else {
-                    Color::Red
-                };
-                Bar::default()
-                    .value((val * scale) as u64)
-                    .label(Line::from(truncated))
-                    .text_value(format!("{val:.4}"))
-                    .style(Style::default().fg(color))
+        let count = indexed.len();
+        let rows = indexed
+            .into_iter()
+            .enumerate()
+            .map(|(rank, (id, value))| {
+                vec![
+                    (rank + 1).to_string(),
+                    (id + 1).to_string(),
+                    format_optional_scalar(Some(value)),
+                    names
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("feature_{}", id + 1)),
+                ]
             })
             .collect();
-
-        let title_str =
-            format!("Gamma | top 30/{n_features} | max {max_gamma:.4} | med {med_gamma:.4}");
-        BarChart::default()
-            .data(BarGroup::default().bars(&bars))
-            .block(Block::default().borders(Borders::ALL).title(title_str))
-            .direction(Direction::Horizontal)
-            .bar_width(1)
-            .bar_gap(0)
-            .max(1000)
+        self.render_rows(
+            frame,
+            area,
+            format!("Gamma | top {count}/{} (limit 30)", gamma.len()),
+            vec!["rank", "ID", "gamma", "feature"],
+            rows,
+            vec![
+                Constraint::Length(4),
+                Constraint::Length(5),
+                Constraint::Length(10),
+                Constraint::Min(8),
+            ],
+        );
     }
 
-    fn interaction_network_widget(&self) -> Table<'static> {
+    fn render_interaction_ranking(&self, frame: &mut Frame, area: Rect) {
         let title = "Interaction Ranking";
         let Some(run) = self.current_run() else {
-            return empty_table(title);
+            frame.render_widget(empty_widget(title), area);
+            return;
         };
         let k = run.love.k;
         #[allow(clippy::type_complexity)] // one-off tuple; a named alias would not be reused
-        let mut rows_data: BTreeMap<(usize, usize), (bool, Option<Scalar>, Option<Scalar>)> =
-            BTreeMap::new();
+        let mut rows_data: BTreeMap<
+            (usize, usize),
+            (bool, Option<Scalar>, Option<Scalar>),
+        > = BTreeMap::new();
         for &(left, right) in &run.interactions.sig_interacts {
             let pair = if left <= right {
                 (left, right)
@@ -2380,16 +2539,6 @@ impl App {
             }
         }
 
-        if rows_data.is_empty() {
-            return Table::new(
-                [Row::new([format!(
-                    "k = {k} factors; no interaction candidates to display"
-                )])],
-                [Constraint::Min(10)],
-            )
-            .block(Block::default().borders(Borders::ALL).title(title));
-        }
-
         let mut rows = rows_data
             .into_iter()
             .map(|((left, right), (selected, frequency, association))| {
@@ -2404,74 +2553,43 @@ impl App {
                 .then_with(|| a.1.cmp(&b.1))
         });
 
-        let table_rows =
-            rows.into_iter()
-                .take(30)
-                .map(|(left, right, selected, frequency, association)| {
-                    let style = if selected {
-                        Style::default().fg(Color::Green)
-                    } else {
-                        Style::default().fg(Color::DarkGray)
-                    };
-                    Row::new([
-                        format!("F{}×F{}", left + 1, right + 1),
-                        if selected {
-                            "Y".to_owned()
-                        } else {
-                            "".to_owned()
-                        },
-                        frequency.map_or_else(
-                            || "n/a".to_owned(),
-                            |value| format!("{:.1}%", value * 100.0),
-                        ),
-                        association.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.3}")),
-                    ])
-                    .style(style)
-                });
-
-        Table::new(
-            table_rows,
-            [
+        let total = rows.len();
+        let rows = rows
+            .into_iter()
+            .take(30)
+            .map(|(left, right, selected, frequency, association)| {
+                vec![
+                    format!("F{}×F{}", left + 1, right + 1),
+                    if selected { "yes" } else { "no" }.into(),
+                    frequency
+                        .filter(|v| v.is_finite())
+                        .map_or("n/a".into(), |v| format!("{:.1}%", v * 100.0)),
+                    format_optional_scalar(association),
+                ]
+            })
+            .collect();
+        self.render_rows(
+            frame,
+            area,
+            format!("{title} | top {}/{} | k={k}", total.min(30), total),
+            vec!["pair", "selected", "frequency", "assoc*"],
+            rows,
+            vec![
                 Constraint::Length(12),
                 Constraint::Length(8),
-                Constraint::Length(12),
-                Constraint::Length(12),
+                Constraint::Length(10),
+                Constraint::Min(8),
             ],
-        )
-        .header(
-            Row::new(["pair", "selected", "frequency", "assoc"]).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("{title} | top 30 | selected/frequency/association")),
-        )
+        );
     }
 
     fn render_slide(&self, frame: &mut Frame, area: Rect) {
-        if self.selection_sub_view == SelectionSubView::Network {
-            self.render_interaction_network(frame, area);
-            return;
-        }
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(area);
-
         match self.selection_sub_view {
-            SelectionSubView::Marginal => {
-                self.render_selection_frequency(frame, sections[0]);
-            }
-            SelectionSubView::Interactions => {
-                self.render_interaction_frequency(frame, sections[0]);
-            }
-            SelectionSubView::Network => unreachable!(),
+            SelectionSubView::Marginal => self.render_selection_frequency(frame, area),
+            SelectionSubView::Interactions => self.render_interaction_frequency(frame, area),
+            SelectionSubView::Response => self.render_factor_response(frame, area),
+            SelectionSubView::Network => self.render_interaction_network(frame, area),
         }
-        frame.render_widget(self.factor_response_corr_widget(), sections[1]);
     }
 
     fn render_performance(&self, frame: &mut Frame, area: Rect) {
@@ -2513,6 +2631,15 @@ impl App {
             sections[0],
         );
 
+        if sections[1].height < 25
+            && matches!(
+                self.performance_sub_view,
+                PerformanceSubView::Summary | PerformanceSubView::FoldScores
+            )
+        {
+            self.render_fold_scores(frame, sections[1], cv);
+            return;
+        }
         match self.performance_sub_view {
             PerformanceSubView::Controls => unreachable!(),
             PerformanceSubView::Summary => {
@@ -2525,7 +2652,7 @@ impl App {
                     ])
                     .split(sections[1]);
                 frame.render_widget(self.performance_summary_widget(cv), body[0]);
-                frame.render_widget(self.cv_fold_score_chart(cv), body[1]);
+                self.render_fold_scores(frame, body[1], cv);
                 frame.render_widget(self.cv_model_size_table(cv), body[2]);
             }
             PerformanceSubView::FoldScores => {
@@ -2533,7 +2660,7 @@ impl App {
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Min(8), Constraint::Length(11)])
                     .split(sections[1]);
-                frame.render_widget(self.cv_fold_score_chart(cv), body[0]);
+                self.render_fold_scores(frame, body[0], cv);
                 frame.render_widget(self.cv_model_size_table(cv), body[1]);
             }
             PerformanceSubView::Predictions => {
@@ -2774,63 +2901,57 @@ impl App {
             .wrap(Wrap { trim: true })
     }
 
-    fn cv_fold_score_chart(&self, cv: &slide_cv::FinalCvResult) -> BarChart<'static> {
-        let title = "Fold Scores";
-        if cv.folds.is_empty() {
-            return BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
-        }
-        let scores = cv
-            .folds
-            .iter()
-            .filter_map(|fold| fold.metric_value)
-            .filter(|value| value.is_finite())
-            .collect::<Vec<_>>();
-        let max_abs = scores
-            .iter()
-            .map(|value| value.abs())
-            .fold(0.0_f64, Scalar::max)
-            .max(0.01);
-        let scale = 1000.0 / max_abs;
-        let bars = cv
-            .folds
-            .iter()
-            .take(80)
-            .map(|fold| {
-                let label = format!("R{}F{}", fold.repeat + 1, fold.fold + 1);
-                match fold.metric_value {
-                    Some(value) if value.is_finite() => {
-                        let color = if value >= 0.0 {
-                            Color::Green
-                        } else {
-                            Color::Red
-                        };
-                        Bar::default()
-                            .value((value.abs() * scale) as u64)
-                            .label(Line::from(label))
-                            .text_value(format!("{value:.3}"))
-                            .style(Style::default().fg(color))
-                    }
-                    _ => Bar::default()
-                        .value(0)
-                        .label(Line::from(label))
-                        .text_value("n/a".to_owned())
-                        .style(Style::default().fg(Color::DarkGray)),
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let title = if cv.folds.len() > bars.len() {
-            format!("Fold Scores | first {} of {}", bars.len(), cv.folds.len())
+    fn render_fold_scores(&self, frame: &mut Frame, area: Rect, cv: &slide_cv::FinalCvResult) {
+        let binary = cv.metric == slide_score::ScoreMetric::Auc;
+        let mut bounds = if binary {
+            (0.0_f64, 1.0_f64)
         } else {
-            title.to_owned()
+            (-1.0_f64, 1.0_f64)
         };
-        BarChart::default()
-            .data(BarGroup::default().bars(&bars))
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .direction(Direction::Horizontal)
-            .bar_width(1)
-            .bar_gap(0)
-            .max(1000)
+        for value in cv
+            .folds
+            .iter()
+            .filter_map(|f| f.metric_value)
+            .filter(|v| v.is_finite())
+        {
+            bounds.0 = bounds.0.min(value);
+            bounds.1 = bounds.1.max(value);
+        }
+        let width = area.width.saturating_sub(25) as usize;
+        let rows = cv
+            .folds
+            .iter()
+            .map(|fold| {
+                vec![
+                    format!("R{}F{}", fold.repeat + 1, fold.fold + 1),
+                    format_optional_scalar(fold.metric_value),
+                    dot_strip(
+                        fold.metric_value,
+                        bounds,
+                        if binary { 0.5 } else { 0.0 },
+                        width,
+                    ),
+                ]
+            })
+            .collect();
+        self.render_rows(
+            frame,
+            area,
+            format!(
+                "Fold {:?} | [{:.2}, {:.2}] ref {}",
+                cv.metric,
+                bounds.0,
+                bounds.1,
+                if binary { "0.5" } else { "0" }
+            ),
+            vec!["fold", "metric", "dot"],
+            rows,
+            vec![
+                Constraint::Length(9),
+                Constraint::Length(10),
+                Constraint::Min(1),
+            ],
+        );
     }
 
     fn cv_model_size_table(&self, cv: &slide_cv::FinalCvResult) -> Table<'static> {
@@ -2912,50 +3033,39 @@ impl App {
                     .max()
                     .unwrap_or(1)
                     .max(1);
-                let neg_bars = neg_bins
-                    .iter()
-                    .enumerate()
-                    .map(|(index, count)| {
-                        Bar::default()
-                            .value(*count)
-                            .label(Line::from(format!("{:.1}", index as Scalar / 10.0)))
-                            .text_value(count.to_string())
-                            .style(Style::default().fg(Color::Blue))
+                let width = area.width.saturating_sub(35) as usize;
+                let rows = [("y=0", neg_bins), ("y=1", pos_bins)]
+                    .into_iter()
+                    .flat_map(|(class, bins)| {
+                        bins.into_iter().enumerate().map(move |(i, count)| {
+                            vec![
+                                class.into(),
+                                bin_interval(i, 10, 0.0, 1.0),
+                                count.to_string(),
+                                "█".repeat(
+                                    (count as usize * width / max_count as usize).min(width),
+                                ),
+                            ]
+                        })
                     })
-                    .collect::<Vec<_>>();
-                let pos_bars = pos_bins
-                    .iter()
-                    .enumerate()
-                    .map(|(index, count)| {
-                        Bar::default()
-                            .value(*count)
-                            .label(Line::from(format!("{:.1}", index as Scalar / 10.0)))
-                            .text_value(count.to_string())
-                            .style(Style::default().fg(Color::Green))
-                    })
-                    .collect::<Vec<_>>();
-                let chart = BarChart::default()
-                    .data(
-                        BarGroup::default()
-                            .label(Line::from("y=0").blue())
-                            .bars(&neg_bars),
-                    )
-                    .data(
-                        BarGroup::default()
-                            .label(Line::from("y=1").green())
-                            .bars(&pos_bars),
-                    )
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Predicted probability distribution by observed class"),
-                    )
-                    .direction(Direction::Horizontal)
-                    .bar_width(1)
-                    .bar_gap(0)
-                    .group_gap(1)
-                    .max(max_count);
-                frame.render_widget(chart, area);
+                    .collect();
+                self.render_rows(
+                    frame,
+                    area,
+                    format!(
+                        "Probability histogram | y=0 n={} | y=1 n={}",
+                        neg.len(),
+                        pos.len()
+                    ),
+                    vec!["class", "probability", "count", "histogram"],
+                    rows,
+                    vec![
+                        Constraint::Length(5),
+                        Constraint::Length(15),
+                        Constraint::Length(7),
+                        Constraint::Min(1),
+                    ],
+                );
             }
             OptimizeResponseType::Continuous => self.render_residuals(frame, area, cv),
         }
@@ -3041,246 +3151,202 @@ impl App {
             .fold(Scalar::NEG_INFINITY, Scalar::max);
         let bins = histogram_counts(&residuals, 20, min_val, max_val);
         let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
-        let bars = bins
-            .iter()
-            .enumerate()
-            .map(|(index, count)| {
-                Bar::default()
-                    .value(*count)
-                    .label(Line::from(index.to_string()))
-                    .text_value(count.to_string())
-                    .style(Style::default().fg(Color::Cyan))
-            })
+        let labels = (0..20)
+            .map(|i| bin_interval(i, 20, min_val, max_val))
             .collect::<Vec<_>>();
-        let chart = BarChart::default()
-            .data(BarGroup::default().bars(&bars))
-            .block(Block::default().borders(Borders::ALL).title(format!(
-                "Residuals y - yhat | n={} | mean {mean:.3} | RMSE {rmse:.3} | range [{min_val:.3}, {max_val:.3}]",
+        let label_width = labels
+            .iter()
+            .map(|s| s.chars().count())
+            .max()
+            .unwrap_or(8)
+            .max(8)
+            .min(area.width.saturating_sub(12) as usize);
+        let width = area.width.saturating_sub(label_width as u16 + 12) as usize;
+        let rows = bins
+            .into_iter()
+            .zip(labels)
+            .map(|(count, label)| {
+                vec![
+                    label,
+                    count.to_string(),
+                    "█".repeat((count as usize * width / max_count as usize).min(width)),
+                ]
+            })
+            .collect();
+        self.render_rows(
+            frame,
+            area,
+            format!(
+                "Residuals y-yhat | n={} mean {mean:.3} RMSE {rmse:.3}",
                 residuals.len()
-            )))
-            .direction(Direction::Horizontal)
-            .bar_width(1)
-            .bar_gap(0)
-            .max(max_count);
-        frame.render_widget(chart, area);
+            ),
+            vec!["interval", "count", "histogram"],
+            rows,
+            vec![
+                Constraint::Length(label_width as u16),
+                Constraint::Length(7),
+                Constraint::Min(1),
+            ],
+        );
     }
 
     fn render_selection_frequency(&self, frame: &mut Frame, area: Rect) {
-        let title = "SLIDE Marginal Factor Selection";
         let Some(run) = self.current_run() else {
-            frame.render_widget(empty_widget(title), area);
+            frame.render_widget(empty_widget("Marginal selection"), area);
             return;
         };
         let freq = run.marginal.voting.selection_frequency.as_ndarray();
-        let k = freq.len();
-        if k == 0 {
-            frame.render_widget(empty_widget(title), area);
-            return;
-        }
-        let selected = &run.marginal.voting.selected;
-        let threshold = run.marginal.voting.threshold;
-
-        let parts = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(1)])
-            .split(area);
-
-        let header = Paragraph::new(format!(
-            "threshold {:.0}% | selected {} | v toggles view",
-            threshold * 100.0,
-            selected.len()
-        ))
-        .block(
-            Block::default()
-                .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-                .title(title),
-        );
-        frame.render_widget(header, parts[0]);
-
-        let mut indexed = (0..k)
-            .map(|i| (i, freq[i], selected.contains(&i)))
+        let response = self.current_factor_response_corr();
+        let mut ranked = freq
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, f)| (i, f, run.marginal.voting.selected.contains(&i)))
             .collect::<Vec<_>>();
-        indexed.sort_by(|left, right| {
-            right
-                .2
-                .cmp(&left.2)
-                .then_with(|| right.1.total_cmp(&left.1))
-                .then_with(|| left.0.cmp(&right.0))
+        ranked.sort_by(|a, b| {
+            b.2.cmp(&a.2)
+                .then_with(|| b.1.total_cmp(&a.1))
+                .then(a.0.cmp(&b.0))
         });
-
-        let bars: Vec<Bar<'static>> = indexed
+        let rows = ranked
             .into_iter()
-            .map(|(i, f, is_selected)| {
-                let pct = f * 100.0;
-                let color = if is_selected {
-                    Color::Green
-                } else {
-                    Color::DarkGray
-                };
-                Bar::default()
-                    .value((f * 1000.0) as u64)
-                    .label(Line::from(format!("F{}", i + 1)))
-                    .text_value(format!("{pct:.1}%"))
-                    .style(Style::default().fg(color))
+            .enumerate()
+            .map(|(rank, (i, f, selected))| {
+                vec![
+                    (rank + 1).to_string(),
+                    format!("F{}", i + 1),
+                    if selected { "yes" } else { "no" }.into(),
+                    if f.is_finite() {
+                        format!("{:.1}%", f * 100.0)
+                    } else {
+                        "n/a".into()
+                    },
+                    format_optional_scalar(response.as_ref().and_then(|v| v.get(i)).copied()),
+                ]
             })
             .collect();
-
-        let chart = BarChart::default()
-            .data(BarGroup::default().bars(&bars))
-            .block(Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT))
-            .direction(Direction::Horizontal)
-            .bar_width(1)
-            .bar_gap(0)
-            .max(1000);
-        frame.render_widget(chart, parts[1]);
+        self.render_rows(
+            frame,
+            area,
+            format!(
+                "Marginal selection | threshold {:.0}%",
+                run.marginal.voting.threshold * 100.0
+            ),
+            vec![
+                "rank",
+                "factor",
+                "selected",
+                "freq",
+                if self.data().response_type == OptimizeResponseType::Binary {
+                    "AUC"
+                } else {
+                    "corr"
+                },
+            ],
+            rows,
+            vec![
+                Constraint::Length(4),
+                Constraint::Length(8),
+                Constraint::Length(8),
+                Constraint::Length(8),
+                Constraint::Min(7),
+            ],
+        );
     }
 
     fn render_interaction_frequency(&self, frame: &mut Frame, area: Rect) {
-        let title = "SLIDE Interaction Selection";
         let Some(run) = self.current_run() else {
-            frame.render_widget(empty_widget(title), area);
+            frame.render_widget(empty_widget("Interaction selection"), area);
             return;
         };
-        let interaction_voting = &run.interactions.voting;
-        if interaction_voting.is_empty() {
-            frame.render_widget(empty_widget(title), area);
-            return;
+        let mut ranked = Vec::new();
+        for iv in &run.interactions.voting {
+            let freq = iv.voting.selection_frequency.as_ndarray();
+            for (j, &candidate) in iv
+                .candidate_lfs
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j < freq.len())
+            {
+                ranked.push((
+                    iv.marginal_lf,
+                    candidate,
+                    freq[j],
+                    iv.voting.selected.contains(&j),
+                ));
+            }
         }
-
-        let parts = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(1)])
-            .split(area);
-
-        let header = Paragraph::new(format!(
-            "{} marginal LFs with interaction voting | v toggles view",
-            interaction_voting.len()
-        ))
-        .block(
-            Block::default()
-                .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-                .title(title),
-        );
-        frame.render_widget(header, parts[0]);
-
-        let groups: Vec<BarGroup<'static>> = interaction_voting
-            .iter()
-            .map(|iv| {
-                let freq = iv.voting.selection_frequency.as_ndarray();
-                let selected = &iv.voting.selected;
-                let mut bars = iv
-                    .candidate_lfs
-                    .iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j < freq.len())
-                    .map(|(j, &candidate)| (j, candidate, freq[j], selected.contains(&j)))
-                    .collect::<Vec<_>>();
-                bars.sort_by(|left, right| {
-                    right
-                        .3
-                        .cmp(&left.3)
-                        .then_with(|| right.2.total_cmp(&left.2))
-                        .then_with(|| left.1.cmp(&right.1))
-                });
-                let bars: Vec<Bar<'static>> = bars
-                    .into_iter()
-                    .map(|(_j, candidate, f, is_selected)| {
-                        let pct = f * 100.0;
-                        let color = if is_selected {
-                            Color::Green
-                        } else {
-                            Color::DarkGray
-                        };
-                        Bar::default()
-                            .value((f * 1000.0) as u64)
-                            .label(Line::from(format!("F{}", candidate + 1)))
-                            .text_value(format!("{pct:.1}%"))
-                            .style(Style::default().fg(color))
-                    })
-                    .collect();
-                BarGroup::default()
-                    .label(Line::from(format!("F{}", iv.marginal_lf + 1)).yellow())
-                    .bars(&bars)
+        ranked.sort_by(|a, b| {
+            b.3.cmp(&a.3)
+                .then_with(|| b.2.total_cmp(&a.2))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        let rows = ranked
+            .into_iter()
+            .enumerate()
+            .map(|(rank, (a, b, f, selected))| {
+                vec![
+                    (rank + 1).to_string(),
+                    format!("F{} x F{}", a + 1, b + 1),
+                    if selected { "yes" } else { "no" }.into(),
+                    if f.is_finite() {
+                        format!("{:.1}%", f * 100.0)
+                    } else {
+                        "n/a".into()
+                    },
+                ]
             })
             .collect();
-
-        let mut chart = BarChart::default()
-            .block(Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT))
-            .direction(Direction::Horizontal)
-            .bar_width(1)
-            .bar_gap(0)
-            .group_gap(1)
-            .max(1000);
-        for group in groups {
-            chart = chart.data(group);
-        }
-        frame.render_widget(chart, parts[1]);
+        self.render_rows(
+            frame,
+            area,
+            "Interaction selection (directed voting)".into(),
+            vec!["rank", "pair", "selected", "freq"],
+            rows,
+            vec![
+                Constraint::Length(4),
+                Constraint::Length(15),
+                Constraint::Length(8),
+                Constraint::Min(7),
+            ],
+        );
     }
 
-    fn factor_response_corr_widget(&self) -> BarChart<'static> {
-        let title: &'static str = if self.data().response_type == OptimizeResponseType::Binary {
-            "Factor-Response AUC"
-        } else {
-            "Factor-Response Correlation"
-        };
-        let empty =
-            || BarChart::default().block(Block::default().borders(Borders::ALL).title(title));
-        let Some(run) = self.current_run() else {
-            return empty();
-        };
-        let corrs = self.current_factor_response_corr();
-        let Some(corrs) = corrs else {
-            return empty();
-        };
-        let k = run.love.k;
-        if k == 0 || corrs.is_empty() {
-            return empty();
-        }
-
-        let max_abs = corrs
-            .iter()
-            .map(|v| v.abs())
-            .fold(0.0_f64, Scalar::max)
-            .max(0.01);
-        let is_binary = self.data().response_type == OptimizeResponseType::Binary;
-        let scale = 1000.0 / max_abs;
-
-        let bars: Vec<Bar<'static>> = (0..k.min(corrs.len()))
-            .map(|i| {
-                let r = corrs[i];
-                let color = if is_binary {
-                    if r >= 0.7 {
-                        Color::Green
-                    } else if r >= 0.55 {
-                        Color::Yellow
-                    } else {
-                        Color::DarkGray
-                    }
-                } else if r >= 0.0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                };
-                let text_val = if is_binary {
-                    format!("AUC {:.3}", r)
-                } else {
-                    format!("{:+.3}", r)
-                };
-                Bar::default()
-                    .value((r.abs() * scale) as u64)
-                    .label(Line::from(format!("F{}", i + 1)))
-                    .text_value(text_val)
-                    .style(Style::default().fg(color))
+    fn render_factor_response(&self, frame: &mut Frame, area: Rect) {
+        let binary = self.data().response_type == OptimizeResponseType::Binary;
+        let bounds = if binary { (0.0, 1.0) } else { (-1.0, 1.0) };
+        let width = area.width.saturating_sub(25) as usize;
+        let rows = self
+            .current_factor_response_corr()
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                vec![
+                    format!("F{}", i + 1),
+                    format_optional_scalar(Some(v)),
+                    dot_strip(Some(v), bounds, if binary { 0.5 } else { 0.0 }, width),
+                ]
             })
             .collect();
-
-        BarChart::default()
-            .data(BarGroup::default().bars(&bars))
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .direction(Direction::Horizontal)
-            .bar_width(1)
-            .bar_gap(0)
-            .max(1000)
+        self.render_rows(
+            frame,
+            area,
+            if binary {
+                "Factor AUC | 0 .. 1 | ref 0.5"
+            } else {
+                "Factor correlation | -1 .. +1 | ref 0"
+            }
+            .into(),
+            vec!["factor", "value", "dot"],
+            rows,
+            vec![
+                Constraint::Length(9),
+                Constraint::Length(10),
+                Constraint::Min(1),
+            ],
+        );
     }
 }
 
@@ -3443,6 +3509,54 @@ fn read_control_scores(input: impl io::Read) -> Result<ControlScores> {
     })
 }
 
+fn bin_interval(index: usize, bins: usize, min: Scalar, max: Scalar) -> String {
+    if min == max {
+        return if index == 0 {
+            format!("[{min}]")
+        } else {
+            "empty".into()
+        };
+    }
+    let step = (max - min).abs().max(1.0e-10) / bins as Scalar;
+    let edge = |value: Scalar| {
+        if step.abs() < 0.001 {
+            let precision =
+                ((min.abs().max(max.abs()) / step.abs()).log10().ceil() as usize + 1).min(17);
+            format!("{value:.precision$e}")
+        } else {
+            let precision = ((-step.abs().log10().floor()) as i32 + 1).clamp(2, 15) as usize;
+            format!("{value:.precision$}")
+        }
+    };
+    format!(
+        "[{},{}{}",
+        edge(min + index as Scalar * step),
+        edge(min + (index + 1) as Scalar * step),
+        if index + 1 == bins { "]" } else { ")" }
+    )
+}
+
+fn dot_strip(
+    value: Option<Scalar>,
+    bounds: (Scalar, Scalar),
+    reference: Scalar,
+    width: usize,
+) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let position = |value: Scalar| {
+        (((value - bounds.0) / (bounds.1 - bounds.0)) * width.saturating_sub(1) as Scalar).round()
+            as usize
+    };
+    let mut cells = vec!['·'; width];
+    cells[position(reference).min(width - 1)] = '│';
+    if let Some(value) = value.filter(|v| v.is_finite() && *v >= bounds.0 && *v <= bounds.1) {
+        cells[position(value).min(width - 1)] = '●';
+    }
+    cells.into_iter().collect()
+}
+
 fn empty_widget(title: &'static str) -> Paragraph<'static> {
     Paragraph::new("No data")
         .alignment(Alignment::Center)
@@ -3455,7 +3569,9 @@ fn empty_table(title: &'static str) -> Table<'static> {
 }
 
 fn format_optional_scalar(value: Option<Scalar>) -> String {
-    value.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"))
+    value
+        .filter(|value| value.is_finite())
+        .map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"))
 }
 
 #[derive(Debug)]
@@ -3464,6 +3580,7 @@ struct DashboardData {
     best_run: Option<SlideRunResult>,
     final_cv: Option<slide_cv::FinalCvResult>,
     total_grid_points: usize,
+    completed_grid: usize,
     delta_values: Vec<Scalar>,
     lambda_values: Vec<Scalar>,
     run_lookup: BTreeMap<(ScalarKey, ScalarKey), usize>,
@@ -3503,10 +3620,12 @@ impl DashboardData {
         } else {
             None
         };
-        let (runs, final_cv) = if let Some(result) = result {
+        let (runs, final_cv, completed_grid) = if let Some(result) = result {
+            let completed_grid = result.evaluations.len();
             (
                 result.evaluations.into_iter().flatten().collect::<Vec<_>>(),
                 result.final_cv,
+                completed_grid,
             )
         } else {
             (
@@ -3516,6 +3635,7 @@ impl DashboardData {
                     .filter_map(|e| e.clone())
                     .collect(),
                 checkpoint.final_cv.clone(),
+                checkpoint.evaluations.len(),
             )
         };
         let response_type = checkpoint.config.response_type;
@@ -3545,6 +3665,7 @@ impl DashboardData {
         let run_count = runs.len();
 
         Ok(Self {
+            completed_grid,
             total_grid_points: checkpoint.delta_grid.len() * checkpoint.lambda_grid.len(),
             delta_values,
             lambda_values,
@@ -4649,6 +4770,7 @@ mod tests {
                 best_run: runs.first().cloned(),
                 final_cv: None,
                 total_grid_points: run_count,
+                completed_grid: run_count,
                 delta_values: super::dedupe_sorted(
                     &runs.iter().map(|run| run.delta).collect::<Vec<_>>(),
                 ),
@@ -4700,12 +4822,346 @@ mod tests {
     }
 
     #[test]
+    fn key_dispatch_is_contextual_bounded_and_search_safe() {
+        use super::KeyModifiers as M;
+        let mut app = plot_app();
+        app.data.as_mut().unwrap().runs.truncate(1);
+        let second = app.data.as_ref().unwrap().runs[0].clone();
+        app.data.as_mut().unwrap().runs.push(second);
+        app.tab = Tab::Factors;
+        app.handle_key(KeyCode::Char('j'), M::NONE).unwrap();
+        assert_eq!((app.selected_factor, app.selected_run), (1, 0));
+        app.handle_key(KeyCode::Down, M::NONE).unwrap();
+        assert_eq!(app.selected_factor, 1);
+        app.handle_key(KeyCode::Char('k'), M::CONTROL).unwrap();
+        assert_eq!(app.selected_factor, 1);
+        app.handle_key(KeyCode::Char('J'), M::SHIFT).unwrap();
+        assert_eq!(app.selected_run, 1);
+        app.handle_key(KeyCode::Char('K'), M::SHIFT).unwrap();
+        assert_eq!(app.selected_run, 0);
+        app.handle_key(KeyCode::PageDown, M::NONE).unwrap();
+        assert_eq!(app.selected_factor, 0);
+        app.handle_key(KeyCode::PageUp, M::NONE).unwrap();
+        assert_eq!(app.selected_factor, 1);
+        app.tab = Tab::Factors;
+        app.selected_factor = 0;
+        render_text(&app, 80, 24);
+        app.data.as_mut().unwrap().runs[0].love.k = 50;
+        let half = app.viewport.get().max(2) / 2;
+        app.handle_key(KeyCode::Char('d'), M::CONTROL).unwrap();
+        assert!(half > 1);
+        assert_eq!(app.selected_factor, half);
+        app.data.as_mut().unwrap().runs[0].love.k = 2;
+        app.selected_factor = 1;
+        app.tab = Tab::Overview;
+        app.handle_key(KeyCode::Down, M::NONE).unwrap();
+        assert_eq!(app.selected_run, 1);
+        app.handle_key(KeyCode::Down, M::NONE).unwrap();
+        assert_eq!(app.selected_run, 1);
+        app.tab = Tab::Slide;
+        app.viewport.set(10);
+        app.row_count.set(30);
+        app.handle_key(KeyCode::Char('d'), M::NONE).unwrap();
+        assert_eq!(app.row, 0);
+        app.handle_key(KeyCode::Char('d'), M::CONTROL).unwrap();
+        assert_eq!(app.row, 5);
+        app.handle_key(KeyCode::Char('u'), M::CONTROL).unwrap();
+        assert_eq!(app.row, 0);
+        app.handle_key(KeyCode::Up, M::NONE).unwrap();
+        assert_eq!(app.row, 0);
+        app.start_feature_search();
+        for c in "jkqv".chars() {
+            assert!(!app.handle_key(KeyCode::Char(c), M::NONE).unwrap());
+        }
+        assert_eq!(app.feature_search_input, "jkqv");
+        assert_eq!(app.row, 0);
+        assert_eq!(app.selection_sub_view, super::SelectionSubView::Marginal);
+        app.handle_key(KeyCode::Enter, M::NONE).unwrap();
+        assert!(!app.feature_search_editing);
+        app.start_feature_search();
+        app.handle_key(KeyCode::Esc, M::NONE).unwrap();
+        assert!(app.feature_search_input.is_empty());
+    }
+
+    #[test]
+    fn signed_dot_geometry_and_auc_endpoints_use_buffer_coordinates() {
+        let mut app = plot_app();
+        app.data.as_mut().unwrap().response_type = OptimizeResponseType::Continuous;
+        app.data
+            .as_mut()
+            .unwrap()
+            .derived
+            .get_mut()
+            .factor_response_corr[0] = Some(vec![-0.5, 0.5]);
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal
+            .draw(|frame| app.render_factor_response(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let dot_x = |row| (0..60).find(|&x| buffer[(x, row)].symbol() == "●").unwrap();
+        let reference = (0..60)
+            .find(|&x| buffer[(x, 2)].symbol() == "│" && x > 20)
+            .unwrap();
+        assert!(dot_x(2) < reference && dot_x(3) > reference);
+        assert!(buffer
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>()
+            .contains("-0.5000"));
+        app.data.as_mut().unwrap().response_type = OptimizeResponseType::Binary;
+        app.data
+            .as_mut()
+            .unwrap()
+            .derived
+            .get_mut()
+            .factor_response_corr[0] = Some(vec![0.0, 1.0]);
+        terminal
+            .draw(|frame| app.render_factor_response(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(22, 2)].symbol(), "●");
+        assert_eq!(buffer[(56, 3)].symbol(), "●");
+        assert_eq!(buffer[(39, 2)].symbol(), "│");
+        assert_eq!(super::format_optional_scalar(Some(f64::NAN)), "n/a");
+        assert_eq!(super::dot_strip(None, (-1.0, 1.0), 0.0, 5), "··│··");
+    }
+
+    #[test]
+    fn visited_failed_grid_slots_are_not_remaining_work() {
+        let mut app = plot_app();
+        let mut checkpoint = super::OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: vec![0.1, 0.2],
+            lambda_grid: vec![0.1],
+            config: slide_core::OptimizeSlideConfig::default(),
+            evaluations: vec![Some(app.data.as_ref().unwrap().runs[0].clone()), None],
+            final_cv: None,
+        };
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.tmpfiles/2026-10-20_grid-status-test");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("checkpoint.json");
+        std::fs::write(&path, serde_json::to_vec(&checkpoint).unwrap()).unwrap();
+        app.args.checkpoint = path;
+        let data = super::DashboardData::load(&app.args).unwrap();
+        assert_eq!(data.runs.len(), 1);
+        assert_eq!(data.completed_grid, 2);
+        app.data = Some(data);
+        assert!(
+            render_text(&app, 140, 45).contains("grid complete; final CV/export not established")
+        );
+        checkpoint.evaluations = vec![None, None];
+        std::fs::write(
+            &app.args.checkpoint,
+            serde_json::to_vec(&checkpoint).unwrap(),
+        )
+        .unwrap();
+        app.data = Some(super::DashboardData::load(&app.args).unwrap());
+        assert!(app.data().runs.is_empty());
+        assert_eq!(app.data().completed_grid, 2);
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("grid complete; final CV/export not established"));
+        assert!(text.contains("Evaluations | 0/0"));
+        checkpoint.evaluations.clear();
+        std::fs::write(
+            &app.args.checkpoint,
+            serde_json::to_vec(&checkpoint).unwrap(),
+        )
+        .unwrap();
+        app.data = Some(super::DashboardData::load(&app.args).unwrap());
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("grid incomplete"));
+        assert!(text.contains("Evaluations | 0/0"));
+    }
+
+    #[test]
+    fn fold_and_histogram_rows_keep_values_bins_and_counts() {
+        let mut app = plot_app();
+        app.tab = Tab::Performance;
+        app.performance_sub_view = PerformanceSubView::FoldScores;
+        let cv = slide_cv::FinalCvResult {
+            metric: slide_score::ScoreMetric::Correlation,
+            mean: Some(0.1),
+            standard_error: None,
+            folds: (0..90)
+                .map(|i| slide_cv::FinalCvFoldResult {
+                    repeat: 0,
+                    fold: i,
+                    train_n: 20,
+                    valid_n: 5,
+                    selected_marginal_lfs: vec![0],
+                    selected_interactions: vec![],
+                    metric_value: match i {
+                        0 => Some(-0.5),
+                        1 => Some(0.5),
+                        2 => None,
+                        3 => Some(f64::NAN),
+                        89 => Some(2.5),
+                        _ => Some(0.25),
+                    },
+                })
+                .collect(),
+            predictions: (0..20)
+                .map(|i| slide_cv::FinalCvPrediction {
+                    sample_index: i,
+                    y_true: if i < 10 { 0.0 } else { 1.0 },
+                    y_pred: (i % 10) as f64 / 10.0,
+                    repeat: 0,
+                    fold: 0,
+                    method: slide_cv::FinalCvMethod::Slide,
+                })
+                .collect(),
+        };
+        app.data.as_mut().unwrap().final_cv = Some(cv.clone());
+        app.data.as_mut().unwrap().response_type = OptimizeResponseType::Continuous;
+        for (width, height) in [(140, 45), (80, 24), (60, 20), (20, 8), (1, 1)] {
+            app.row = 0;
+            let text = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(text.contains("-0.5000") && text.contains("n/a") && text.contains("2.50]"));
+            }
+            app.row = 89;
+            let text = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(text.contains("R1F90") && text.contains("2.5000"));
+            }
+            app.performance_sub_view = PerformanceSubView::Residuals;
+            app.row = 0;
+            render_text(&app, width, height);
+            app.data.as_mut().unwrap().response_type = OptimizeResponseType::Binary;
+            app.performance_sub_view = PerformanceSubView::Predictions;
+            let text = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(
+                    text.contains("[0.00,0.10)")
+                        && text.contains("y=0 n=10")
+                        && text.contains("y=1 n=10")
+                );
+            }
+            app.row = 19;
+            render_text(&app, width, height);
+            app.data.as_mut().unwrap().response_type = OptimizeResponseType::Continuous;
+            app.performance_sub_view = PerformanceSubView::FoldScores;
+        }
+        assert_eq!(
+            super::histogram_counts(&[0.0, 0.09, 0.1, 1.0], 10, 0.0, 1.0),
+            vec![2, 1, 0, 0, 0, 0, 0, 0, 0, 1]
+        );
+        assert_eq!(
+            super::histogram_counts(&[-1.0, 0.0, 1.0], 20, -1.0, 1.0)
+                .iter()
+                .sum::<u64>(),
+            3
+        );
+        assert_eq!(super::bin_interval(9, 10, 0.0, 1.0), "[0.90,1.00]");
+        assert_ne!(
+            super::bin_interval(0, 20, 0.00001, 0.00002),
+            super::bin_interval(1, 20, 0.00001, 0.00002)
+        );
+        assert_eq!(super::bin_interval(0, 20, 2.0, 2.0), "[2]");
+        assert_eq!(super::bin_interval(1, 20, 2.0, 2.0), "empty");
+        assert_eq!(
+            super::histogram_counts(&[0.0, 1.0e-12], 20, 0.0, 1.0e-12)[0],
+            2
+        );
+        assert_eq!(super::bin_interval(0, 20, 0.0, 1.0e-12), "[0.0e0,5.0e-12)");
+    }
+
+    #[test]
+    fn dense_ranked_views_keep_ids_values_and_hidden_rows_accessible() {
+        let mut app = plot_app();
+        app.tab = Tab::Slide;
+        let data = app.data.as_mut().unwrap();
+        data.response_type = OptimizeResponseType::Continuous;
+        let run = &mut data.runs[0];
+        run.marginal.voting.selection_frequency = super::Vector::from_ndarray(
+            ndarray::Array1::from_iter((0..50).map(|i| i as f64 / 50.0)),
+        );
+        run.marginal.voting.selected = vec![3, 49];
+        run.interactions.voting.truncate(1);
+        let vote = &mut run.interactions.voting[0];
+        vote.marginal_lf = 1;
+        vote.candidate_lfs = vec![10, 30];
+        vote.voting.selection_frequency = super::Vector::from_ndarray(ndarray::array![0.3, 0.9]);
+        vote.voting.selected = vec![0];
+        run.love.gamma = super::Vector::from_ndarray(ndarray::Array1::from_iter(
+            (0..50).map(|i| i as f64 / 10.0),
+        ));
+        data.derived.get_mut().feature_names = Some(
+            (0..50)
+                .map(|i| format!("long_feature_name_with_shared_prefix_{i:02}"))
+                .collect(),
+        );
+        data.derived.get_mut().factor_response_corr[0] = Some(vec![-0.5, 0.5]);
+        for (width, height) in [(140, 45), (80, 24), (60, 20), (20, 8), (1, 1)] {
+            app.row = 0;
+            render_text(&app, width, height);
+            if width >= 60 {
+                let text = render_text(&app, width, height);
+                assert!(text.contains("F50") && text.contains("98.0%") && text.contains("yes"));
+                app.handle_key(KeyCode::Char('d'), super::KeyModifiers::CONTROL)
+                    .unwrap();
+                assert_eq!(app.row, app.viewport.get().max(2) / 2);
+                app.row = 49;
+                assert!(render_text(&app, width, height).contains("F1"));
+            }
+            app.selection_sub_view = super::SelectionSubView::Interactions;
+            app.row = 0;
+            let pairs = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(
+                    pairs.contains("F2 x F11") && pairs.contains("30.0%") && pairs.contains("yes")
+                );
+            }
+            app.selection_sub_view = super::SelectionSubView::Marginal;
+            app.tab = Tab::Love;
+            app.love_sub_view = LoveSubView::GammaDistribution;
+            app.row = 29;
+            let text = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(text.contains("30/30") && text.contains("2.0000"));
+            }
+            app.tab = Tab::Slide;
+            app.selection_sub_view = super::SelectionSubView::Response;
+            app.data
+                .as_mut()
+                .unwrap()
+                .derived
+                .get_mut()
+                .factor_response_corr[0] = Some((0..50).map(|i| i as f64 / 25.0 - 1.0).collect());
+            app.row = 0;
+            render_text(&app, width, height);
+            app.row = 49;
+            let response = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(response.contains("F50") && response.contains("50/50"));
+            }
+            app.selection_sub_view = super::SelectionSubView::Marginal;
+            app.data
+                .as_mut()
+                .unwrap()
+                .derived
+                .get_mut()
+                .factor_response_corr[0] = Some(vec![-0.5, 0.5]);
+        }
+    }
+
+    #[test]
     fn owned_quit_requires_confirmation_and_view_never_stops_work() {
         let mut app = fixture_app("../../tests/test_config_checkpoint.json");
         assert!(app.quit_key(super::KeyCode::Char('q')));
         app.worker = Some(None);
         assert!(!app.quit_key(super::KeyCode::Char('q')));
         assert!(app.quit_confirm);
+        for (width, height) in [(140, 45), (80, 24), (60, 20)] {
+            render_text(&app, width, height);
+        }
+        let confirmation = render_text(&app, 20, 8);
+        assert!(confirmation.contains("y/Enter"));
+        assert!(confirmation.contains("cancels"));
+        render_text(&app, 1, 1);
         assert!(!app.quit_key(super::KeyCode::Esc));
         assert_eq!(app.worker, Some(None));
         assert!(!app.quit_key(super::KeyCode::Char('q')));
@@ -4722,12 +5178,20 @@ mod tests {
         let text = render_text(&app, 140, 45);
         assert!(text.contains("pipeline FAILED"));
         assert!(text.contains("worker.log"));
+        render_text(&app, 80, 24);
+        render_text(&app, 60, 20);
         assert!(!text.contains("status: complete"));
         let data = app.data.as_mut().unwrap();
         data.total_grid_points = data.runs.len();
-        assert!(render_text(&app, 140, 45).contains("grid complete; final CV/export not established"));
+        assert!(
+            render_text(&app, 140, 45).contains("grid complete; final CV/export not established")
+        );
+        render_text(&app, 80, 24);
+        render_text(&app, 60, 20);
         app.data.as_mut().unwrap().total_grid_points += 1;
         assert!(render_text(&app, 140, 45).contains("grid incomplete"));
+        render_text(&app, 80, 24);
+        render_text(&app, 60, 20);
         app.worker = Some(Some(std::process::ExitStatus::from_raw(0)));
         assert!(app.execution_status().contains("pipeline succeeded"));
         assert!(app.quit_key(super::KeyCode::Char('q')));
@@ -4876,7 +5340,7 @@ mod tests {
                 "fixture failed to load: {:?}",
                 app.last_error
             );
-            for (width, height) in [(140, 45), (60, 20), (20, 8)] {
+            for (width, height) in [(140, 45), (80, 24), (60, 20), (20, 8), (1, 1)] {
                 for tab in [
                     Tab::Overview,
                     Tab::Love,
@@ -4980,7 +5444,7 @@ mod tests {
         let invalid = fixture_app("Cargo.toml");
         assert!(waiting.data.is_none());
         assert!(invalid.data.is_none());
-        for (width, height) in [(140, 45), (60, 20)] {
+        for (width, height) in [(140, 45), (80, 24), (60, 20)] {
             assert!(render_text(&waiting, width, height).contains("Waiting for pipeline"));
             let error = render_text(&invalid, width, height);
             assert!(error.contains("error: failed to load checkpoint"));

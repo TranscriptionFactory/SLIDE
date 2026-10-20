@@ -297,10 +297,10 @@ The terminal dashboard (`crates/slide-cli/src/tui.rs`) has five tabs:
 | **Overview** | Grid search overview: progress, phase timeline, score/factor grids |
 | **LOVE** | Seven sub-views: diagnostics, covariance matrix, loading heatmap, group correlation, block correlation, gamma distribution, interaction network |
 | **Factors** | Per-factor detail: top features by loading weight, score distributions |
-| **SLIDE** | Knockoff frequency bar charts for marginal factor and interaction selection |
+| **SLIDE** | Knockoff ranked frequency tables and response dots for marginal factor and interaction selection |
 | **Performance** | Final-CV results when available and model-performance diagnostics |
 
-Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` for runs, `PgDn`/`PgUp` for factors, `v` or `1-7` for sub-views, `q` to quit (confirmation before stopping an active owned worker). Full details in `docs/tui-guide.md`.
+Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` or arrows for the current list (factors on Factors, evaluations on Overview), `J`/`K` for evaluations globally, `Ctrl-d`/`Ctrl-u` for half a viewport, `PgDn`/`PgUp` as legacy factor aliases, `v` or `1-7` for sub-views, `q` to quit (confirmation before stopping an active owned worker). Press `?` for key help. Full details in `docs/tui-guide.md`.
 
 ---
 
@@ -321,8 +321,8 @@ The TUI has solid coverage, but the Python plotting layer (`src/slide_py/plottin
 | Loading Matrix (A matrix) | Done | Top-8-per-factor, heatmap |
 | Group Correlation | Done | Colored table |
 | Block Correlation | Done | Canvas pixel plot, capped at 300 vars |
-| Gamma distribution | Done | Horizontal bar chart |
-| Knockoff selection frequency | Done | Bar charts |
+| Gamma ranking | Done | Scrollable numeric top-30 table with stable feature IDs |
+| Knockoff selection frequency | Done | Ranked numeric tables; separate fixed-axis response dots |
 | **Interaction Network** | **Needs work** | Text-art only for k ≤ 12, plain adjacency list for larger k. Could use a canvas-based graph layout (force-directed or circular). |
 
 **Python visualizations (`plotting.py`):**

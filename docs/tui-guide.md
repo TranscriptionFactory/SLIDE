@@ -155,8 +155,8 @@ If you only want to regenerate the fixture before manually opening the TUI:
 ```bash
 scripts/capture-tui-screenshots.sh --prepare-only
 ./target/debug/slide view \
-  --checkpoint .tmp/tui-smoke/tui-smoke-checkpoint.json \
-  --config .tmp/tui-smoke/tui-smoke.yaml \
+  --checkpoint .tmpfiles/$(date +%F)_tui-smoke/tui-smoke-checkpoint.json \
+  --config .tmpfiles/$(date +%F)_tui-smoke/tui-smoke.yaml \
   --no-follow
 ```
 
@@ -238,7 +238,7 @@ diagnostics remain available with direct keys `6` and `7`.
 | `3` | Loading Matrix (A) | Ranked loading heatmap with row modes for top-window, pure-variable-first, or selected-factor ranking |
 | `4` | Group Correlation | Within-group correlation heatmap; large `k` uses a compact window around the selected factor |
 | `5` | Block Correlation | Block-structure correlation heatmap (half-block `▀` rendering, blue-white-red, capped at 300 vars) |
-| `6` | Gamma (Noise Variance) | Advanced: gamma distribution of noise variance estimates |
+| `6` | Gamma (Noise Variance) | Advanced: ranked top-30 noise variance estimates |
 | `7` | Interaction Ranking | Advanced: ranked interaction table with selected status, frequency, and response association when available |
 
 For large LOVE outputs, the matrix-style views prioritize scanability over
@@ -263,7 +263,7 @@ Per-factor detail for the selected run:
 - Top features by loading weight
 - Factor score distributions rendered as sparkline histograms (`▁▂▃▅▆▇█`)
 
-Use `PgDn` / `PgUp` to cycle through factors. Press `v` to cycle through
+Use `j` / `k` or Down / Up to select factors. Press `v` to cycle through
 these tables, a red/blue feature text plot, and a feature-correlation network.
 
 The text plot uses the same top-feature selection as the exported gene plots:
@@ -280,19 +280,34 @@ terminal to see all feature labels.
 
 ### SLIDE tab
 
-Three sub-views (cycle with `v`):
+Four sub-views (cycle with `v`):
 
 | Sub-view | What it shows |
 |----------|---------------|
-| Marginal | SLIDE knockoff frequency bars for marginal (standalone) LOVE factors |
-| Interactions | SLIDE knockoff frequency bars for interaction terms |
+| Marginal | Ranked factor IDs, selected yes/no, exact frequency, and response association |
+| Interactions | Ranked directed voting pairs, selected yes/no, and exact frequency |
+| Response | Factor-response dots with exact values and fixed reference axes |
 | Network | Selected interaction pairs involving the current factor; up to 12 nodes |
 
-The frequency sub-views also display factor-response correlation beneath the
-bars. In the network, cyan edges mean selected LF products, not positive
+The Response sub-view displays scrollable factor-response dots. Correlation
+uses a fixed −1 to +1 axis with zero; AUC uses 0 to 1 with a 0.5 reference.
+Exact values accompany the dots; unavailable metrics show `n/a`. Use `j/k` to
+move through ranked rows, or `Ctrl-d/u` to move half a viewport. The title shows
+position/total. Pair frequencies refer to the marginal factor
+and candidate in the displayed directed vote, not a new pair-response estimate.
+In the network, cyan edges mean selected LF products, not positive
 correlations. Use `PgUp` / `PgDn` to change the focus factor; the title reports
 how many of its selected pairs are visible. The TUI computes response
 associations on demand when the response vector is available.
+
+Gamma (LOVE `6`) lists the highest 30 gamma values with rank, stable feature ID,
+exact value, and feature name. Its title reports the displayed count and total.
+LOVE `7` keeps its top-30 pair ranking; `assoc*` is the mean absolute
+association of the two constituent factors, not a pair-response estimate.
+At 60×20 and 80×24, Factors uses a compact full-width loading table; normal
+width retains both rankings. Very small terminals may lack room for data rows.
+Search input captures printable keys, including `j`, `k`, `q`, and `v`; Enter
+keeps the query and Esc clears it.
 
 ### Performance tab
 
@@ -309,11 +324,11 @@ JSON. Cycle Performance sub-views with `v`. It shows:
 
 - Final CV metric, mean, and standard error
 - Scored fold count vs empty or degenerate folds
-- Fold-score bar chart
+- Fold-score dots with exact metrics (correlation −1 to +1, AUC 0 to 1; expanded if values exceed those bounds)
 - Per-fold train/validation sizes and selected model sizes
-- Prediction distributions
+- Prediction histograms with numeric intervals, class counts, and scrollable count bars
 - ROC/PR threshold summary for binary responses
-- Residual histogram for continuous responses
+- Residual histogram with numeric intervals and count bars for continuous responses
 
 The **SLIDE / Permuted CV** sub-view reads the selected run's exported
 `ControlPerformance.csv`. Pass `--config` with the run YAML containing
@@ -339,10 +354,13 @@ If final CV was not enabled for the run, the other sub-views display a short
 |-----|--------|
 | `Tab` / `l` / `Right` | Next tab |
 | `Shift+Tab` / `h` / `Left` | Previous tab |
-| `j` / `Down` | Next run |
-| `k` / `Up` | Previous run |
-| `PgDn` | Next factor |
-| `PgUp` | Previous factor |
+| `j` / `Down` | Next primary item: factor on Factors, evaluation on Overview, row in ranked views |
+| `k` / `Up` | Previous primary item (bounded) |
+| `J` / `K` | Next / previous evaluation globally (application shortcut) |
+| `Ctrl-d` / `Ctrl-u` | Down / up half the visible list viewport |
+| `?` | Key help; any key closes it |
+| `PgDn` | Next factor (legacy alias) |
+| `PgUp` | Previous factor (legacy alias) |
 | `v` | Cycle sub-views (LOVE, Factors, SLIDE, and Performance tabs) |
 | `1`–`7` | Jump to LOVE sub-view directly (`6` and `7` are advanced) |
 | `g` | Cycle Overview grid metric |

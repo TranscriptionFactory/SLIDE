@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-module load ffmpeg
+if type module >/dev/null 2>&1; then
+  module load ffmpeg
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export SLIDE_TUI_WORKDIR="${SLIDE_TUI_WORKDIR:-${ROOT}/.tmpfiles/$(date +%F)_tui-smoke}"
 TAPE="${ROOT}/docs/tui-screenshots.tape"
 OUT_DIR="${ROOT}/docs/assets/tui"
 PREPARE_ONLY=0
@@ -26,8 +29,8 @@ Outputs:
   docs/assets/tui/tui-demo.gif
 
 Options:
-  --prepare-only  Only build/regenerate .tmp/tui-smoke; do not invoke vhs.
-  --skip-prepare  Reuse the existing .tmp/tui-smoke fixture and target/debug binary.
+  --prepare-only  Only build/regenerate the dated .tmpfiles/YYYY-MM-DD_tui-smoke fixture; do not invoke vhs.
+  --skip-prepare  Reuse the dated .tmpfiles/YYYY-MM-DD_tui-smoke fixture and target/debug binary.
   -h, --help      Show this help.
 
 Dependencies:
