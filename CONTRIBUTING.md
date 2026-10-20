@@ -21,7 +21,7 @@ The Python package (`src/slide_py/`) implements the same pipeline in Python, wit
 
 ```
 crates/                        # Rust workspace — the real implementation
-├── slide-cli/                 #   CLI + TUI (run, tui, monitor, submit)
+├── slide-cli/                 #   CLI + TUI (run, view, submit)
 ├── slide-core/                #   Pipeline orchestrator, grid search
 ├── slide-love/                #   LOVE decomposition
 ├── slide-knockoff/            #   Knockoff generation + voting
@@ -256,10 +256,10 @@ SLIDE_iter: 500         # knockoff iterations per grid point
 slide run --config config.yaml --checkpoint results.json
 
 # Watch in the TUI:
-slide tui --checkpoint results.json
+slide view --checkpoint results.json
 
-# Or both at once (monitor mode):
-slide monitor --config config.yaml --checkpoint results.json
+# Or both at once (owned dashboard):
+slide run --tui --config config.yaml --checkpoint results.json
 ```
 
 Results are checkpointed after each (delta, lambda) evaluation. Restarting with the same checkpoint file skips completed evaluations.
@@ -300,7 +300,7 @@ The terminal dashboard (`crates/slide-cli/src/tui.rs`) has five tabs:
 | **SLIDE** | Knockoff frequency bar charts for marginal factor and interaction selection |
 | **Performance** | Final-CV results when available and model-performance diagnostics |
 
-Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` for runs, `PgDn`/`PgUp` for factors, `v` or `1-7` for sub-views, `q` to quit. Full details in `docs/tui-guide.md`.
+Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` for runs, `PgDn`/`PgUp` for factors, `v` or `1-7` for sub-views, `q` to quit (confirmation before stopping an active owned worker). Full details in `docs/tui-guide.md`.
 
 ---
 

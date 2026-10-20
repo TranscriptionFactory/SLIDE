@@ -49,7 +49,7 @@ def tui_pty(binary, checkpoint, config):
     if pid == 0:
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
         os.environ["TERM"] = "xterm-256color"
-        os.execv(str(binary), [str(binary), "tui", "--checkpoint", str(checkpoint),
+        os.execv(str(binary), [str(binary), "view", "--checkpoint", str(checkpoint),
                               "--config", str(config), "--no-follow"])
     output = bytearray()
     deadline = time.monotonic() + 30

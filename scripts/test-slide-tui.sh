@@ -96,5 +96,5 @@ EOF
 if [[ "${OPEN_TUI}" -eq 1 ]]; then
   echo
   echo "==> Opening TUI"
-  exec "${BIN}" tui --checkpoint "${CHECKPOINT}" --config "${CONFIG}" --no-follow
+  exec "${BIN}" view --checkpoint "${CHECKPOINT}" --config "${CONFIG}" --no-follow
 fi

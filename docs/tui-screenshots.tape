@@ -20,7 +20,7 @@ Type "clear"
 Enter
 Show
 
-Type "./target/debug/slide tui --checkpoint .tmp/tui-smoke/tui-smoke-checkpoint.json --config .tmp/tui-smoke/tui-smoke.yaml --no-follow"
+Type "./target/debug/slide view --checkpoint .tmp/tui-smoke/tui-smoke-checkpoint.json --config .tmp/tui-smoke/tui-smoke.yaml --no-follow"
 Enter
 Wait+Screen /LOVE -> SLIDE Monitor/
 Sleep 800 ms

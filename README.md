@@ -15,7 +15,7 @@ You can install each implementation independently.
 | Implementation | Features | Entry point |
 | --- | --- | --- |
 | R | Original R package | `library(SLIDE)` |
-| Rust | Native pipeline, terminal dashboard, and SLURM helpers | `slide run`, `slide monitor`, `slide tui`, `slide submit` |
+| Rust | Native pipeline, terminal dashboard, and SLURM helpers | `slide run`, `slide run --tui`, `slide view`, `slide submit` |
 | Python | Library and CLI with plotting and optional R backends | `slide-py run`, `slide_py.OptimizeSLIDE` |
 
 ## Installation
@@ -156,14 +156,22 @@ Run from the repository root using Pixi:
 pixi run --locked -e rust ./target/release/slide run --config rust-quick.yaml --checkpoint out/checkpoint.json
 
 # Pipeline and live dashboard together
-pixi run --locked -e rust ./target/release/slide monitor --config rust-quick.yaml --checkpoint out/checkpoint.json
+pixi run --locked -e rust ./target/release/slide run --tui --config rust-quick.yaml --checkpoint out/checkpoint.json
 ```
 
 On Windows, use `./target/release/slide.exe` in these commands.
 Run these from the repository root; Rust resolves relative input paths against
 the working directory. The bundled data live in `examples/`. Add `-v` to print per-stage timing.
-`slide monitor` exits non-zero if the pipeline fails or you quit the TUI
-before it finishes.
+`slide run --tui` exits non-zero if the pipeline fails or you quit the TUI
+before it finishes after confirming the stop.
+
+
+`run` starts or resumes a compatible checkpoint; corrupt or incompatible state
+is rejected, never reset. A full grid does not establish final CV/export success.
+`run --tui` shows its worker status and log, and asks before stopping an active
+worker. `view` only observes files; `--config` supplies metadata, not execution.
+Progress files do not prove an external job is alive. Use a new checkpoint path
+for a new run. The adjacent `.log` is currently truncated by `run --tui` at startup.
 
 See [docs/tui-guide.md](docs/tui-guide.md) for the dashboard tabs, keyboard
 reference and SLURM workflows.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Breaking Rust CLI change: replace `slide monitor` with `slide run --tui`
+  and `slide tui` with `slide view`; the old names are rejected, not aliases.
+  Owned dashboards show worker exit status and ask before stopping an active
+  worker. `view` only observes files; `run` remains headless by default.
+
 - Renamed the Python distribution `loveslide` to `slide-py` and the import
   package `loveslide` to `slide_py`. The CLI is now `slide-py`. There is no
   compatibility alias; update `import loveslide` and any `loveslide ...`

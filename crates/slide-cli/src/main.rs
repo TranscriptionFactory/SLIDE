@@ -28,12 +28,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Execute the SLIDE optimization pipeline.
+    /// Start or resume optimization (headless unless --tui is supplied).
     Run(run::RunArgs),
-    /// Launch the SLIDE monitoring TUI.
-    Tui(TuiArgs),
-    /// Run the SLIDE pipeline and monitor it in the TUI simultaneously.
-    Monitor(MonitorArgs),
+    /// View checkpoint files without starting or stopping computation.
+    View(TuiArgs),
     /// Submit a SLURM batch job and monitor it in the TUI.
     Submit(SubmitArgs),
 }
@@ -44,7 +42,7 @@ pub struct TuiArgs {
     #[arg(long)]
     checkpoint: PathBuf,
 
-    /// Optional YAML config used to launch the run.
+    /// Optional YAML config for dashboard metadata; does not launch a run.
     #[arg(long)]
     config: Option<PathBuf>,
 
@@ -63,21 +61,6 @@ pub struct TuiArgs {
     /// Disable live file polling.
     #[arg(long, default_value_t = false)]
     no_follow: bool,
-}
-
-#[derive(Debug, Parser, Clone)]
-pub struct MonitorArgs {
-    /// YAML configuration file describing the SLIDE run.
-    #[arg(long)]
-    config: PathBuf,
-
-    /// Path where checkpoint JSON is written.
-    #[arg(long)]
-    checkpoint: PathBuf,
-
-    /// Number of threads for the pipeline's rayon thread pool.
-    #[arg(long)]
-    threads: Option<usize>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -122,6 +105,7 @@ fn main() -> Result<()> {
         log::LevelFilter::Warn
     });
     match cli.command {
+        Command::Run(args) if args.tui => run_with_tui(args),
         Command::Run(args) => {
             if let Some(n) = args.threads {
                 rayon::ThreadPoolBuilder::new()
@@ -131,13 +115,13 @@ fn main() -> Result<()> {
             }
             run::run(args)
         }
-        Command::Tui(args) => tui::run(args),
-        Command::Monitor(args) => monitor(args),
+        Command::View(args) => tui::run(args),
         Command::Submit(args) => submit(args),
     }
 }
 
-fn monitor(args: MonitorArgs) -> Result<()> {
+fn run_with_tui(args: run::RunArgs) -> Result<()> {
+    let reusing_checkpoint = args.checkpoint.exists();
     let log_path = args.checkpoint.with_extension("log");
 
     // Spawn the pipeline as a separate child process so it doesn't share
@@ -149,23 +133,17 @@ fn monitor(args: MonitorArgs) -> Result<()> {
         .try_clone()
         .context("failed to clone log file handle")?;
 
-    let mut pipeline = std::process::Command::new(exe);
-    pipeline
-        .arg("run")
-        .arg("--verbose")
-        .arg("--config")
-        .arg(&args.config)
-        .arg("--checkpoint")
-        .arg(&args.checkpoint);
-    if let Some(threads) = args.threads {
-        pipeline.arg("--threads").arg(threads.to_string());
-    }
-    let mut child = pipeline
+    let mut pipeline = headless_command(exe, &args);
+    let child = pipeline
         .stdout(log_file)
         .stderr(log_err)
         .spawn()
         .context("failed to spawn pipeline process")?;
 
+    let mut owned = OwnedPipeline {
+        child,
+        log_path: log_path.clone(),
+    };
     // Run the TUI on the main thread
     let tui_args = TuiArgs {
         checkpoint: args.checkpoint,
@@ -175,18 +153,25 @@ fn monitor(args: MonitorArgs) -> Result<()> {
         poll_ms: 1_000,
         no_follow: false,
     };
-    let tui_result = tui::run(tui_args);
+    let tui_result = tui::run_owned(tui_args, &mut owned, reusing_checkpoint);
 
     // After TUI exits (user pressed 'q'), terminate the child process
-    let finished = child
+    let finished = owned
+        .child
         .try_wait()
         .context("failed to query pipeline process status")?;
     let status = match finished {
         Some(status) => status,
         None => {
             eprintln!("TUI exited before the pipeline finished; stopping the pipeline.");
-            child.kill().context("failed to stop pipeline process")?;
-            child.wait().context("failed to wait for pipeline process")?;
+            owned
+                .child
+                .kill()
+                .context("failed to stop pipeline process")?;
+            owned
+                .child
+                .wait()
+                .context("failed to wait for pipeline process")?;
             eprintln!("Pipeline log: {}", log_path.display());
             tui_result?;
             return Err(anyhow!("pipeline was stopped before it finished"));
@@ -199,6 +184,42 @@ fn monitor(args: MonitorArgs) -> Result<()> {
         return Err(anyhow!("pipeline exited with {status}"));
     }
     Ok(())
+}
+
+fn headless_command(exe: PathBuf, args: &run::RunArgs) -> std::process::Command {
+    let mut pipeline = std::process::Command::new(exe);
+    pipeline
+        .arg("run")
+        .arg("--verbose")
+        .arg("--config")
+        .arg(&args.config)
+        .arg("--checkpoint")
+        .arg(&args.checkpoint);
+    if let Some(threads) = args.threads {
+        pipeline.arg("--threads").arg(threads.to_string());
+    }
+    pipeline
+}
+
+pub(crate) struct OwnedPipeline {
+    child: std::process::Child,
+    log_path: PathBuf,
+}
+
+impl OwnedPipeline {
+    fn poll(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait().context("failed to query pipeline process status")
+    }
+}
+
+impl Drop for OwnedPipeline {
+    fn drop(&mut self) {
+        // Also stop and reap on terminal setup, rendering, or polling errors.
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 
 fn submit(args: SubmitArgs) -> Result<()> {
@@ -224,4 +245,88 @@ fn submit(args: SubmitArgs) -> Result<()> {
         no_follow: false,
     };
     tui::run(tui_args)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn workflows_and_headless_child_arguments() {
+        for old in ["monitor", "tui"] {
+            assert!(Cli::try_parse_from(["slide", old, "--checkpoint", "c"]).is_err());
+        }
+        let cli = Cli::try_parse_from([
+            "slide",
+            "run",
+            "--tui",
+            "--config",
+            "cfg",
+            "--checkpoint",
+            "cp",
+            "--threads",
+            "2",
+        ])
+        .unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("expected run")
+        };
+        assert!(args.tui);
+        let command = headless_command("slide".into(), &args);
+        let actual: Vec<_> = command
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                "run",
+                "--verbose",
+                "--config",
+                "cfg",
+                "--checkpoint",
+                "cp",
+                "--threads",
+                "2"
+            ]
+        );
+        let cli =
+            Cli::try_parse_from(["slide", "run", "--config", "cfg", "--checkpoint", "cp"]).unwrap();
+        assert!(matches!(cli.command, Command::Run(args) if !args.tui));
+        assert!(
+            matches!(Cli::try_parse_from(["slide", "view", "--checkpoint", "cp", "--no-follow"]).unwrap().command, Command::View(args) if args.no_follow)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_worker_is_polled_and_cleanup_reaps() {
+        for code in [0, 7] {
+            let child = std::process::Command::new("sh")
+                .args(["-c", &format!("exit {code}")])
+                .spawn().unwrap();
+            let mut owned = OwnedPipeline { child, log_path: "unused.log".into() };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let status = loop {
+                if let Some(status) = owned.poll().unwrap() { break status; }
+                assert!(std::time::Instant::now() < deadline, "worker did not exit");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert_eq!(status.code(), Some(code));
+            assert_eq!(owned.poll().unwrap(), Some(status));
+        }
+        let child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let mut owned = OwnedPipeline {
+            child,
+            log_path: "unused.log".into(),
+        };
+        assert!(owned.poll().unwrap().is_none());
+        drop(owned);
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
 }

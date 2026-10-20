@@ -41,10 +41,32 @@ const MATRIX_FACTOR_WINDOW: usize = 12;
 const LOADING_MATRIX_ROW_LIMIT: usize = 24;
 
 pub fn run(args: TuiArgs) -> Result<()> {
-    let mut terminal = setup_terminal()?;
-    let result = run_app(&mut terminal, args);
-    restore_terminal()?;
-    result
+    run_dashboard(args, None, false)
+}
+
+pub fn run_owned(
+    args: TuiArgs,
+    owned: &mut crate::OwnedPipeline,
+    reusing_checkpoint: bool,
+) -> Result<()> {
+    run_dashboard(args, Some(owned), reusing_checkpoint)
+}
+
+fn run_dashboard(
+    args: TuiArgs,
+    owned: Option<&mut crate::OwnedPipeline>,
+    reusing_checkpoint: bool,
+) -> Result<()> {
+    let mut terminal = match setup_terminal() {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let _ = restore_terminal();
+            return Err(error);
+        }
+    };
+    let result = run_app(&mut terminal, args, owned, reusing_checkpoint);
+    let restored = restore_terminal();
+    result.and(restored)
 }
 
 fn setup_terminal() -> Result<DefaultTerminal> {
@@ -60,16 +82,44 @@ fn restore_terminal() -> Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut DefaultTerminal, args: TuiArgs) -> Result<()> {
+fn run_app(
+    terminal: &mut DefaultTerminal,
+    args: TuiArgs,
+    mut owned: Option<&mut crate::OwnedPipeline>,
+    reusing_checkpoint: bool,
+) -> Result<()> {
     let mut app = App::load(args)?;
+    if owned.is_some() {
+        app.startup = if reusing_checkpoint {
+            "Reusing checkpoint; worker validates compatibility and resumes".into()
+        } else {
+            "New checkpoint; starting worker".into()
+        };
+    }
     loop {
+        if let Some(pipeline) = owned.as_mut() {
+            app.worker = Some(pipeline.poll()?);
+            if matches!(app.worker, Some(Some(_))) {
+                app.quit_confirm = false;
+            }
+            app.log_path = Some(pipeline.log_path.clone());
+        }
         terminal.draw(|frame| app.render(frame))?;
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    _ if app.quit_confirm => {
+                        if app.quit_key(key.code) {
+                            break;
+                        }
+                    }
                     _ if app.feature_search_editing => app.handle_feature_search_key(key.code),
-                    KeyCode::Char('q') => break,
+                    KeyCode::Char('q') => {
+                        if app.quit_key(key.code) {
+                            break;
+                        }
+                    }
                     KeyCode::Char('/') => app.start_feature_search(),
                     KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => app.next_tab(),
                     KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => app.prev_tab(),
@@ -296,6 +346,10 @@ impl LoadingRowMode {
 #[derive(Debug)]
 struct App {
     args: TuiArgs,
+    worker: Option<Option<std::process::ExitStatus>>,
+    log_path: Option<PathBuf>,
+    startup: String,
+    quit_confirm: bool,
     tab: Tab,
     data: Option<DashboardData>,
     selected_run: usize,
@@ -319,6 +373,30 @@ struct App {
 }
 
 impl App {
+    fn quit_key(&mut self, key: KeyCode) -> bool {
+        if self.quit_confirm {
+            self.quit_confirm = false;
+            return matches!(key, KeyCode::Char('y') | KeyCode::Enter);
+        }
+        if self.worker == Some(None) {
+            self.quit_confirm = true;
+            false
+        } else {
+            true
+        }
+    }
+
+    fn execution_status(&self) -> String {
+        match self.worker {
+            None => "VIEW ONLY | external process status unknown".into(),
+            Some(None) => "OWNED RUN | worker running; q asks before stopping".into(),
+            Some(Some(status)) if status.success() => {
+                "OWNED RUN | pipeline succeeded (including configured final CV/export)".into()
+            }
+            Some(Some(status)) => format!("OWNED RUN | pipeline FAILED: {status}"),
+        }
+    }
+
     fn load(args: TuiArgs) -> Result<Self> {
         let (data, last_error) = if args.checkpoint.exists() {
             match DashboardData::load(&args) {
@@ -388,6 +466,10 @@ impl App {
         });
         Ok(Self {
             args,
+            worker: None,
+            log_path: None,
+            startup: "Read-only viewer; external process status unknown".into(),
+            quit_confirm: false,
             tab: Tab::Overview,
             selected_run: 0,
             selected_factor: 0,
@@ -826,6 +908,7 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
@@ -860,7 +943,7 @@ impl App {
                 Block::default()
                     .borders(Borders::ALL)
                     .title("LOVE -> SLIDE Monitor")
-                    .title_bottom(Line::from(format!("Step: {step}")).cyan()),
+                    .title_bottom(Line::from(format!("Reported step: {step}")).cyan()),
             )
             .highlight_style(
                 Style::default()
@@ -869,15 +952,29 @@ impl App {
             );
         frame.render_widget(titles, layout[0]);
 
+        let message = if self.quit_confirm {
+            "Stop the active owned worker and quit? y/Enter: stop | any other key: cancel (uncheckpointed work may be lost)".to_owned()
+        } else {
+            self.execution_status()
+        };
+        let log = self
+            .log_path
+            .as_ref()
+            .map(|p| format!("Log: {}", p.display()))
+            .unwrap_or_default();
+        frame.render_widget(
+            Paragraph::new(format!("{message}\n{}\n{log}", self.startup)).wrap(Wrap { trim: true }),
+            layout[1],
+        );
         if self.data.is_none() {
-            self.render_waiting(frame, layout[1]);
+            self.render_waiting(frame, layout[2]);
         } else {
             match self.tab {
-                Tab::Overview => self.render_overview(frame, layout[1]),
-                Tab::Love => self.render_love(frame, layout[1]),
-                Tab::Factors => self.render_factors(frame, layout[1]),
-                Tab::Slide => self.render_slide(frame, layout[1]),
-                Tab::Performance => self.render_performance(frame, layout[1]),
+                Tab::Overview => self.render_overview(frame, layout[2]),
+                Tab::Love => self.render_love(frame, layout[2]),
+                Tab::Factors => self.render_factors(frame, layout[2]),
+                Tab::Slide => self.render_slide(frame, layout[2]),
+                Tab::Performance => self.render_performance(frame, layout[2]),
             }
         }
 
@@ -910,7 +1007,7 @@ impl App {
             footer_spans.push(format!(" | feat: {query}").yellow());
         }
         let footer = Line::from(footer_spans);
-        frame.render_widget(Paragraph::new(footer).wrap(Wrap { trim: true }), layout[2]);
+        frame.render_widget(Paragraph::new(footer).wrap(Wrap { trim: true }), layout[3]);
     }
 
     fn render_waiting(&self, frame: &mut Frame, area: Rect) {
@@ -1313,22 +1410,22 @@ impl App {
 
         let running_line = if let Some(ref prog) = self.progress {
             if matches!(prog.phase, Phase::FinalCv) {
-                "running: final CV for best model".to_owned()
+                "reported phase: final CV (sidecar may be stale)".to_owned()
             } else if completed < total {
                 format!(
-                    "running: eval {}/{} (d={:.2}, l={:.2})",
+                    "reported eval {}/{} (d={:.2}, l={:.2})",
                     prog.grid_index + 1,
                     prog.total_grid,
                     prog.delta,
                     prog.lambda,
                 )
             } else {
-                "status: complete".to_owned()
+                "grid complete; final CV/export not established by checkpoint".to_owned()
             }
         } else if completed < total {
-            "running: waiting for progress...".to_owned()
+            "grid incomplete; waiting for progress (process status above)".to_owned()
         } else {
-            "status: complete".to_owned()
+            "grid complete; final CV/export not established by checkpoint".to_owned()
         };
 
         let has_phase = self
@@ -4602,6 +4699,43 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn owned_quit_requires_confirmation_and_view_never_stops_work() {
+        let mut app = fixture_app("../../tests/test_config_checkpoint.json");
+        assert!(app.quit_key(super::KeyCode::Char('q')));
+        app.worker = Some(None);
+        assert!(!app.quit_key(super::KeyCode::Char('q')));
+        assert!(app.quit_confirm);
+        assert!(!app.quit_key(super::KeyCode::Esc));
+        assert_eq!(app.worker, Some(None));
+        assert!(!app.quit_key(super::KeyCode::Char('q')));
+        assert!(app.quit_key(super::KeyCode::Char('y')));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_status_and_grid_status_are_independent() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut app = fixture_app("../../tests/test_config_checkpoint.json");
+        app.worker = Some(Some(std::process::ExitStatus::from_raw(256)));
+        app.log_path = Some("worker.log".into());
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("pipeline FAILED"));
+        assert!(text.contains("worker.log"));
+        assert!(!text.contains("status: complete"));
+        let data = app.data.as_mut().unwrap();
+        data.total_grid_points = data.runs.len();
+        assert!(render_text(&app, 140, 45).contains("grid complete; final CV/export not established"));
+        app.data.as_mut().unwrap().total_grid_points += 1;
+        assert!(render_text(&app, 140, 45).contains("grid incomplete"));
+        app.worker = Some(Some(std::process::ExitStatus::from_raw(0)));
+        assert!(app.execution_status().contains("pipeline succeeded"));
+        assert!(app.quit_key(super::KeyCode::Char('q')));
+        for (width, height) in [(80, 24), (60, 20), (20, 8), (1, 1)] {
+            render_text(&app, width, height);
+        }
+    }
+
     fn plot_app() -> App {
         let mut app = fixture_app("../../tests/test_config_checkpoint.json");
         let data = app.data.as_mut().unwrap();
@@ -4820,15 +4954,16 @@ mod tests {
             ] {
                 app.tab = tab;
                 for (width, height) in [(140, 45), (60, 20)] {
-                    assert!(render_text(&app, width, height).contains(&format!("Step: {label}")));
+                    assert!(render_text(&app, width, height)
+                        .contains(&format!("Reported step: {label}")));
                 }
-                assert!(render_text(&app, 20, 8).contains("Step:"));
+                assert!(render_text(&app, 20, 8).contains("Reported step:"));
             }
         }
         app.progress = None;
-        assert!(render_text(&app, 60, 20).contains("Step: no active step reported"));
+        assert!(render_text(&app, 60, 20).contains("Reported step: no active step reported"));
         app.data = None;
-        assert!(render_text(&app, 60, 20).contains("Step: waiting for progress"));
+        assert!(render_text(&app, 60, 20).contains("Reported step: waiting for progress"));
         app.progress = Some(super::ProgressReport {
             grid_index: 0,
             total_grid: 1,
@@ -4836,7 +4971,7 @@ mod tests {
             lambda: 0.1,
             phase: super::Phase::Love,
         });
-        assert!(render_text(&app, 60, 20).contains("Step: LOVE factors"));
+        assert!(render_text(&app, 60, 20).contains("Reported step: LOVE factors"));
     }
 
     #[test]

@@ -14,7 +14,7 @@ git clone https://github.com/TranscriptionFactory/SLIDE.git
 ```
 From the project repository:
 ```bash
-cargo build --release && ./target/release/slide monitor \
+cargo build --release && ./target/release/slide run --tui \
   --config tests/test_config_quick.yaml \
   --checkpoint tests/test_config_checkpoint.json
 ```
@@ -43,19 +43,20 @@ The binary lands at `target/release/slide`.
 
 ## Four Ways to Use It
 
-### 1. `monitor` — Run pipeline + TUI together (recommended)
+### 1. `run --tui` — Run pipeline + TUI together (recommended)
 
 Launches the SLIDE optimization as a child process and opens the TUI on top.
 The pipeline's stdout/stderr are redirected to a `.log` file next to the
 checkpoint. The TUI polls the checkpoint file and updates as results arrive.
 
 ```bash
-./target/release/slide monitor \
+./target/release/slide run --tui \
   --config path/to/config.yaml \
   --checkpoint path/to/checkpoint.json
 ```
 
-Press `q` to exit the TUI; this also terminates the child pipeline process.
+Press `q` to request exit. While the owned worker is active, confirm with `y`
+or Enter to stop it; any other key cancels. Quitting `view` never stops a job.
 
 ### 2. `run` — Pipeline only (headless)
 
@@ -68,13 +69,13 @@ jobs where you attach the TUI separately.
   --checkpoint path/to/checkpoint.json
 ```
 
-### 3. `tui` — Dashboard only (attach to existing run)
+### 3. `view` — Dashboard only (attach to existing run)
 
 Opens the TUI against a checkpoint file written by a running or completed
 pipeline.
 
 ```bash
-./target/release/slide tui \
+./target/release/slide view \
   --checkpoint path/to/checkpoint.json
 ```
 
@@ -87,6 +88,23 @@ Optional flags:
 | `--x`          | —       | Feature matrix CSV/TSV (recovers feature names) |
 | `--poll-ms`    | 1000    | Checkpoint polling interval in milliseconds |
 | `--no-follow`  | false   | Disable live polling (view a static checkpoint) |
+
+
+### Checkpoint reuse and dashboard ownership
+
+`slide run` and `slide run --tui` create new state or resume a compatible
+checkpoint. Corrupt or incompatible state is rejected, never reset. Use a new
+checkpoint path for a new run. Recorded grid evaluations are reused; a full grid
+does not mean final CV or configured export succeeded. The owned dashboard
+shows worker success/failure and its log path while it remains open.
+
+`slide view` never launches computation. Progress sidecars can be stale and do
+not prove that an external process is alive. `--config` supplies dashboard
+metadata, not execution instructions. Missing checkpoints are polled unless
+`--no-follow` is supplied. `slide submit` keeps its scheduler behavior.
+
+`run --tui` currently truncates the checkpoint-adjacent `.log` at startup;
+archive an earlier log before relaunching if it must be retained.
 
 ### 4. `submit` — Submit a SLURM job + attach TUI
 
@@ -113,7 +131,7 @@ scheduled job and writes its checkpoint to a shared filesystem.
 
 The repo includes a scripted VHS tape for repeatable screenshots of the
 Ratatui dashboard. It builds a deterministic smoke-test checkpoint, launches
-`slide tui --no-follow`, navigates through the release-worthy tabs/views,
+`slide view --no-follow`, navigates through the release-worthy tabs/views,
 and writes PNG screenshots plus an animated GIF.
 
 ```bash
@@ -136,7 +154,7 @@ If you only want to regenerate the fixture before manually opening the TUI:
 
 ```bash
 scripts/capture-tui-screenshots.sh --prepare-only
-./target/debug/slide tui \
+./target/debug/slide view \
   --checkpoint .tmp/tui-smoke/tui-smoke-checkpoint.json \
   --config .tmp/tui-smoke/tui-smoke.yaml \
   --no-follow
@@ -342,7 +360,7 @@ If final CV was not enabled for the run, the other sub-views display a short
 
 ```bash
 # Single command — runs pipeline and TUI together
-./target/release/slide monitor \
+./target/release/slide run --tui \
   --config my_config.yaml \
   --checkpoint .tmpfiles/my_run.json
 ```
@@ -367,7 +385,7 @@ Submit the pipeline as a SLURM job:
 Then attach the TUI from a login node while the job runs:
 
 ```bash
-./target/release/slide tui \
+./target/release/slide view \
   --checkpoint /ix/djishnu/$USER/checkpoints/run1.json
 ```
 
@@ -377,7 +395,7 @@ evaluations complete. Add `--no-follow` to view a finished run without polling.
 ### Reviewing a completed run
 
 ```bash
-./target/release/slide tui \
+./target/release/slide view \
   --checkpoint results/checkpoint.json \
   --x data/features.csv \
   --no-follow

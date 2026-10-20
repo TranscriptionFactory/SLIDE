@@ -19,6 +19,10 @@ use slide_types::Scalar;
 
 #[derive(Debug, Parser, Clone)]
 pub struct RunArgs {
+    /// Start one headless worker and open its dashboard; quit asks before stopping it.
+    #[arg(long)]
+    pub tui: bool,
+
     /// YAML configuration file describing the SLIDE run.
     #[arg(long)]
     pub config: PathBuf,
@@ -125,8 +129,7 @@ pub fn run(args: RunArgs) -> Result<()> {
 
 /// Execute the SLIDE optimization pipeline.
 ///
-/// Separated from [`run`] so the `monitor` command can spawn this on a
-/// background thread while the TUI runs on the main thread.
+/// Shared headless pipeline entrypoint; checkpoint validation remains in slide-core.
 pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> Result<()> {
     let yaml = std::fs::read_to_string(config)
         .with_context(|| format!("failed to read config file: {}", config.display()))?;
