@@ -519,64 +519,7 @@ impl App {
         } else {
             (None, None)
         };
-        let config_summary = args.config.as_ref().and_then(|path| {
-            let yaml = fs::read_to_string(path).ok()?;
-            let cfg: crate::run::RunConfig = serde_yaml::from_str(&yaml).ok()?;
-            let total = cfg.delta.len() * cfg.lambda.len();
-            let mut lines = vec![
-                format!("Config: {}", path.display()),
-                format!("X data: {}", cfg.x_path.display()),
-                format!("Y data: {}", cfg.y_path.display()),
-                format!(
-                    "Grid:   {} delta x {} lambda = {} evaluations",
-                    cfg.delta.len(),
-                    cfg.lambda.len(),
-                    total,
-                ),
-                format!(
-                    "  delta:  [{}]",
-                    cfg.delta
-                        .iter()
-                        .map(|v| format!("{v:.4}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                format!(
-                    "  lambda: [{}]",
-                    cfg.lambda
-                        .iter()
-                        .map(|v| format!("{v:.4}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            ];
-            let mut params = Vec::new();
-            if let Some(v) = cfg.do_interacts {
-                params.push(format!("do_interacts={v}"));
-            }
-            if let Some(v) = cfg.y_factor {
-                params.push(format!("y_factor={v}"));
-            }
-            if let Some(v) = cfg.pure_homo {
-                params.push(format!("pure_homo={v}"));
-            }
-            if let Some(v) = cfg.spec {
-                params.push(format!("spec={v:.3}"));
-            }
-            if let Some(v) = cfg.fdr {
-                params.push(format!("fdr={v:.3}"));
-            }
-            if let Some(v) = cfg.slide_iter {
-                params.push(format!("SLIDE_iter={v}"));
-            }
-            if let Some(v) = cfg.thresh_fdr {
-                params.push(format!("thresh_fdr={v:.3}"));
-            }
-            if !params.is_empty() {
-                lines.push(format!("Params: {}", params.join(", ")));
-            }
-            Some(lines)
-        });
+        let config_summary = args.config.as_deref().map(config_file_lines);
         Ok(Self {
             args,
             worker: None,
@@ -660,13 +603,9 @@ impl App {
 
     fn maybe_reload_progress(&mut self) {
         let progress_path = self.args.checkpoint.with_extension("progress.json");
-        if let Ok(contents) = fs::read_to_string(&progress_path) {
-            if let Ok(report) = serde_json::from_str::<ProgressReport>(&contents) {
-                self.progress = Some(report);
-            }
-        } else {
-            self.progress = None;
-        }
+        self.progress = fs::read_to_string(&progress_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ProgressReport>(&contents).ok());
 
         // Read live evaluation sidecar when no real runs exist yet.
         let has_real_runs = self.data.as_ref().is_some_and(|d| !d.runs.is_empty());
@@ -894,7 +833,20 @@ impl App {
             impute_missing: false,
         };
         let loaded_x = read_feature_matrix(path, &options)
-            .with_context(|| format!("failed to read feature matrix from {}", path.display()))?;
+            .with_context(|| format!("failed to read feature matrix from {}", path.display()))
+            .map_err(|error| {
+                data.derived.borrow_mut().load_error = Some(format!("{error:#}"));
+                error
+            })?;
+        let dimensions_match = data.runs.iter().chain(self.live_run.iter()).all(|run| {
+            loaded_x.matrix.ncols() == run.love.a.nrows()
+                && loaded_x.matrix.nrows() == run.z.nrows()
+        });
+        if !dimensions_match {
+            let message = "Feature matrix dimensions do not match checkpoint loadings/scores";
+            data.derived.borrow_mut().load_error = Some(message.to_owned());
+            return Err(anyhow!(message));
+        }
         let feature_names = loaded_x.feature_names.clone();
         let standardized_x = slide_data_io::standardize(&loaded_x.matrix).matrix;
         let mut derived = data.derived.borrow_mut();
@@ -930,11 +882,30 @@ impl App {
         let Some(data) = self.data.as_ref() else {
             return Vec::new();
         };
-        data.derived
+        let _ = self.ensure_x();
+        let names = data
+            .derived
             .borrow()
             .feature_names
             .clone()
-            .unwrap_or_else(|| data.feature_names.clone())
+            .unwrap_or_else(|| data.feature_names.clone());
+        let mut counts = std::collections::HashMap::new();
+        for name in &names {
+            *counts.entry(name).or_insert(0usize) += 1;
+        }
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                if name.trim().is_empty() {
+                    format!("[{}] unnamed", index + 1)
+                } else if counts[name] > 1 {
+                    format!("[{}] {name}", index + 1)
+                } else {
+                    name.clone()
+                }
+            })
+            .collect()
     }
 
     fn current_factor_rankings(&self) -> Option<Vec<FactorRanking>> {
@@ -1031,7 +1002,17 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Length(if frame.area().height < 25 { 2 } else { 4 }),
+                Constraint::Length(if self.worker.is_some() {
+                    3
+                } else if self
+                    .data
+                    .as_ref()
+                    .is_some_and(|data| data.derived.borrow().load_error.is_some())
+                {
+                    3
+                } else {
+                    1
+                }),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
@@ -1075,17 +1056,38 @@ impl App {
             );
         frame.render_widget(titles, layout[0]);
 
+        if self.data.is_some()
+            && (self.tab == Tab::Factors
+                || (self.tab == Tab::Love
+                    && matches!(
+                        self.love_sub_view,
+                        LoveSubView::LoadingMatrix | LoveSubView::GammaDistribution
+                    )))
+        {
+            let _ = self.ensure_x();
+        }
         let message = self.execution_status();
+        let feature_error = self
+            .data
+            .as_ref()
+            .and_then(|data| data.derived.borrow().load_error.clone());
         let log = self
             .log_path
             .as_ref()
             .map(|p| format!("Log: {}", p.display()))
             .unwrap_or_default();
+        let log = feature_error.map_or(log, |error| {
+            format!("Feature labels/data: {error}; IDs retained")
+        });
         frame.render_widget(
             Paragraph::new(if frame.area().height < 25 {
                 format!("{message}\n{log}")
             } else {
-                format!("{message}\n{}\n{log}", self.startup)
+                if self.worker.is_none() {
+                    format!("{message}\n{log}")
+                } else {
+                    format!("{message}\n{}\n{log}", self.startup)
+                }
             })
             .wrap(Wrap { trim: true }),
             layout[1],
@@ -1182,14 +1184,12 @@ impl App {
                 prog.lambda,
             )));
         } else {
-            lines.push(Line::from("Waiting for pipeline to start...".dark_gray()));
+            lines.push(Line::from(
+                "No checkpoint loaded; process status above.".dark_gray(),
+            ));
         }
 
-        let title = if self.config_summary.is_some() {
-            "Initializing"
-        } else {
-            "Waiting"
-        };
+        let title = "Checkpoint unavailable";
         let paragraph = Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title(title));
         frame.render_widget(paragraph, parts[0]);
@@ -1200,13 +1200,53 @@ impl App {
     }
 
     fn render_overview(&self, frame: &mut Frame, area: Rect) {
+        if area.height < 20 {
+            let sections = Layout::vertical([
+                Constraint::Length(3),
+                Constraint::Length(4),
+                Constraint::Length(if area.height < 16 { 0 } else { 4 }),
+                Constraint::Min(5),
+            ])
+            .split(area);
+            let data = self.data();
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "grid visited {}/{} | loaded results {}\nfinal CV: {}",
+                    data.completed_grid,
+                    data.total_grid_points,
+                    data.runs.len(),
+                    if data.final_cv.is_some() {
+                        "loaded (Performance)"
+                    } else {
+                        "not available"
+                    }
+                ))
+                .block(
+                    Block::default()
+                        .borders(Borders::TOP)
+                        .title("Loaded results"),
+                ),
+                sections[0],
+            );
+            frame.render_widget(self.run_table(sections[1].height), sections[1]);
+            frame.render_widget(
+                self.grid_widget(self.grid_metric.title(), self.grid_metric),
+                sections[2],
+            );
+            frame.render_widget(self.config_identity_widget(), sections[3]);
+            return;
+        }
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(8),
-                Constraint::Min(10),
-                Constraint::Length(8),
-                Constraint::Length(3),
+                Constraint::Length(
+                    (self.data().runs.len() as u16 + 3)
+                        .min(area.height.saturating_sub(16))
+                        .max(3),
+                ),
+                Constraint::Length((self.data().delta_values.len() as u16 + 3).min(8)),
+                Constraint::Length(if area.width < 100 { 5 } else { 4 }),
             ])
             .split(area);
 
@@ -1250,7 +1290,11 @@ impl App {
         }
         let sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(4), Constraint::Min(10)])
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Length(18),
+                Constraint::Min(0),
+            ])
             .split(area);
 
         let header_text = if let Some(run) = self.current_run() {
@@ -1312,14 +1356,12 @@ impl App {
     }
 
     fn render_feature_text(&self, frame: &mut Frame, area: Rect) {
-        let title = format!(
-            "Feature text plot | factor {} | v view | j/k factor",
-            self.selected_factor + 1
-        );
+        let title = format!("Feature text plot | factor {}", self.selected_factor + 1);
         let result = (|| -> Result<Vec<crate::output::Feature>> {
             self.ensure_x()?;
             self.ensure_y()?;
             let run = self.current_run().context("No run available")?;
+            let display_names = self.current_feature_names();
             let mut derived = self.data().derived.borrow_mut();
             let key = (self.selected_run, self.selected_factor);
             if !derived.feature_plots.contains_key(&key) {
@@ -1328,10 +1370,7 @@ impl App {
                         .standardized_x
                         .as_ref()
                         .context("No feature matrix")?,
-                    derived
-                        .feature_names
-                        .as_ref()
-                        .unwrap_or(&self.data().feature_names),
+                    &display_names,
                     derived.y.as_ref().context("No response vector")?,
                     &run.love.a,
                     self.selected_factor,
@@ -1356,8 +1395,8 @@ impl App {
                 }
                 for feature in features {
                     let color = match feature.color() {
-                        "red" => Color::Red,
-                        "blue" => Color::Blue,
+                        "red" => Color::LightRed,
+                        "blue" => Color::LightBlue,
                         _ => Color::Gray,
                     };
                     let rho = feature
@@ -1396,7 +1435,7 @@ impl App {
     fn render_feature_network(&self, frame: &mut Frame, area: Rect) {
         let title = format!(
             "Feature correlation network | Z{} | top 10 | |r| >= 0.5 | strongest 20 edges",
-            self.selected_factor
+            self.selected_factor + 1
         );
         let result = (|| -> Result<_> {
             self.ensure_x()?;
@@ -1424,10 +1463,7 @@ impl App {
                     .total_cmp(&a[(i, self.selected_factor)].abs())
             });
             indices.truncate(TOP_FEATURE_COUNT);
-            let names = derived
-                .feature_names
-                .as_ref()
-                .unwrap_or(&self.data().feature_names);
+            let names = self.current_feature_names();
             let labels: Vec<_> = indices.iter().map(|&i| names[i].clone()).collect();
             let columns: Vec<_> = indices
                 .iter()
@@ -1450,7 +1486,17 @@ impl App {
             Ok((labels, edges)) => {
                 let colors: Vec<_> = edges
                     .iter()
-                    .map(|&(i, j, r)| (i, j, if r > 0.0 { Color::Red } else { Color::Blue }))
+                    .map(|&(i, j, r)| {
+                        (
+                            i,
+                            j,
+                            if r > 0.0 {
+                                Color::LightRed
+                            } else {
+                                Color::LightBlue
+                            },
+                        )
+                    })
                     .collect();
                 render_network(
                     frame,
@@ -1482,6 +1528,17 @@ impl App {
             .copied()
             .filter(|&(i, j)| i == factor || j == factor)
             .collect();
+        if pairs.is_empty() {
+            frame.render_widget(
+                Paragraph::new(format!("No interaction pairs for Z{}", factor + 1)).block(
+                    Block::default()
+                        .borders(Borders::TOP)
+                        .title("Selected interaction network"),
+                ),
+                area,
+            );
+            return;
+        }
         let mut nodes = vec![factor];
         for &(i, j) in &pairs {
             for node in [i, j] {
@@ -1494,7 +1551,8 @@ impl App {
             .iter()
             .map(|i| {
                 format!(
-                    "Z{i}{}",
+                    "Z{}{}",
+                    i + 1,
                     if run.marginal.sig_lfs.contains(i) {
                         " (marginal)"
                     } else {
@@ -1514,7 +1572,8 @@ impl App {
             })
             .collect();
         let title = format!(
-            "Selected interaction network | Z{factor} | {}/{} pairs | PgUp/Down factor",
+            "Selected interaction network | Z{} | {}/{} pairs",
+            factor + 1,
             edges.len(),
             pairs.len()
         );
@@ -1543,7 +1602,7 @@ impl App {
                 frame.render_widget(self.factor_covariance_heatmap(), sections[1]);
             }
             LoveSubView::LoadingMatrix => {
-                frame.render_widget(self.loading_matrix_heatmap(), sections[1]);
+                frame.render_widget(self.loading_matrix_heatmap(sections[1]), sections[1]);
             }
             LoveSubView::GroupCorrelation => {
                 frame.render_widget(self.group_correlation_heatmap(), sections[1]);
@@ -1586,12 +1645,12 @@ impl App {
                     prog.lambda,
                 )
             } else {
-                "grid complete; final CV/export not established by checkpoint".to_owned()
+                "grid visited; final CV/export not established by checkpoint".to_owned()
             }
         } else if completed < total {
-            "grid incomplete; waiting for progress (process status above)".to_owned()
+            "grid incomplete; no progress reported (process status above)".to_owned()
         } else {
-            "grid complete; final CV/export not established by checkpoint".to_owned()
+            "grid visited; final CV/export not established by checkpoint".to_owned()
         };
 
         let has_phase = self
@@ -1613,8 +1672,9 @@ impl App {
                 self.args.checkpoint.to_string_lossy()
             )),
             Line::from(format!(
-                "progress: {completed}/{total} ({:.1}%) | follow: {} | poll: {}ms",
+                "grid visited: {completed}/{total} ({:.1}%) | loaded results: {} | follow: {} | poll: {}ms",
                 progress_pct * 100.0,
+                self.data().runs.len(),
                 if self.args.no_follow { "off" } else { "on" },
                 self.args.poll_ms
             )),
@@ -1673,7 +1733,7 @@ impl App {
             .iter()
             .find(|line| line.starts_with("Config:"))
             .cloned()
-            .unwrap_or_else(|| "Config: unavailable".to_owned());
+            .unwrap_or_else(|| "Config: not supplied (checkpoint settings loaded)".to_owned());
         let grid = self
             .data()
             .config_lines
@@ -1681,8 +1741,8 @@ impl App {
             .find(|line| line.starts_with("Grid:"))
             .cloned()
             .unwrap_or_else(|| format!("Grid: {} evaluations", self.data().total_grid_points));
-        Paragraph::new(Text::from(vec![Line::from(format!("{config} | {grid}"))]))
-            .block(Block::default().borders(Borders::ALL).title("Identity"))
+        Paragraph::new(Text::from(vec![Line::from(config), Line::from(grid)]))
+            .block(Block::default().borders(Borders::TOP).title("Identity"))
             .wrap(Wrap { trim: true })
     }
 
@@ -1772,19 +1832,7 @@ impl App {
             || "n/a".to_owned(),
             |group| format!("+{} / -{}", group.pos.len(), group.neg.len()),
         );
-        let rankings = self.current_factor_rankings();
-        let top_loading = rankings
-            .as_ref()
-            .and_then(|f| f.get(factor))
-            .and_then(|r| r.by_loading.first())
-            .map_or(0.0, |entry| entry.loading.abs());
-        let top_association = rankings
-            .as_ref()
-            .and_then(|f| f.get(factor))
-            .and_then(|r| r.by_association.first())
-            .map_or(0.0, |entry| entry.association.abs());
         let lines = vec![
-            Line::from(format!("factor index: {}", factor + 1)),
             Line::from(format!(
                 "pure group size: {pure_group_size} ({signed_pure})"
             )),
@@ -1804,10 +1852,6 @@ impl App {
                 "latent score mean/std: {:.3} / {:.3}",
                 array_mean(&run.z.as_ndarray().column(factor).to_owned()),
                 array_std(&run.z.as_ndarray().column(factor).to_owned())
-            )),
-            Line::from(format!(
-                "top |loading|: {:.3} | top assoc: {:.3}",
-                top_loading, top_association,
             )),
         ];
         Paragraph::new(Text::from(lines))
@@ -1896,6 +1940,7 @@ impl App {
         }
         let factor = self.selected_factor.min(run.love.k - 1);
         let rankings = self.current_factor_rankings();
+        let display_names = self.current_feature_names();
 
         let rows = rankings
             .as_ref()
@@ -1911,7 +1956,10 @@ impl App {
             .map(|(index, feature)| {
                 Row::new([
                     (index + 1).to_string(),
-                    feature.name,
+                    display_names
+                        .get(feature.index)
+                        .cloned()
+                        .unwrap_or(feature.name),
                     format!("{:.3}", feature.loading),
                     format!("{:.3}", feature.association),
                 ])
@@ -2042,7 +2090,7 @@ impl App {
             )),
         ];
         Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("LOVE"))
+            .block(Block::default().borders(Borders::TOP).title("LOVE"))
             .wrap(Wrap { trim: true })
     }
 
@@ -2163,7 +2211,7 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title(title))
     }
 
-    fn loading_matrix_heatmap(&self) -> Table<'static> {
+    fn loading_matrix_heatmap(&self, area: Rect) -> Table<'static> {
         let title = self.love_sub_view.label();
         let Some(run) = self.current_run() else {
             return empty_table(title);
@@ -2177,8 +2225,11 @@ impl App {
         let factor = self.selected_factor.min(k - 1);
         let search_matches = self.feature_search_matches(LOADING_MATRIX_ROW_LIMIT);
         let factor_focus = feature_search_focus_factor(run, &search_matches).unwrap_or(factor);
-        let factors = visible_factor_indices(k, factor_focus);
-        let compact = k > NUMERIC_MATRIX_FACTOR_LIMIT;
+        let capacity = area.width.saturating_sub(28).div_euclid(7).max(1) as usize;
+        let count = capacity.min(k).min(NUMERIC_MATRIX_FACTOR_LIMIT);
+        let start = factor_focus.saturating_sub(count / 2).min(k - count);
+        let factors: Vec<_> = (start..start + count).collect();
+        let compact = false;
         let factors_truncated = factors.len() < k;
 
         let row_selection = loading_matrix_rows(run, &factors, factor, self.loading_row_mode);
@@ -2186,7 +2237,7 @@ impl App {
         let var_indices = merge_pinned_rows(
             row_selection.indices,
             &search_matches,
-            LOADING_MATRIX_ROW_LIMIT,
+            LOADING_MATRIX_ROW_LIMIT.min(area.height.saturating_sub(4) as usize),
         );
         let rows_truncated = total_candidate_rows > var_indices.len();
 
@@ -2268,6 +2319,18 @@ impl App {
             rows_truncated,
             self.feature_search_query(),
         );
+        let title = if area.width < 100 {
+            format!(
+                "A | {} | F{}-F{} | {}/{} rows",
+                self.loading_row_mode.label(),
+                factors[0] + 1,
+                factors[factors.len() - 1] + 1,
+                var_indices.len(),
+                nfeatures
+            )
+        } else {
+            title
+        };
         Table::new(rows, widths)
             .header(
                 Row::new(header).style(
@@ -2429,24 +2492,21 @@ impl App {
         }
         let max_count = bins.iter().copied().max().unwrap_or(1).max(1);
 
-        let title_str = format!(
-            "Z[*, F{}] (n={}, mean={:.2}, sd={:.2})",
-            factor + 1,
-            n,
-            mean,
-            std
+        let title_str = format!("Z[*, F{}] n={n}", factor + 1);
+        let stats_text = format!(
+            "mean {mean:.2} sd {std:.2}\nrange [{min_val:.2}, {max_val:.2}]\nmax bin {max_count}"
         );
-
-        let parts = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(1)])
-            .split(area);
-
-        let stats = Paragraph::new(Text::from(vec![Line::from(format!(
-            "range: [{:.2}, {:.2}]  max bin: {max_count}",
-            min_val, max_val
-        ))]))
-        .block(
+        let stats_height = stats_text
+            .lines()
+            .map(|line| (line.chars().count() as u16).div_ceil(area.width.saturating_sub(2).max(1)))
+            .sum::<u16>()
+            + 1;
+        let parts = Layout::vertical([
+            Constraint::Length(stats_height.min(area.height.saturating_sub(2))),
+            Constraint::Min(1),
+        ])
+        .split(area);
+        let stats = Paragraph::new(stats_text).wrap(Wrap { trim: true }).block(
             Block::default()
                 .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
                 .title(title_str),
@@ -2622,10 +2682,7 @@ impl App {
             return;
         };
 
-        let title = format!(
-            "Performance: {} | v cycles sub-views",
-            self.performance_sub_view.label()
-        );
+        let title = format!("Performance: {}", self.performance_sub_view.label());
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(8)])
@@ -2651,8 +2708,12 @@ impl App {
             PerformanceSubView::Summary => {
                 let body = Layout::vertical([
                     Constraint::Length(if sections[1].height >= 30 { 7 } else { 0 }),
-                    Constraint::Min(8),
-                    Constraint::Length(if sections[1].height >= 22 { 8 } else { 0 }),
+                    Constraint::Fill(2),
+                    Constraint::Length(if sections[1].height >= 22 {
+                        (cv.folds.len() as u16 + 3).min(8)
+                    } else {
+                        0
+                    }),
                 ])
                 .split(sections[1]);
                 frame.render_widget(self.performance_summary_widget(cv), body[0]);
@@ -3131,6 +3192,17 @@ impl App {
             })
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
+        if panels.iter().any(|panel| panel.height < 10) {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "Pooled ROC | AUC {auc:.3}\nPooled PR | AP {average_precision:.3} | base {prevalence:.2}\nROC ref: diagonal; PR ref: prevalence\nEnlarge terminal for curves (axes 0 to 1)."
+                ))
+                .wrap(Wrap { trim: true })
+                .block(Block::default().borders(Borders::TOP).title("ROC / PR (compact)")),
+                area,
+            );
+            return;
+        }
         for (panel, points, reference, title, x_label, y_label) in [
             (
                 panels[0],
@@ -3154,12 +3226,12 @@ impl App {
                     Dataset::default()
                         .data(&reference)
                         .graph_type(GraphType::Line)
-                        .marker(symbols::Marker::Braille)
-                        .style(Style::default().fg(Color::DarkGray)),
+                        .marker(symbols::Marker::HalfBlock)
+                        .style(Style::default().fg(Color::Gray)),
                     Dataset::default()
                         .data(points)
                         .graph_type(GraphType::Line)
-                        .marker(symbols::Marker::Braille)
+                        .marker(symbols::Marker::HalfBlock)
                         .style(Style::default().fg(Color::Cyan)),
                 ])
                 .block(Block::default().borders(Borders::ALL).title(title))
@@ -3457,7 +3529,7 @@ fn render_network(
     frame.render_widget(
         Paragraph::new(legend)
             .wrap(Wrap { trim: true })
-            .block(Block::default().borders(Borders::ALL).title(title)),
+            .block(Block::default().borders(Borders::TOP).title(title)),
         sections[0],
     );
     let body = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
@@ -3468,13 +3540,14 @@ fn render_network(
             (65.0 * angle.cos(), 65.0 * angle.sin())
         })
         .collect();
+    let inline_names = labels.len() <= 10 && body[0].width >= 80 && body[0].height >= 20;
     let canvas = Canvas::default()
-        .block(Block::default().borders(Borders::ALL).title(format!(
+        .block(Block::default().borders(Borders::TOP).title(format!(
             "{} nodes / {} edges",
             labels.len(),
             edges.len()
         )))
-        .marker(symbols::Marker::Braille)
+        .marker(symbols::Marker::HalfBlock)
         .x_bounds([-100.0, 100.0])
         .y_bounds([-100.0, 100.0])
         .paint(|ctx| {
@@ -3499,11 +3572,29 @@ fn render_network(
                 }
             }
             ctx.layer();
+            for &(i, j, color) in edges {
+                if matches!(color, Color::LightRed | Color::LightBlue) {
+                    let (x1, y1) = positions[i];
+                    let (x2, y2) = positions[j];
+                    ctx.print(
+                        (x1 + x2) / 2.0,
+                        (y1 + y2) / 2.0,
+                        if color == Color::LightRed { "+" } else { "-" },
+                    );
+                }
+            }
             for (i, &(x, y)) in positions.iter().enumerate() {
                 ctx.print(
                     x,
                     y,
-                    Line::styled(format!("[{}]", i + 1), Style::default().fg(Color::White)),
+                    Line::styled(
+                        if inline_names {
+                            format!("[{}] {}", i + 1, truncate_label(&labels[i], 8))
+                        } else {
+                            format!("[{}]", i + 1)
+                        },
+                        Style::default().fg(Color::White),
+                    ),
                 );
             }
         });
@@ -3513,13 +3604,23 @@ fn render_network(
         .enumerate()
         .map(|(i, label)| Line::from(format!("[{}] {label}", i + 1)))
         .collect();
+    for &(i, j, color) in edges {
+        if matches!(color, Color::LightRed | Color::LightBlue) {
+            lines.push(Line::from(format!(
+                "[{}] {} [{}]",
+                i + 1,
+                if color == Color::LightRed { "+" } else { "-" },
+                j + 1
+            )));
+        }
+    }
     if edges.is_empty() {
         lines.push(Line::from("No edges in this view."));
     }
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
-            .block(Block::default().borders(Borders::ALL).title("Nodes")),
+            .block(Block::default().borders(Borders::TOP).title("Nodes")),
         body[1],
     );
 }
@@ -3750,6 +3851,7 @@ struct FactorRanking {
 
 #[derive(Clone, Debug)]
 struct RankedFeature {
+    index: usize,
     name: String,
     loading: Scalar,
     association: Scalar,
@@ -3777,6 +3879,7 @@ fn compute_factor_rankings(
         let mut features = source_indices
             .into_iter()
             .map(|feature_index| RankedFeature {
+                index: feature_index,
                 name: feature_names
                     .get(feature_index)
                     .cloned()
@@ -3811,11 +3914,35 @@ fn compute_factor_rankings(
     Ok(rankings)
 }
 
+fn config_file_lines(path: &Path) -> Vec<String> {
+    match read_yaml::<serde_yaml::Value>(path) {
+        Ok(yaml) => {
+            let mut lines = vec![format!("Config: {}", path.display())];
+            for key in ["x_path", "y_path", "delta", "lambda"] {
+                if let Some(value) = yaml_get(&yaml, key) {
+                    lines.push(format!("{key}: {}", yaml_value_string(value)));
+                }
+            }
+            lines
+        }
+        Err(error) => vec![format!("Config: {} (unavailable: {error})", path.display())],
+    }
+}
+
 fn build_config_lines(
     checkpoint: &OptimizeSlideCheckpoint,
     config_path: Option<&Path>,
 ) -> Result<Vec<String>> {
-    let mut lines = vec![
+    let mut lines = config_path
+        .map(config_file_lines)
+        .unwrap_or_else(|| vec!["Config: not supplied (checkpoint settings loaded)".to_owned()]);
+    lines.push(format!(
+        "Grid: {} delta x {} lambda = {} evaluations (checkpoint)",
+        checkpoint.delta_grid.len(),
+        checkpoint.lambda_grid.len(),
+        checkpoint.delta_grid.len() * checkpoint.lambda_grid.len()
+    ));
+    lines.extend(vec![
         format!("response_type: {:?}", checkpoint.config.response_type),
         format!("do_interacts: {}", checkpoint.config.do_interacts),
         format!(
@@ -3870,10 +3997,12 @@ fn build_config_lines(
             checkpoint.config.knockoff.slide_selection,
             checkpoint.config.knockoff.base_seed
         ),
-    ];
+    ]);
 
     if let Some(path) = config_path {
-        let yaml: serde_yaml::Value = read_yaml(path)?;
+        let Ok(yaml) = read_yaml::<serde_yaml::Value>(path) else {
+            return Ok(lines);
+        };
         lines.push(format!("yaml: {}", path.display()));
         for key in [
             "data.y_factor",
@@ -4191,6 +4320,7 @@ fn loading_matrix_rows(
 
 fn merge_pinned_rows(mut rows: Vec<usize>, pinned: &[usize], limit: usize) -> Vec<usize> {
     if pinned.is_empty() {
+        rows.truncate(limit);
         return rows;
     }
     let mut merged = Vec::with_capacity(limit);
@@ -4268,18 +4398,41 @@ fn matrix_cell_width(compact: bool) -> u16 {
 }
 
 fn matrix_value_cell(value: Scalar, compact: bool) -> Cell<'static> {
-    let color = diverging_color_rgb(value);
-    if compact {
-        let label = if value.abs() < 0.05 { "." } else { "█" };
-        Cell::from(label).style(Style::default().fg(color))
+    let color = if !value.is_finite() || value == 0.0 {
+        Color::Gray
+    } else if value > 0.0 {
+        Color::LightRed
     } else {
-        let label = if value.abs() < 0.01 {
+        Color::LightBlue
+    };
+    let label = if !value.is_finite() {
+        "NA".to_owned()
+    } else if compact {
+        if value == 0.0 {
             ".".to_owned()
         } else {
-            format!("{value:.2}")
-        };
-        Cell::from(label).style(Style::default().fg(color))
+            format!(
+                "{}{}",
+                if value > 0.0 { "+" } else { "-" },
+                if value.abs() >= 0.5 {
+                    "█"
+                } else if value.abs() >= 0.1 {
+                    "▓"
+                } else {
+                    "░"
+                }
+            )
+        }
+    } else if value != 0.0 && value.abs() < 0.01 {
+        format!("{value:>6.0e}")
+    } else {
+        format!("{value:>+6.2}")
+    };
+    let mut style = Style::default().fg(color);
+    if value.abs() >= 0.5 {
+        style = style.add_modifier(Modifier::BOLD);
     }
+    Cell::from(label).style(style)
 }
 
 fn matrix_title(
@@ -4298,7 +4451,7 @@ fn matrix_title(
         _ => label,
     };
     let scale = if compact {
-        "symbols .≈0 █=large | blue-/red+"
+        "values | bold ≥0.5 | blue-/red+"
     } else {
         "values | blue-/red+"
     };
@@ -4328,7 +4481,7 @@ fn loading_matrix_status_title(
     };
     let selected = selected_factor + 1;
     let scale = if compact {
-        "symbols .≈0 █=large | blue-/red+"
+        "values | bold ≥0.5 | blue-/red+"
     } else {
         "values | blue-/red+"
     };
@@ -4783,6 +4936,31 @@ mod tests {
     use slide_core::OptimizeResponseType;
     use std::path::Path;
 
+    #[test]
+    fn unpinned_loading_rows_obey_limit() {
+        assert_eq!(super::merge_pinned_rows(vec![1, 2, 3], &[], 2), vec![1, 2]);
+        assert!(super::merge_pinned_rows(vec![1, 2, 3], &[], 0).is_empty());
+        let app = plot_app();
+        let mut terminal = Terminal::new(TestBackend::new(60, 6)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(app.loading_matrix_heatmap(area), area);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("2/3 rows"));
+        assert!(text.contains("positive"));
+        assert!(text.contains("negative"));
+        assert!(!text.contains("constant"));
+    }
+
     fn fixture_app(checkpoint: &str) -> App {
         let mut app = App::load(TuiArgs {
             checkpoint: Path::new(env!("CARGO_MANIFEST_DIR")).join(checkpoint),
@@ -4927,7 +5105,12 @@ mod tests {
         assert!(text.contains("Pooled PR | AP 0.583"));
         assert!(text.contains("False positive rate") && text.contains("Precision"));
         for (width, height) in [(80, 24), (60, 20), (20, 8), (1, 1)] {
-            render_text(&app, width, height);
+            let text = render_text(&app, width, height);
+            if width >= 60 {
+                assert!(text.contains("Pooled ROC | AUC 0.625"));
+                assert!(text.contains("Pooled PR | AP 0.583"));
+                assert!(text.contains("Enlarge terminal for curves"));
+            }
         }
         app.data
             .as_mut()
@@ -5072,7 +5255,7 @@ mod tests {
         assert_eq!(data.completed_grid, 2);
         app.data = Some(data);
         assert!(
-            render_text(&app, 140, 45).contains("grid complete; final CV/export not established")
+            render_text(&app, 140, 45).contains("grid visited; final CV/export not established")
         );
         checkpoint.evaluations = vec![None, None];
         std::fs::write(
@@ -5084,7 +5267,7 @@ mod tests {
         assert!(app.data().runs.is_empty());
         assert_eq!(app.data().completed_grid, 2);
         let text = render_text(&app, 140, 45);
-        assert!(text.contains("grid complete; final CV/export not established"));
+        assert!(text.contains("grid visited; final CV/export not established"));
         assert!(text.contains("Evaluations | 0/0"));
         checkpoint.evaluations.clear();
         std::fs::write(
@@ -5309,7 +5492,7 @@ mod tests {
         let data = app.data.as_mut().unwrap();
         data.total_grid_points = data.runs.len();
         assert!(
-            render_text(&app, 140, 45).contains("grid complete; final CV/export not established")
+            render_text(&app, 140, 45).contains("grid visited; final CV/export not established")
         );
         render_text(&app, 80, 24);
         render_text(&app, 60, 20);
@@ -5364,6 +5547,235 @@ mod tests {
     }
 
     #[test]
+    fn labels_load_before_matrix_and_gamma_and_reject_wrong_dimensions() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.tmpfiles/2026-10-21_tui-identity-test");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("features.csv");
+        let mut app = plot_app();
+        let rows = app.data().runs[0].z.nrows();
+        let csv = format!("same,same,\n{}", "1,2,3\n".repeat(rows));
+        std::fs::write(&path, csv).unwrap();
+        {
+            let data = app.data.as_mut().unwrap();
+            data.runs.truncate(1);
+            data.runs[0].love.gamma = super::Vector::from_ndarray(ndarray::array![3.0, 2.0, 1.0]);
+            data.x_path = Some(path.clone());
+            data.derived.get_mut().standardized_x = None;
+            data.derived.get_mut().feature_names = None;
+        }
+        app.tab = Tab::Love;
+        app.love_sub_view = LoveSubView::LoadingMatrix;
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("[1] same"));
+        assert!(text.contains("[2] same"));
+        assert!(text.contains("[3] unnamed"));
+        assert_eq!(
+            app.data().derived.borrow().feature_names.as_ref().unwrap(),
+            &vec!["same".to_owned(), "same".to_owned(), "".to_owned()]
+        );
+        app.data.as_mut().unwrap().derived.get_mut().standardized_x = None;
+        app.data.as_mut().unwrap().derived.get_mut().feature_names = None;
+        app.love_sub_view = LoveSubView::GammaDistribution;
+        assert!(render_text(&app, 140, 45).contains("[1] same"));
+        app.tab = Tab::Factors;
+        app.factor_sub_view = super::FactorSubView::TextPlot;
+        app.data.as_mut().unwrap().derived.get_mut().y = Some(super::Vector::from_ndarray(
+            ndarray::Array1::from_iter((0..rows).map(|i| (i % 2) as f64)),
+        ));
+        assert!(render_text(&app, 140, 45).contains("[1] same"));
+        app.tab = Tab::Love;
+        std::fs::write(&path, format!("wrong,columns\n{}", "1,2\n".repeat(rows))).unwrap();
+        app.data.as_mut().unwrap().derived.get_mut().standardized_x = None;
+        app.data.as_mut().unwrap().derived.get_mut().feature_names = None;
+        assert!(app.ensure_x().is_err());
+        assert!(app.data().derived.borrow().feature_names.is_none());
+        assert!(render_text(&app, 140, 45).contains("dimensions do not match"));
+        app.data.as_mut().unwrap().x_path = Some(directory.join("missing.csv"));
+        assert!(app.ensure_x().is_err());
+        assert!(render_text(&app, 140, 45).contains("failed to read feature matrix"));
+    }
+
+    #[test]
+    fn config_identity_is_tolerant_nonfatal_and_checkpoint_scoped() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.tmpfiles/2026-10-21_tui-config-test");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("config.yaml");
+        std::fs::write(&path, "x_path: x.csv\ndelta: [0.1]\nextra_key: allowed\n").unwrap();
+        let checkpoint = super::OptimizeSlideCheckpoint {
+            x_ref: None,
+            y_ref: None,
+            delta_grid: vec![0.1],
+            lambda_grid: vec![0.2],
+            config: slide_core::OptimizeSlideConfig::default(),
+            evaluations: vec![],
+            final_cv: None,
+        };
+        let mut app = plot_app();
+        app.data.as_mut().unwrap().config_lines =
+            super::build_config_lines(&checkpoint, Some(&path)).unwrap();
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("config.yaml"));
+        assert!(text.contains("Grid: 1 delta x 1 lambda = 1 evaluations (checkpoint)"));
+        assert!(!text.contains("Config: unavailable"));
+        for (width, height) in [(80, 24), (60, 20)] {
+            let text = render_text(&app, width, height);
+            assert!(text.contains("loaded results"));
+            assert!(text.contains("Config:"));
+            assert!(text.contains("Grid:"));
+        }
+        std::fs::write(&path, "invalid: [").unwrap();
+        let lines = super::build_config_lines(&checkpoint, Some(&path)).unwrap();
+        assert!(lines.iter().any(|line| line.contains("unavailable:")));
+        let lines =
+            super::build_config_lines(&checkpoint, Some(&directory.join("missing.yaml"))).unwrap();
+        assert!(lines.iter().any(|line| line.contains("unavailable:")));
+        let lines = super::build_config_lines(&checkpoint, None).unwrap();
+        assert!(lines[0].contains("not supplied"));
+    }
+
+    #[test]
+    fn invalid_progress_clears_old_phase_and_does_not_imply_completion() {
+        let mut app = plot_app();
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.tmpfiles/2026-10-21_tui-progress-test");
+        std::fs::create_dir_all(&directory).unwrap();
+        app.args.checkpoint = directory.join("checkpoint.json");
+        let path = app.args.checkpoint.with_extension("progress.json");
+        app.progress = Some(super::ProgressReport {
+            grid_index: 0,
+            total_grid: 1,
+            delta: 0.1,
+            lambda: 0.1,
+            phase: super::Phase::FinalCv,
+        });
+        std::fs::write(&path, "invalid json").unwrap();
+        app.maybe_reload_progress();
+        assert!(app.progress.is_none());
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("loaded results:"));
+        assert!(!text.contains("pipeline succeeded"));
+        assert!(!text.contains("Read-only viewer"));
+        app.args.checkpoint = directory.join("missing/checkpoint.json");
+        app.maybe_reload_progress();
+        assert!(app.progress.is_none());
+    }
+
+    #[test]
+    fn histogram_stats_wrap_and_networks_use_one_based_factors_and_signed_edges() {
+        let mut app = plot_app();
+        let mut terminal = Terminal::new(TestBackend::new(20, 12)).unwrap();
+        terminal
+            .draw(|frame| app.render_factor_histogram(frame, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Z[*, F1]"));
+        assert!(text.contains("mean"));
+        assert!(text.contains("sd"));
+        assert!(text.contains("max bin"));
+        app.tab = Tab::Factors;
+        app.factor_sub_view = super::FactorSubView::Network;
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("Z1"));
+        assert!(text.contains("[1] - [2]"));
+        app.data.as_mut().unwrap().runs[0]
+            .interactions
+            .sig_interacts
+            .clear();
+        app.tab = Tab::Slide;
+        app.selection_sub_view = super::SelectionSubView::Network;
+        assert!(render_text(&app, 80, 24).contains("No interaction pairs for Z1"));
+    }
+
+    #[test]
+    fn ten_node_network_has_inline_names_only_when_geometry_allows() {
+        let labels = (0..10)
+            .map(|index| format!("node_name_{index}"))
+            .collect::<Vec<_>>();
+        for (width, height, inline) in [(160, 40, true), (80, 24, false), (60, 20, false)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    super::render_network(
+                        frame,
+                        frame.area(),
+                        "Network",
+                        &labels,
+                        &[(0, 1, super::Color::LightRed)],
+                        "signed correlation",
+                    )
+                })
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert_eq!(text.contains("[1] node_n.."), inline);
+            assert!(text.contains("[1] node_name_0"));
+            assert!(text.contains("[1] + [2]"));
+        }
+    }
+
+    #[test]
+    fn love_keyboard_and_loading_window_keep_selected_factor_visible() {
+        use super::KeyModifiers as M;
+        let mut app = plot_app();
+        app.tab = Tab::Love;
+        for number in 1..=7 {
+            app.handle_key(KeyCode::Char(char::from(b'0' + number)), M::NONE)
+                .unwrap();
+            assert_eq!(app.love_sub_view, LoveSubView::from_number(number).unwrap());
+            app.handle_key(KeyCode::Char('v'), M::NONE).unwrap();
+            assert_eq!(
+                app.love_sub_view,
+                LoveSubView::from_number(number).unwrap().next()
+            );
+        }
+        app.love_sub_view = LoveSubView::LoadingMatrix;
+        app.selected_factor = 1;
+        for (width, height) in [(140, 45), (80, 24), (60, 20)] {
+            let text = render_text(&app, width, height);
+            assert!(text.contains("F2"));
+            assert!(text.contains("+0.20") || text.contains("+0.10"));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(30, 4)).unwrap();
+        terminal
+            .draw(|frame| {
+                let rows = [(-0.8, true), (0.0, false), (f64::NAN, false)]
+                    .into_iter()
+                    .map(|(value, compact)| {
+                        super::Row::new([super::matrix_value_cell(value, compact)])
+                    });
+                frame.render_widget(
+                    super::Table::new(rows, [super::Constraint::Length(8)]),
+                    frame.area(),
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), "-");
+        assert_eq!(buffer[(0, 0)].fg, super::Color::LightBlue);
+        assert!(buffer[(0, 0)].modifier.contains(super::Modifier::BOLD));
+        let text = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("+0.00"));
+        assert!(text.contains("NA"));
+    }
+
+    #[test]
     fn control_csv_checks_schema_groups_and_finite_scores() {
         let scores = super::read_control_scores(
             b"group,value\nFullRandom,-0.2\nPartialRandom,0.1\nReal,0.8\n".as_slice(),
@@ -5396,8 +5808,14 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(140, 45)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert!(buffer.content.iter().any(|c| c.fg == super::Color::Red));
-        assert!(buffer.content.iter().any(|c| c.fg == super::Color::Blue));
+        assert!(buffer
+            .content
+            .iter()
+            .any(|c| c.fg == super::Color::LightRed));
+        assert!(buffer
+            .content
+            .iter()
+            .any(|c| c.fg == super::Color::LightBlue));
         let features = app.data().derived.borrow().feature_plots[&(0, 0)]
             .clone()
             .unwrap();
@@ -5413,7 +5831,7 @@ mod tests {
         app.selection_sub_view = super::SelectionSubView::Network;
         let text = render_text(&app, 140, 45);
         assert!(text.contains("2 nodes / 1 edges"));
-        assert!(text.contains("Z0 (marginal)"));
+        assert!(text.contains("Z1 (marginal)"));
         assert!(text.contains("Z1"));
     }
 
@@ -5570,10 +5988,10 @@ mod tests {
         assert!(waiting.data.is_none());
         assert!(invalid.data.is_none());
         for (width, height) in [(140, 45), (80, 24), (60, 20)] {
-            assert!(render_text(&waiting, width, height).contains("Waiting for pipeline"));
+            assert!(render_text(&waiting, width, height).contains("No checkpoint loaded"));
             let error = render_text(&invalid, width, height);
             assert!(error.contains("error: failed to load checkpoint"));
-            assert!(!error.contains("Waiting for pipeline"));
+            assert!(!error.contains("No checkpoint loaded"));
         }
     }
 

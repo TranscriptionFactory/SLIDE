@@ -102,7 +102,9 @@ does not mean final CV or configured export succeeded. The owned dashboard
 shows worker success/failure and its log path while it remains open.
 
 `slide view` never launches computation. Progress sidecars can be stale and do
-not prove that an external process is alive. `--config` supplies dashboard
+not prove that an external process is alive. Loaded results and visited grid
+slots do not establish worker success. Missing or invalid progress reports do
+not imply completion. `--config` supplies dashboard
 metadata, not execution instructions. Missing checkpoints are polled unless
 `--no-follow` is supplied. `slide submit` keeps its scheduler behavior.
 
@@ -143,8 +145,8 @@ scripts/capture-tui-screenshots.sh
 ```
 
 Outputs go into `docs/assets/tui/YYYY-MM-DD_visual-outputs/`. The
-[2026-10-21 gallery](assets/tui/2026-10-21_restored-tabs/README.md) includes
-19 PNGs and an animated GIF. This small binary-response fixture uses eight
+[2026-10-21 gallery](assets/tui/2026-10-21_readability/README.md) includes
+31 PNGs and an animated GIF, including 80×24 and 60×20 terminal views. This small binary-response fixture uses eight
 knockoff iterations and one grid cell; use it to inspect the UI, not to draw
 scientific conclusions. Interactions are disabled, so this gallery does not
 demonstrate selected interaction edges or continuous-response residuals.
@@ -154,34 +156,34 @@ demonstrate selected interaction edges or continuous-response residuals.
 These captures show the restored tab order: Overview, LOVE, Factors, SLIDE,
 and Performance. LOVE diagnostics remain sub-views within LOVE.
 
-![Overview and restored tab order](assets/tui/2026-10-21_restored-tabs/overview.png)
+![Overview and restored tab order](assets/tui/2026-10-21_readability/overview.png)
 
-![Signed feature text plot](assets/tui/2026-10-21_restored-tabs/factor-text-plot.png)
+![Signed feature text plot](assets/tui/2026-10-21_readability/factor-text-plot.png)
 
-![Held-out performance with pooled ROC and precision-recall curves](assets/tui/2026-10-21_restored-tabs/performance.png)
+![Held-out performance with pooled ROC and precision-recall curves](assets/tui/2026-10-21_readability/performance.png)
 
-![Feature correlation network](assets/tui/2026-10-21_restored-tabs/factor-network.png)
+![Feature correlation network](assets/tui/2026-10-21_readability/factor-network.png)
 
-![Selected interaction network: empty because this fixture disables interactions](assets/tui/2026-10-21_restored-tabs/slide-interactions.png)
+![Selected interaction network: empty because this fixture disables interactions](assets/tui/2026-10-21_readability/slide-interactions.png)
 
 ### More views
 
-![Ranked marginal selection](assets/tui/2026-10-21_restored-tabs/slide-selection.png)
+![Ranked marginal selection](assets/tui/2026-10-21_readability/slide-selection.png)
 
-![Exported OLS controls, not held-out CV](assets/tui/2026-10-21_restored-tabs/performance-controls.png)
+![Exported OLS controls, not held-out CV](assets/tui/2026-10-21_readability/performance-controls.png)
 
-![LOVE loading matrix](assets/tui/2026-10-21_restored-tabs/love-loading-matrix.png)
+![LOVE loading matrix](assets/tui/2026-10-21_readability/love-loading-matrix.png)
 
-The gallery also includes Overview, LOVE diagnostics/covariance/block correlation/
-gamma ranking, three factor tables, response dots, fold scores, prediction bins,
-and a full-size ROC/PR view. The
-[previous results-first gallery](assets/tui/archive/2026-10-21_results-first/README.md)
+The gallery includes all seven LOVE sub-views, three factor tables, response
+dots, fold scores, prediction bins, and a full-size ROC/PR view. The
+[previous restored-tab gallery](assets/tui/archive/2026-10-21_restored-tabs/README.md)
 remains in the archive.
 
-At this 1600×960 capture size, the factor histogram title clips on the right.
-The loading matrix uses fallback feature IDs, and Overview shows
-`Config: unavailable` even though the viewer receives `--config`. These
-are visible limitations of the current TUI; the gallery preserves them.
+The wrapper runs one VHS session per terminal size and checks the dimensions
+with `stty size`: 160×40, 80×24, and 60×20. Pixel dimensions are calibrated
+for the capture font and ttyd; a size mismatch fails the capture check. Compact layouts show fewer loading columns around
+the selected factor and a loading-only factor table; use `PgUp` / `PgDn` to
+change factors. Very small terminals can still omit secondary metadata.
 
 ### Reproduce the capture
 
@@ -202,7 +204,8 @@ Override `SLIDE_TUI_WORKDIR`, `SLIDE_TUI_OUT_PATH`, and
 `SLIDE_TUI_SCREENSHOT_DIR` to name a new run. The default result export is
 `$SLIDE_TUI_WORKDIR/exported-results`; it must not already exist.
 Use `--skip-prepare` to recapture an existing fixture without rerunning exports.
-Archive screenshots before recapturing into the same directory.
+The wrapper refuses to overwrite an existing gallery. Archive it before
+recapturing into the same directory.
 
 If you only want to regenerate the fixture before manually opening the TUI:
 
@@ -214,7 +217,8 @@ scripts/capture-tui-screenshots.sh --prepare-only
   --no-follow
 ```
 
-The direct VHS tape uses undated literal paths; use the wrapper for dated outputs.
+Use the wrapper rather than running the tape directly: it selects each size
+section from the maintained tape and supplies dated output paths.
 VHS install options are documented at <https://github.com/charmbracelet/vhs>.
 
 ---
@@ -268,8 +272,8 @@ A quick-test config with fewer iterations for verifying the TUI is at
 The dashboard opens on Overview. Tab order is **Overview → LOVE → Factors → SLIDE → Performance**.
 Factors opens on loading tables; SLIDE opens on marginal selection. LOVE
 diagnostics are sub-views within LOVE, not separate tabs. Use the keys below to navigate.
-The `Step:` label below the tabs shows the latest reported pipeline phase on
-every tab, including interaction progress. `No active step reported` means no
+The `Reported step:` label below the tabs shows the latest reported pipeline phase on
+every tab, including interaction progress. `no active step reported` means no
 progress report is available; it does not confirm that the run succeeded.
 
 ### Overview tab
@@ -301,10 +305,16 @@ or select one directly with `1`–`7`.
 For large LOVE outputs, the matrix-style views prioritize scanability over
 showing every cell. Covariance and group-correlation matrices show a centered
 window around the currently selected factor, while the loading matrix ranks
-features according to its active row mode and caps the displayed rows. Press
+features according to its active row mode and caps rows and columns to the
+terminal space. Its row count refers to visible data rows. Press
 `m` in the loading matrix view to cycle `top-window`, `pure variables`, and
 `selected factor` modes. The title line reports the active mode, factor window,
 visible row count, and `PgDn` / `PgUp` factor-window navigation.
+
+Loading cells retain signed numeric values; bold values have magnitude ≥ 0.5.
+Small nonzero values use scientific notation, while `NA` marks unavailable
+values. Compact covariance/group cells use a sign and magnitude glyph
+(`░` below 0.1, `▓` below 0.5, `█` at least 0.5); `.` means zero.
 
 Press `/` to search feature names (case-insensitive substring matching).
 Type the query, then press `Enter` to keep it or `Esc` to clear it. While
@@ -313,7 +323,13 @@ results appear in the feature-detail panels; matching rows are highlighted in
 the loading matrix. The viewer loads feature and response data from the checkpoint’s `x_ref` and
 `y_ref` paths. Keep those input files accessible for text plots, networks, and
 response associations. Use `--x` to override the feature path and recover
-original names instead of fallback labels such as `feature_1`.
+original names instead of fallback labels such as `feature_1`. Loading and
+Gamma views load these names without requiring a visit to another tab.
+Repeated names receive a stable, one-based feature ID in brackets; empty names
+show that ID and `unnamed`. The display labels do not change feature order or
+rankings. Mismatched input dimensions produce a warning rather than assigning
+names to incompatible loadings. Matching dimensions alone do not verify input
+identity: use the original checkpoint inputs.
 `--config` does not replace these input references; pass it to locate exported
 controls through `out_path`.
 
@@ -334,7 +350,10 @@ response, not the sign of its loading. Gray means zero or unavailable.
 
 The network shows the selected factor's top 10 nonzero-loading features.
 Edges show Pearson correlations with |r| ≥ 0.5, limited to the 20 strongest
-edges. Red means positive and blue means negative. These are descriptive
+edges. Red means positive and blue means negative; `+`/`-` labels also mark
+edge signs. Large layouts put abbreviated names beside nodes and retain full
+names in the node list. Narrow layouts use numbered nodes and that list.
+These are descriptive
 correlations, not causal links or significance tests. Both views need the
 feature matrix; the text plot also needs the response vector. Use a tall
 terminal to see all feature labels.
@@ -396,7 +415,9 @@ for continuous responses, with fold scores below when space permits. The header
 reports the held-out fold mean and SE. Curve AUC and average precision (AP) use
 pooled prediction rows across folds/repeats, so they can differ from the fold
 mean. Tied prediction scores share one threshold. Narrow terminals stack the
-curves vertically. Use the Fold Scores sub-view for model-size details.
+curves vertically when space permits. At 80×24 and 60×20, a compact summary
+shows the same pooled AUC, AP, and prevalence instead of overlapping axes;
+enlarge the terminal to see curves. Use the Fold Scores sub-view for model-size details.
 
 The **SLIDE / Permuted CV** sub-view reads the selected run's exported
 `ControlPerformance.csv`. Pass `--config` with the run YAML containing

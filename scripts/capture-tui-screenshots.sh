@@ -100,9 +100,24 @@ fi
 mkdir -p "${OUT_DIR}"
 
 echo "==> Capturing TUI screenshots with VHS"
-# VHS output paths are literal; keep one maintained tape and relocate this run.
-sed "s|docs/assets/tui/|${OUT_DIR}/|g" "${TAPE}" > "${SLIDE_TUI_WORKDIR}/screenshots.tape"
-vhs "${SLIDE_TUI_WORKDIR}/screenshots.tape"
+# VHS initializes its emulator size once; use sections of the same tape per size.
+for spec in '160x40 1670 824' '80x24 864 517' '60x20 662 440'; do
+  read -r size width height <<< "${spec}"
+  output="${OUT_DIR}/tui-demo.gif"
+  if [[ "${size}" != 160x40 ]]; then
+    output="${SLIDE_TUI_WORKDIR}/tui-${size}.gif"
+  fi
+  awk -v selected="${size}" '
+    /^# Capture / { section = $3; next }
+    section == "" || section == selected { print }
+  ' "${TAPE}" | sed \
+    -e "s|docs/assets/tui/|${OUT_DIR}/|g" \
+    -e "s/^Set Width .*/Set Width ${width}/" \
+    -e "s/^Set Height .*/Set Height ${height}/" \
+    -e "s|^Output .*|Output \"${output}\"|" \
+    > "${SLIDE_TUI_WORKDIR}/screenshots-${size}.tape"
+  vhs "${SLIDE_TUI_WORKDIR}/screenshots-${size}.tape"
+done
 for size in 160x40:40\ 160 80x24:24\ 80 60x20:20\ 60; do
   name="${size%%:*}"
   expected="${size#*:}"
@@ -125,9 +140,9 @@ are static and do not demonstrate interactive inspection.
 
 The tape captures the standard views at 160x40 plus Overview, LOVE loading,
 factor, network, and Performance at 80x24 and 60x20. It records and checks the
-actual pty sizes with \`stty size\` before each launch. LOVE includes all seven
-subviews. The capture viewport stays fixed; blank space outside the narrow TUI
-is not part of the application's terminal area.
+actual pty sizes with \`stty size\` before each launch, without overriding the
+emulator size. Separate VHS launches use sections of the same maintained tape.
+LOVE includes all seven subviews.
 
 Other captures include covariance and block heatmaps, signed feature text,
 response dots, exported OLS controls, fold scores, prediction bins, and ROC/PR
