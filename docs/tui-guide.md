@@ -149,10 +149,10 @@ knockoff iterations and one grid cell; use it to inspect the UI, not to draw
 scientific conclusions. Interactions are disabled, so this gallery does not
 demonstrate selected interaction edges or continuous-response residuals.
 
-### Results first
+### Captured results
 
-The gallery opens on factor text plots, followed by performance and selected
-interactions. Overview and LOVE diagnostics come last.
+These captures show the previous results-first tab order. The dashboard now
+opens on Overview and uses the tab order documented below.
 
 ![Signed feature text plot](assets/tui/2026-10-21_results-first/factor-text-plot.png)
 
@@ -263,9 +263,9 @@ A quick-test config with fewer iterations for verifying the TUI is at
 
 ## TUI Tabs and Views
 
-The dashboard opens on the factor text plot. Tab order is **Factors → Performance → SLIDE → Overview → LOVE diagnostics**.
-SLIDE opens on the selected-interaction network. Run metadata, gamma, and LOVE
-diagnostics remain available in the last two tabs. Use the keys below to navigate.
+The dashboard opens on Overview. Tab order is **Overview → LOVE → Factors → SLIDE → Performance**.
+Factors opens on loading tables; SLIDE opens on marginal selection. LOVE
+diagnostics are sub-views within LOVE, not separate tabs. Use the keys below to navigate.
 The `Step:` label below the tabs shows the latest reported pipeline phase on
 every tab, including interaction progress. `No active step reported` means no
 progress report is available; it does not confirm that the run succeeded.
@@ -283,8 +283,8 @@ pipeline is currently spending time:
 
 ### LOVE tab
 
-LOVE factor creation outputs. Five primary sub-views cycle with `v`. Advanced
-diagnostics remain available with direct keys `6` and `7`.
+LOVE factor creation outputs. Cycle through all seven sub-views with `v`,
+or select one directly with `1`–`7`.
 
 | Key | Sub-view | What it shows |
 |-----|----------|---------------|
@@ -323,7 +323,7 @@ Per-factor detail for the selected run:
 - Factor score distributions rendered as sparkline histograms (`▁▂▃▅▆▇█`)
 
 Use `j` / `k` or Down / Up to select factors. Press `v` to cycle through
-the red/blue feature text plot (default), a feature-correlation network, and these tables.
+these tables (default), the red/blue feature text plot, and a feature-correlation network.
 
 The text plot uses the same top-feature selection as the exported gene plots:
 the union of the top 10 by absolute loading and response association. Red (+)
@@ -339,7 +339,7 @@ terminal to see all feature labels.
 
 ### SLIDE tab
 
-Four sub-views (cycle with `v`), starting with Network:
+Four sub-views (cycle with `v`), starting with Marginal:
 
 | Sub-view | What it shows |
 |----------|---------------|

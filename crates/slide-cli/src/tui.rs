@@ -135,14 +135,7 @@ enum Tab {
 
 impl Tab {
     fn titles() -> [Line<'static>; 5] {
-        [
-            "Factors",
-            "Performance",
-            "SLIDE",
-            "Overview",
-            "LOVE diagnostics",
-        ]
-        .map(Line::from)
+        ["Overview", "LOVE", "Factors", "SLIDE", "Performance"].map(Line::from)
     }
 }
 
@@ -200,8 +193,8 @@ impl LoveSubView {
             Self::FactorCovariance => Self::LoadingMatrix,
             Self::LoadingMatrix => Self::GroupCorrelation,
             Self::GroupCorrelation => Self::BlockCorrelation,
-            Self::BlockCorrelation => Self::Diagnostics,
-            Self::GammaDistribution => Self::Diagnostics,
+            Self::BlockCorrelation => Self::GammaDistribution,
+            Self::GammaDistribution => Self::InteractionNetwork,
             Self::InteractionNetwork => Self::Diagnostics,
         }
     }
@@ -594,7 +587,7 @@ impl App {
             viewport: std::cell::Cell::new(1),
             row_count: std::cell::Cell::new(0),
             help: false,
-            tab: Tab::Factors,
+            tab: Tab::Overview,
             selected_run: 0,
             selected_factor: 0,
             data,
@@ -603,8 +596,8 @@ impl App {
             last_poll: Instant::now(),
             love_sub_view: LoveSubView::Diagnostics,
             loading_row_mode: LoadingRowMode::TopWindow,
-            selection_sub_view: SelectionSubView::Network,
-            factor_sub_view: FactorSubView::TextPlot,
+            selection_sub_view: SelectionSubView::Marginal,
+            factor_sub_view: FactorSubView::Tables,
             grid_metric: GridMetric::Score,
             performance_sub_view: PerformanceSubView::Summary,
             feature_search_input: String::new(),
@@ -746,21 +739,21 @@ impl App {
 
     fn next_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Factors => Tab::Performance,
-            Tab::Performance => Tab::Slide,
-            Tab::Slide => Tab::Overview,
             Tab::Overview => Tab::Love,
             Tab::Love => Tab::Factors,
+            Tab::Factors => Tab::Slide,
+            Tab::Slide => Tab::Performance,
+            Tab::Performance => Tab::Overview,
         };
     }
 
     fn prev_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Factors => Tab::Love,
-            Tab::Performance => Tab::Factors,
-            Tab::Slide => Tab::Performance,
-            Tab::Overview => Tab::Slide,
+            Tab::Overview => Tab::Performance,
             Tab::Love => Tab::Overview,
+            Tab::Factors => Tab::Love,
+            Tab::Slide => Tab::Factors,
+            Tab::Performance => Tab::Slide,
         };
     }
 
@@ -1063,11 +1056,11 @@ impl App {
         };
         let titles = Tabs::new(Tab::titles())
             .select(match self.tab {
-                Tab::Factors => 0,
-                Tab::Performance => 1,
-                Tab::Slide => 2,
-                Tab::Overview => 3,
-                Tab::Love => 4,
+                Tab::Overview => 0,
+                Tab::Love => 1,
+                Tab::Factors => 2,
+                Tab::Slide => 3,
+                Tab::Performance => 4,
             })
             .block(
                 Block::default()
@@ -1132,9 +1125,9 @@ impl App {
             Tab::Factors => footer_spans.push(" | v view | j/k factor".dark_gray()),
             Tab::Love => {
                 if self.love_sub_view.is_advanced() {
-                    footer_spans.push(" | adv | 1-5 primary | v diag".dark_gray());
+                    footer_spans.push(" | adv | v/1-7 view".dark_gray());
                 } else {
-                    footer_spans.push(" | v/1-5 view | 6-7 adv".dark_gray());
+                    footer_spans.push(" | v/1-7 view".dark_gray());
                 }
                 if self.love_sub_view == LoveSubView::LoadingMatrix {
                     footer_spans.push(" | m row mode".dark_gray());
@@ -4866,7 +4859,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_prioritizes_results_and_navigation_is_reversible() {
+    fn startup_restores_original_views_and_navigation_is_reversible() {
         let mut app = App::load(TuiArgs {
             checkpoint: Path::new("missing-checkpoint.json").to_owned(),
             config: None,
@@ -4876,15 +4869,19 @@ mod tests {
             no_follow: true,
         })
         .unwrap();
-        assert_eq!(app.tab, Tab::Factors);
-        assert_eq!(app.factor_sub_view, super::FactorSubView::TextPlot);
-        assert_eq!(app.selection_sub_view, super::SelectionSubView::Network);
+        assert_eq!(app.tab, Tab::Overview);
+        assert_eq!(app.factor_sub_view, super::FactorSubView::Tables);
+        assert_eq!(app.selection_sub_view, super::SelectionSubView::Marginal);
+        assert_eq!(
+            Tab::titles(),
+            ["Overview", "LOVE", "Factors", "SLIDE", "Performance"].map(ratatui::text::Line::from)
+        );
         for next in [
-            Tab::Performance,
-            Tab::Slide,
-            Tab::Overview,
             Tab::Love,
             Tab::Factors,
+            Tab::Slide,
+            Tab::Performance,
+            Tab::Overview,
         ] {
             let previous = app.tab;
             app.next_tab();
@@ -5607,10 +5604,10 @@ mod tests {
     }
 
     #[test]
-    fn love_v_cycle_stays_on_primary_views() {
+    fn love_v_cycles_through_all_diagnostic_views() {
         let mut view = LoveSubView::Diagnostics;
         let mut seen = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..7 {
             seen.push(view);
             view = view.next();
         }
@@ -5623,15 +5620,15 @@ mod tests {
                 LoveSubView::LoadingMatrix,
                 LoveSubView::GroupCorrelation,
                 LoveSubView::BlockCorrelation,
+                LoveSubView::GammaDistribution,
+                LoveSubView::InteractionNetwork,
             ]
         );
         assert_eq!(view, LoveSubView::Diagnostics);
-        assert!(!seen.contains(&LoveSubView::GammaDistribution));
-        assert!(!seen.contains(&LoveSubView::InteractionNetwork));
     }
 
     #[test]
-    fn love_advanced_views_are_direct_key_only() {
+    fn love_advanced_views_support_direct_keys_and_cycling() {
         assert_eq!(
             LoveSubView::from_number(6),
             Some(LoveSubView::GammaDistribution)
@@ -5642,7 +5639,7 @@ mod tests {
         );
         assert_eq!(
             LoveSubView::GammaDistribution.next(),
-            LoveSubView::Diagnostics
+            LoveSubView::InteractionNetwork
         );
         assert_eq!(
             LoveSubView::InteractionNetwork.next(),

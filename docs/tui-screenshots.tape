@@ -24,72 +24,6 @@ Type '"${SLIDE_RS_BIN:-./target/debug/slide}" view --checkpoint "${SLIDE_TUI_WOR
 Enter
 Wait+Screen /LOVE -> SLIDE Monitor/
 Sleep 800 ms
-Screenshot "docs/assets/tui/factor-text-plot.png"
-
-Type "v"
-Wait+Screen /Feature correlation network/
-Sleep 700 ms
-Screenshot "docs/assets/tui/factor-network.png"
-
-Type "v"
-Wait+Screen /Factor Browser/
-Sleep 700 ms
-Screenshot "docs/assets/tui/factor-1.png"
-
-Type "j"
-Wait+Screen /factor 2/
-Sleep 700 ms
-Screenshot "docs/assets/tui/factor-2.png"
-
-Type "j"
-Wait+Screen /factor 3/
-Sleep 700 ms
-Screenshot "docs/assets/tui/factor-3.png"
-
-Type "kk"
-Tab
-Wait+Screen /Performance/
-Sleep 700 ms
-Screenshot "docs/assets/tui/performance.png"
-
-Type "v"
-Wait+Screen /Exported OLS controls/
-Sleep 700 ms
-Screenshot "docs/assets/tui/performance-controls.png"
-
-Type "v"
-Wait+Screen /Fold Scores/
-Sleep 700 ms
-Screenshot "docs/assets/tui/performance-folds.png"
-
-Type "v"
-Wait+Screen /Predictions/
-Sleep 700 ms
-Screenshot "docs/assets/tui/performance-predictions.png"
-
-Type "v"
-Wait+Screen /ROC/
-Sleep 700 ms
-Screenshot "docs/assets/tui/performance-roc-pr.png"
-
-Tab
-Wait+Screen /interaction/
-Sleep 700 ms
-Screenshot "docs/assets/tui/slide-interactions.png"
-
-Type "v"
-Wait+Screen /Marginal/
-Sleep 700 ms
-Screenshot "docs/assets/tui/slide-selection.png"
-
-Type "vv"
-Wait+Screen /Factor AUC/
-Sleep 700 ms
-Screenshot "docs/assets/tui/slide-response.png"
-
-Tab
-Wait+Screen /Run Summary/
-Sleep 700 ms
 Screenshot "docs/assets/tui/overview.png"
 
 Tab
@@ -116,5 +50,70 @@ Type "6"
 Wait+Screen /Gamma/
 Sleep 700 ms
 Screenshot "docs/assets/tui/love-gamma.png"
+
+Tab
+Wait+Screen /Factors/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-1.png"
+
+Type "j"
+Wait+Screen /factor 2/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-2.png"
+
+Type "j"
+Wait+Screen /factor 3/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-3.png"
+
+Type "kkv"
+Wait+Screen /Spearman/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-text-plot.png"
+
+Type "v"
+Wait+Screen /Feature correlation network/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-network.png"
+
+Tab
+Wait+Screen /SLIDE/
+Sleep 700 ms
+Screenshot "docs/assets/tui/slide-selection.png"
+
+Type "vv"
+Wait+Screen /Factor AUC/
+Sleep 700 ms
+Screenshot "docs/assets/tui/slide-response.png"
+
+Type "v"
+Wait+Screen /interaction/
+Sleep 700 ms
+Screenshot "docs/assets/tui/slide-interactions.png"
+
+Tab
+Wait+Screen /Performance/
+Sleep 700 ms
+Screenshot "docs/assets/tui/performance.png"
+
+Type "v"
+Wait+Screen /Exported OLS controls/
+Sleep 700 ms
+Screenshot "docs/assets/tui/performance-controls.png"
+
+Type "v"
+Wait+Screen /Fold Scores/
+Sleep 700 ms
+Screenshot "docs/assets/tui/performance-folds.png"
+
+Type "v"
+Wait+Screen /Predictions/
+Sleep 700 ms
+Screenshot "docs/assets/tui/performance-predictions.png"
+
+Type "v"
+Wait+Screen /ROC/
+Sleep 700 ms
+Screenshot "docs/assets/tui/performance-roc-pr.png"
 
 Type "q"
