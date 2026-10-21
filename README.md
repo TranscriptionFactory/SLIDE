@@ -157,6 +157,9 @@ pixi run --locked -e rust ./target/release/slide run --config rust-quick.yaml --
 
 # Pipeline and live dashboard together
 pixi run --locked -e rust ./target/release/slide run --tui --config rust-quick.yaml --checkpoint out/checkpoint.json
+
+# Read-only dashboard for a running or completed job
+pixi run --locked -e rust ./target/release/slide view --config rust-quick.yaml --checkpoint out/checkpoint.json
 ```
 
 On Windows, use `./target/release/slide.exe` in these commands.
@@ -174,7 +177,9 @@ Progress files do not prove an external job is alive. Use a new checkpoint path
 for a new run. The adjacent `.log` is currently truncated by `run --tui` at startup.
 
 See [docs/tui-guide.md](docs/tui-guide.md) for the dashboard tabs, keyboard
-reference and SLURM workflows.
+reference and SLURM workflows, or browse the [visual/output screenshots](docs/tui-guide.md#release-screenshots).
+The former `monitor` and `tui` subcommands have been removed: use `run --tui`
+and `view`, respectively.
 
 See [saved backend examples](examples/README.md#saved-backend-examples) for labeled Rust and Python outputs.
 

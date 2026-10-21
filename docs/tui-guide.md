@@ -43,6 +43,9 @@ The binary lands at `target/release/slide`.
 
 ## Four Ways to Use It
 
+Migration: replace `slide monitor` with `slide run --tui`, and `slide tui` with
+`slide view`. The old subcommands are no longer accepted.
+
 ### 1. `run --tui` — Run pipeline + TUI together (recommended)
 
 Launches the SLIDE optimization as a child process and opens the TUI on top.
@@ -130,7 +133,8 @@ scheduled job and writes its checkpoint to a shared filesystem.
 ## Release Screenshots
 
 The repo includes a scripted VHS tape for repeatable screenshots of the
-Ratatui dashboard. It builds a deterministic smoke-test checkpoint, launches
+Ratatui dashboard. It builds a 40-feature HIV smoke-test checkpoint with final CV,
+exports result tables and plots (including `ControlPerformance.csv`), launches
 `slide view --no-follow`, navigates through the release-worthy tabs/views,
 and writes PNG screenshots plus an animated GIF.
 
@@ -138,17 +142,58 @@ and writes PNG screenshots plus an animated GIF.
 scripts/capture-tui-screenshots.sh
 ```
 
-Outputs are written under `docs/assets/tui/`:
+Outputs go into `docs/assets/tui/YYYY-MM-DD_visual-outputs/`. The
+[2026-10-21 gallery](assets/tui/2026-10-21_visual-outputs/README.md) includes
+18 PNGs and an animated GIF. This small binary-response fixture uses eight
+knockoff iterations and one grid cell; use it to inspect the UI, not to draw
+scientific conclusions. Interactions are disabled, so this gallery does not
+demonstrate selected interaction edges or continuous-response residuals.
 
-- `overview.png`
-- `love-diagnostics.png`
-- `love-loading-matrix.png`
-- `factor-1.png`
-- `factor-2.png`
-- `factor-3.png`
-- `slide-selection.png`
-- `performance.png`
-- `tui-demo.gif`
+### Visuals
+
+![LOVE loading matrix](assets/tui/2026-10-21_visual-outputs/love-loading-matrix.png)
+
+![Signed feature text plot](assets/tui/2026-10-21_visual-outputs/factor-text-plot.png)
+
+![Feature correlation network](assets/tui/2026-10-21_visual-outputs/factor-network.png)
+
+### Outputs
+
+![Ranked marginal selection](assets/tui/2026-10-21_visual-outputs/slide-selection.png)
+
+![Exported OLS controls, not held-out CV](assets/tui/2026-10-21_visual-outputs/performance-controls.png)
+
+![Final-CV prediction bins](assets/tui/2026-10-21_visual-outputs/performance-predictions.png)
+
+The gallery also includes Overview, LOVE diagnostics/covariance/block correlation/
+gamma ranking, three factor tables, response dots, final-CV summary/fold scores,
+and ROC/PR output.
+
+At this 1600×960 capture size, the factor histogram title clips on the right.
+The loading matrix uses fallback feature IDs, and Overview shows
+`Config: unavailable` even though the viewer receives `--config`. These
+are visible limitations of the current TUI; the gallery preserves them.
+
+### Reproduce the capture
+
+The wrapper uses `cargo` and `python3` for preparation, plus VHS, ttyd ≥ 1.7.2,
+FFmpeg, and Chromium for capture. Run it inside your Rust build environment,
+for example `pixi run --locked -e rust scripts/capture-tui-screenshots.sh`.
+It redirects temporary capture files into the project's `.tmpfiles/` and
+unsets `NO_COLOR` inside the recorded shell so signed colors remain visible.
+On HPC systems, load the FFmpeg module **before** entering Pixi to keep
+module-provided C++ libraries from overriding the Rust runtime:
+
+```bash
+module load ffmpeg
+pixi run --locked -e rust scripts/capture-tui-screenshots.sh
+```
+
+Override `SLIDE_TUI_WORKDIR`, `SLIDE_TUI_OUT_PATH`, and
+`SLIDE_TUI_SCREENSHOT_DIR` to name a new run. The default result export is
+`$SLIDE_TUI_WORKDIR/exported-results`; it must not already exist.
+Use `--skip-prepare` to recapture an existing fixture without rerunning exports.
+Archive screenshots before recapturing into the same directory.
 
 If you only want to regenerate the fixture before manually opening the TUI:
 
@@ -160,6 +205,7 @@ scripts/capture-tui-screenshots.sh --prepare-only
   --no-follow
 ```
 
+The direct VHS tape uses undated literal paths; use the wrapper for dated outputs.
 VHS install options are documented at <https://github.com/charmbracelet/vhs>.
 
 ---
@@ -233,7 +279,7 @@ diagnostics remain available with direct keys `6` and `7`.
 
 | Key | Sub-view | What it shows |
 |-----|----------|---------------|
-| `1` | Diagnostics | LOVE convergence metrics, iteration count, parameters |
+| `1` | Diagnostics | Factor count, pure coverage, group sizes, gamma summaries, and parameters |
 | `2` | Factor Covariance (C) | Heatmap of the factor covariance matrix; large `k` uses a compact window around the selected factor |
 | `3` | Loading Matrix (A) | Ranked loading heatmap with row modes for top-window, pure-variable-first, or selected-factor ranking |
 | `4` | Group Correlation | Within-group correlation heatmap; large `k` uses a compact window around the selected factor |
@@ -253,8 +299,12 @@ Press `/` to search feature names (case-insensitive substring matching).
 Type the query, then press `Enter` to keep it or `Esc` to clear it. While
 editing, keys such as `q` enter text instead of triggering navigation. Search
 results appear in the feature-detail panels; matching rows are highlighted in
-the loading matrix. Supply `--x` to search original feature names rather than
-fallback labels such as `feature_1`.
+the loading matrix. The viewer loads feature and response data from the checkpoint’s `x_ref` and
+`y_ref` paths. Keep those input files accessible for text plots, networks, and
+response associations. Use `--x` to override the feature path and recover
+original names instead of fallback labels such as `feature_1`.
+`--config` does not replace these input references; pass it to locate exported
+controls through `out_path`.
 
 ### Factors tab
 

@@ -1,32 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if type module >/dev/null 2>&1; then
+if ! command -v ffmpeg >/dev/null 2>&1 && type module >/dev/null 2>&1; then
   module load ffmpeg
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SLIDE_TUI_WORKDIR="${SLIDE_TUI_WORKDIR:-${ROOT}/.tmpfiles/$(date +%F)_tui-smoke}"
 TAPE="${ROOT}/docs/tui-screenshots.tape"
-OUT_DIR="${ROOT}/docs/assets/tui"
+OUT_DIR="${SLIDE_TUI_SCREENSHOT_DIR:-${ROOT}/docs/assets/tui/$(date +%F)_visual-outputs}"
+# Chromium uses Unix sockets whose paths must fit within 108 bytes.
+export TMPDIR="${ROOT}/.tmpfiles"
+mkdir -p "${TMPDIR}"
+export SLIDE_TUI_OUT_PATH="${SLIDE_TUI_OUT_PATH:-${SLIDE_TUI_WORKDIR}/exported-results}"
 PREPARE_ONLY=0
 SKIP_PREPARE=0
 usage() {
   cat <<'USAGE'
 Usage: scripts/capture-tui-screenshots.sh [--prepare-only] [--skip-prepare]
 
-Builds a deterministic TUI smoke fixture and renders release screenshots/GIF
+Builds a small TUI smoke fixture and renders release screenshots/GIF
 from docs/tui-screenshots.tape using VHS.
 
 Outputs:
-  docs/assets/tui/overview.png
-  docs/assets/tui/love-diagnostics.png
-  docs/assets/tui/love-loading-matrix.png
-  docs/assets/tui/factor-1.png
-  docs/assets/tui/factor-2.png
-  docs/assets/tui/factor-3.png
-  docs/assets/tui/slide-selection.png
-  docs/assets/tui/performance.png
-  docs/assets/tui/tui-demo.gif
+  docs/assets/tui/YYYY-MM-DD_visual-outputs/
+  Overview, LOVE heatmaps, factor tables/text/network, SLIDE rankings/response,
+  final-CV summary/folds/predictions/ROC, exported controls, and tui-demo.gif.
+
+Environment:
+  SLIDE_TUI_SCREENSHOT_DIR  Override the dated screenshot directory.
+  SLIDE_TUI_WORKDIR         Override the fixture directory (use a new path for a new run).
+  SLIDE_TUI_OUT_PATH        Export tables/plots here; must not already exist.
+  SLIDE_RS_BIN             Use an existing executable instead of building/testing.
 
 Options:
   --prepare-only  Only build/regenerate the dated .tmpfiles/YYYY-MM-DD_tui-smoke fixture; do not invoke vhs.
@@ -35,7 +39,7 @@ Options:
 
 Dependencies:
   - cargo and python3 for fixture generation
-  - vhs for capture (https://github.com/charmbracelet/vhs)
+  - vhs, ttyd >= 1.7.2, ffmpeg, and a Chromium browser for capture
 USAGE
 }
 
@@ -70,7 +74,7 @@ if type module >/dev/null 2>&1; then
 fi
 
 if [[ "${SKIP_PREPARE}" -eq 0 ]]; then
-  echo "==> Preparing deterministic TUI fixture"
+  echo "==> Preparing TUI fixture"
   scripts/test-slide-tui.sh --no-tui
 fi
 
@@ -91,6 +95,31 @@ ERR
 fi
 
 echo "==> Capturing TUI screenshots with VHS"
-vhs "${TAPE}"
+# VHS output paths are literal; keep one maintained tape and relocate this run.
+sed "s|docs/assets/tui/|${OUT_DIR}/|g" "${TAPE}" > "${SLIDE_TUI_WORKDIR}/screenshots.tape"
+vhs "${SLIDE_TUI_WORKDIR}/screenshots.tape"
+cat > "${OUT_DIR}/README.md" <<EOF
+# TUI visual outputs ($(date +%F))
+
+Captured from \`$(git rev-parse --short HEAD)\` plus the working-tree capture tape.
+Command: \`scripts/capture-tui-screenshots.sh\`
+Fixture: \`${SLIDE_TUI_WORKDIR}\`
+Exports: \`${SLIDE_TUI_OUT_PATH}\`
+Binary: \`${SLIDE_RS_BIN:-./target/debug/slide}\`
+
+The shared smoke workflow uses 40 HIV features, eight knockoff iterations,
+one grid cell, binary response, and three-fold final CV. These are demonstration
+outputs, not scientific conclusions. Interactions are disabled.
+
+This capture expands the earlier eight-screen tape with covariance and block
+heatmaps, signed feature text, a feature-correlation network, response dots,
+exported OLS controls, fold scores, prediction bins, and ROC/PR output.
+The “Permuted CV” screen shows randomized in-sample OLS controls, not held-out CV.
+EOF
+for screenshot in "${OUT_DIR}"/*.png "${OUT_DIR}"/tui-demo.gif; do
+  test -s "${screenshot}"
+  name="$(basename "${screenshot}")"
+  printf '\n- [%s](%s)\n' "${name}" "${name}" >> "${OUT_DIR}/README.md"
+done
 
 echo "==> Wrote screenshots to ${OUT_DIR}"

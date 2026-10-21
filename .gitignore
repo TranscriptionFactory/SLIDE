@@ -23,6 +23,7 @@ docs/dev-notes/
 benchmarks/results/
 # SLIDE run outputs (all implementations)
 **/*.png
+!docs/assets/tui/**
 **/*.pkl
 **/*.rds
 **/*.RData

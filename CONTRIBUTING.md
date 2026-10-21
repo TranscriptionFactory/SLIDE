@@ -295,12 +295,14 @@ The terminal dashboard (`crates/slide-cli/src/tui.rs`) has five tabs:
 | Tab | What it shows |
 |-----|---------------|
 | **Overview** | Grid search overview: progress, phase timeline, score/factor grids |
-| **LOVE** | Seven sub-views: diagnostics, covariance matrix, loading heatmap, group correlation, block correlation, gamma distribution, interaction network |
-| **Factors** | Per-factor detail: top features by loading weight, score distributions |
+| **LOVE** | Five primary views: diagnostics, covariance, loadings, group and block correlation; advanced gamma and interaction rankings on keys 6/7 |
+| **Factors** | Loading/response rankings, score distributions, signed feature text plots, and feature-correlation networks |
 | **SLIDE** | Knockoff ranked frequency tables and response dots for marginal factor and interaction selection |
-| **Performance** | Final-CV results when available and model-performance diagnostics |
+| **Performance** | Final-CV summary, fold scores, prediction bins, ROC/PR or residuals; exported OLS controls |
 
 Navigation: `Tab`/`h`/`l` for tabs, `j`/`k` or arrows for the current list (factors on Factors, evaluations on Overview), `J`/`K` for evaluations globally, `Ctrl-d`/`Ctrl-u` for half a viewport, `PgDn`/`PgUp` as legacy factor aliases, `v` or `1-7` for sub-views, `q` to quit (confirmation before stopping an active owned worker). Press `?` for key help. Full details in `docs/tui-guide.md`.
+
+Run `scripts/capture-tui-screenshots.sh` to regenerate the [visual/output gallery](docs/tui-guide.md#release-screenshots). It reuses the shared artifact fixture and exports controls before capture. Use a fresh fixture/output directory for each run.
 
 ---
 
@@ -318,12 +320,14 @@ The TUI has solid coverage, but the Python plotting layer (`src/slide_py/plottin
 | Phase timeline | Done | |
 | Factor score histogram | Done | Sparkline, 20 bins |
 | Factor Covariance (C matrix) | Done | Diverging color heatmap |
-| Loading Matrix (A matrix) | Done | Top-8-per-factor, heatmap |
+| Loading Matrix (A matrix) | Done | Ranked heatmap; top-window, pure-variable, and selected-factor row modes |
 | Group Correlation | Done | Colored table |
-| Block Correlation | Done | Canvas pixel plot, capped at 300 vars |
+| Block Correlation | Done | Blue-white-red half-block heatmap, capped at 300 vars |
 | Gamma ranking | Done | Scrollable numeric top-30 table with stable feature IDs |
 | Knockoff selection frequency | Done | Ranked numeric tables; separate fixed-axis response dots |
-| **Interaction Network** | **Needs work** | Text-art only for k ≤ 12, plain adjacency list for larger k. Could use a canvas-based graph layout (force-directed or circular). |
+| Interaction network | Done | Selected LF products around the focus factor, up to 12 nodes; cyan edges do not encode correlation sign |
+| Factor text/network | Done | Text colors encode response Spearman sign; network edges encode feature Pearson sign |
+| Performance | Done | Fixed-axis fold dots, prediction bins, ROC/PR or residuals, and exported OLS controls |
 
 **Python visualizations (`plotting.py`):**
 
