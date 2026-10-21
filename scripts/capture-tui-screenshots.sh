@@ -65,7 +65,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "${ROOT}"
-mkdir -p "${OUT_DIR}"
 
 # CRC/HPC environments provide Go through environment modules; load it so
 # `go install github.com/charmbracelet/vhs@latest` works if VHS is missing.
@@ -94,10 +93,21 @@ ERR
   exit 127
 fi
 
+if [[ -e "${OUT_DIR}" ]]; then
+  echo "error: screenshot output already exists: ${OUT_DIR}" >&2
+  exit 1
+fi
+mkdir -p "${OUT_DIR}"
+
 echo "==> Capturing TUI screenshots with VHS"
 # VHS output paths are literal; keep one maintained tape and relocate this run.
 sed "s|docs/assets/tui/|${OUT_DIR}/|g" "${TAPE}" > "${SLIDE_TUI_WORKDIR}/screenshots.tape"
 vhs "${SLIDE_TUI_WORKDIR}/screenshots.tape"
+for size in 160x40:40\ 160 80x24:24\ 80 60x20:20\ 60; do
+  name="${size%%:*}"
+  expected="${size#*:}"
+  test "$(cat "${SLIDE_TUI_WORKDIR}/terminal-${name}.txt")" = "${expected}"
+done
 cat > "${OUT_DIR}/README.md" <<EOF
 # TUI visual outputs ($(date +%F))
 
@@ -109,12 +119,19 @@ Binary: \`${SLIDE_RS_BIN:-./target/debug/slide}\`
 
 The shared smoke workflow uses 40 HIV features, eight knockoff iterations,
 one grid cell, binary response, and three-fold final CV. These are demonstration
-outputs, not scientific conclusions. Interactions are disabled.
+outputs, not scientific conclusions. The binary-response fixture has
+interactions disabled, so the Interaction Ranking view is empty. Screenshots
+are static and do not demonstrate interactive inspection.
 
-This capture expands the earlier eight-screen tape with covariance and block
-heatmaps, signed feature text, a feature-correlation network, response dots,
-exported OLS controls, fold scores, prediction bins, and ROC/PR output.
-The “Permuted CV” screen shows randomized in-sample OLS controls, not held-out CV.
+The tape captures the standard views at 160x40 plus Overview, LOVE loading,
+factor, network, and Performance at 80x24 and 60x20. It records and checks the
+actual pty sizes with \`stty size\` before each launch. LOVE includes all seven
+subviews. The capture viewport stays fixed; blank space outside the narrow TUI
+is not part of the application's terminal area.
+
+Other captures include covariance and block heatmaps, signed feature text,
+response dots, exported OLS controls, fold scores, prediction bins, and ROC/PR
+output. “Permuted CV” shows randomized in-sample OLS controls, not held-out CV.
 EOF
 for screenshot in "${OUT_DIR}"/*.png "${OUT_DIR}"/tui-demo.gif; do
   test -s "${screenshot}"

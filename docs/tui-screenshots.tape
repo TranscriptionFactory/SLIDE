@@ -7,8 +7,9 @@
 Require bash
 
 Set Shell "bash"
-Set Width 1600
-Set Height 960
+# Viewport dimensions include room for the requested cells and 18px padding.
+Set Width 1636
+Set Height 996
 Set FontSize 16
 Set Padding 18
 Set TypingSpeed 5ms
@@ -20,7 +21,7 @@ Type "unset NO_COLOR; export TERM=xterm-256color COLORTERM=truecolor; clear"
 Enter
 Show
 
-Type '"${SLIDE_RS_BIN:-./target/debug/slide}" view --checkpoint "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke-checkpoint.json" --config "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke.yaml" --no-follow'
+Type 'stty cols 160 rows 40; stty size > "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/terminal-160x40.txt"; "${SLIDE_RS_BIN:-./target/debug/slide}" view --checkpoint "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke-checkpoint.json" --config "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke.yaml" --no-follow'
 Enter
 Wait+Screen /LOVE -> SLIDE Monitor/
 Sleep 800 ms
@@ -41,6 +42,11 @@ Wait+Screen /Loading Matrix/
 Sleep 700 ms
 Screenshot "docs/assets/tui/love-loading-matrix.png"
 
+Type "4"
+Wait+Screen /Group Correlation/
+Sleep 700 ms
+Screenshot "docs/assets/tui/love-group-correlation.png"
+
 Type "5"
 Wait+Screen /Block Correlation/
 Sleep 700 ms
@@ -50,6 +56,11 @@ Type "6"
 Wait+Screen /Gamma/
 Sleep 700 ms
 Screenshot "docs/assets/tui/love-gamma.png"
+
+Type "7"
+Wait+Screen /Interaction Ranking/
+Sleep 700 ms
+Screenshot "docs/assets/tui/love-interaction-ranking.png"
 
 Tab
 Wait+Screen /Factors/
@@ -115,5 +126,58 @@ Type "v"
 Wait+Screen /ROC/
 Sleep 700 ms
 Screenshot "docs/assets/tui/performance-roc-pr.png"
+
+# Keep the capture viewport fixed; resize the pty used by Ratatui explicitly.
+Type "q"
+Hide
+Type 'stty cols 80 rows 24; stty size > "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/terminal-80x24.txt"; "${SLIDE_RS_BIN:-./target/debug/slide}" view --checkpoint "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke-checkpoint.json" --config "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke.yaml" --no-follow'
+Enter
+Sleep 800 ms
+Show
+Wait+Screen /LOVE -> SLIDE Monitor/
+Sleep 500 ms
+Screenshot "docs/assets/tui/overview-80x24.png"
+Tab
+Type "3"
+Wait+Screen /Loading Matrix/
+Sleep 700 ms
+Screenshot "docs/assets/tui/love-loading-matrix-80x24.png"
+Tab
+Sleep 500 ms
+Screenshot "docs/assets/tui/factor-80x24.png"
+Type "vv"
+Wait+Screen /Feature correlation network/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-network-80x24.png"
+Tab
+Tab
+Sleep 500 ms
+Screenshot "docs/assets/tui/performance-80x24.png"
+
+Type "q"
+Hide
+Type 'stty cols 60 rows 20; stty size > "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/terminal-60x20.txt"; "${SLIDE_RS_BIN:-./target/debug/slide}" view --checkpoint "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke-checkpoint.json" --config "${SLIDE_TUI_WORKDIR:-.tmpfiles/$(date +%F)_tui-smoke}/tui-smoke.yaml" --no-follow'
+Enter
+Sleep 800 ms
+Show
+Wait+Screen /LOVE -> SLIDE Monitor/
+Sleep 500 ms
+Screenshot "docs/assets/tui/overview-60x20.png"
+Tab
+Type "3"
+Wait+Screen /Loading Matrix/
+Sleep 700 ms
+Screenshot "docs/assets/tui/love-loading-matrix-60x20.png"
+Tab
+Sleep 500 ms
+Screenshot "docs/assets/tui/factor-60x20.png"
+Type "vv"
+Wait+Screen /Feature correlation network/
+Sleep 700 ms
+Screenshot "docs/assets/tui/factor-network-60x20.png"
+Tab
+Tab
+Sleep 500 ms
+Screenshot "docs/assets/tui/performance-60x20.png"
 
 Type "q"
