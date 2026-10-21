@@ -86,4 +86,4 @@ receiving `--config`. These captures preserve those existing limitations.
 
 - [tui-demo.gif](tui-demo.gif)
 
-[Previous results-first gallery](../archive/2026-10-21_results-first/README.md)
+[Previous results-first gallery](../2026-10-21_results-first/README.md)
