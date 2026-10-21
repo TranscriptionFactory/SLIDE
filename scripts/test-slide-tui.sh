@@ -86,10 +86,10 @@ Config:     ${CONFIG}
 Checkpoint: ${CHECKPOINT}
 
 Manual checks in the TUI:
-  - Tab order includes Overview, LOVE, Factors, SLIDE, Performance.
+  - Opens on factor text; tab order is Factors, Performance, SLIDE, Overview, LOVE diagnostics.
   - Overview has a "final CV:" line.
   - Factors has multiple pages; use j/k or Up/Down to browse factors (PageUp/PageDown still work).
-  - Performance shows final CV summary, fold scores, and fold model sizes.
+  - Performance opens on curves/residuals; v cycles controls, folds/model sizes, and predictions.
   - J/K changes evaluations globally; Ctrl-d/u moves half a list viewport; ? lists keys.
   - Press q to quit.
 EOF

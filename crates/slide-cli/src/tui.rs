@@ -135,7 +135,14 @@ enum Tab {
 
 impl Tab {
     fn titles() -> [Line<'static>; 5] {
-        ["Overview", "LOVE", "Factors", "SLIDE", "Performance"].map(Line::from)
+        [
+            "Factors",
+            "Performance",
+            "SLIDE",
+            "Overview",
+            "LOVE diagnostics",
+        ]
+        .map(Line::from)
     }
 }
 
@@ -587,7 +594,7 @@ impl App {
             viewport: std::cell::Cell::new(1),
             row_count: std::cell::Cell::new(0),
             help: false,
-            tab: Tab::Overview,
+            tab: Tab::Factors,
             selected_run: 0,
             selected_factor: 0,
             data,
@@ -596,8 +603,8 @@ impl App {
             last_poll: Instant::now(),
             love_sub_view: LoveSubView::Diagnostics,
             loading_row_mode: LoadingRowMode::TopWindow,
-            selection_sub_view: SelectionSubView::Marginal,
-            factor_sub_view: FactorSubView::Tables,
+            selection_sub_view: SelectionSubView::Network,
+            factor_sub_view: FactorSubView::TextPlot,
             grid_metric: GridMetric::Score,
             performance_sub_view: PerformanceSubView::Summary,
             feature_search_input: String::new(),
@@ -739,21 +746,21 @@ impl App {
 
     fn next_tab(&mut self) {
         self.tab = match self.tab {
+            Tab::Factors => Tab::Performance,
+            Tab::Performance => Tab::Slide,
+            Tab::Slide => Tab::Overview,
             Tab::Overview => Tab::Love,
             Tab::Love => Tab::Factors,
-            Tab::Factors => Tab::Slide,
-            Tab::Slide => Tab::Performance,
-            Tab::Performance => Tab::Overview,
         };
     }
 
     fn prev_tab(&mut self) {
         self.tab = match self.tab {
-            Tab::Overview => Tab::Performance,
-            Tab::Love => Tab::Overview,
             Tab::Factors => Tab::Love,
-            Tab::Slide => Tab::Factors,
-            Tab::Performance => Tab::Slide,
+            Tab::Performance => Tab::Factors,
+            Tab::Slide => Tab::Performance,
+            Tab::Overview => Tab::Slide,
+            Tab::Love => Tab::Overview,
         };
     }
 
@@ -1056,11 +1063,11 @@ impl App {
         };
         let titles = Tabs::new(Tab::titles())
             .select(match self.tab {
-                Tab::Overview => 0,
-                Tab::Love => 1,
-                Tab::Factors => 2,
-                Tab::Slide => 3,
-                Tab::Performance => 4,
+                Tab::Factors => 0,
+                Tab::Performance => 1,
+                Tab::Slide => 2,
+                Tab::Overview => 3,
+                Tab::Love => 4,
             })
             .block(
                 Block::default()
@@ -1313,8 +1320,8 @@ impl App {
 
     fn render_feature_text(&self, frame: &mut Frame, area: Rect) {
         let title = format!(
-            "Feature text plot | Z{} | v view | j/k factor",
-            self.selected_factor
+            "Feature text plot | factor {} | v view | j/k factor",
+            self.selected_factor + 1
         );
         let result = (|| -> Result<Vec<crate::output::Feature>> {
             self.ensure_x()?;
@@ -1349,6 +1356,7 @@ impl App {
                 let mut lines = vec![
                     Line::from("Red (+) / blue (-): Spearman association with response"),
                     Line::from("Union of top 10 by |loading| and response association; rho shown"),
+                    Line::from("Association axis: -1 (left), 0 (center), +1 (right)"),
                 ];
                 if features.is_empty() {
                     lines.push(Line::from("No nonzero feature loadings for this factor."));
@@ -1364,15 +1372,25 @@ impl App {
                         .map_or_else(|| "n/a".to_owned(), |v| format!("{v:+.3}"));
                     lines.push(Line::styled(
                         format!(
-                            "{rho:>6}  {}  |loading|={:.3}",
-                            feature.name, feature.loading
+                            "{rho:>6} {}  {}  |loading|={:.3}",
+                            dot_strip(
+                                feature.corr,
+                                (-1.0, 1.0),
+                                0.0,
+                                area.width.saturating_sub(50).min(25) as usize
+                            ),
+                            feature.name,
+                            feature.loading
                         ),
                         Style::default().fg(color),
                     ));
                 }
                 lines
             }
-            Err(error) => vec![Line::from(error.to_string())],
+            Err(error) => vec![
+                Line::from(error.to_string()),
+                Line::from("Press v twice for loading tables (no input files needed)."),
+            ],
         };
         frame.render_widget(
             Paragraph::new(lines)
@@ -1503,7 +1521,7 @@ impl App {
             })
             .collect();
         let title = format!(
-            "Selected interaction network | Z{factor} | {}/{} pairs | j/k factor",
+            "Selected interaction network | Z{factor} | {}/{} pairs | PgUp/Down factor",
             edges.len(),
             pairs.len()
         );
@@ -2621,7 +2639,7 @@ impl App {
             .split(area);
         frame.render_widget(
             Paragraph::new(format!(
-                "metric {:?} | mean {} | SE {} | predictions {}",
+                "Held-out {:?} | fold mean {} | SE {} | n={} prediction rows",
                 cv.metric,
                 format_optional_scalar(cv.mean),
                 format_optional_scalar(cv.standard_error),
@@ -2631,29 +2649,28 @@ impl App {
             sections[0],
         );
 
-        if sections[1].height < 25
-            && matches!(
-                self.performance_sub_view,
-                PerformanceSubView::Summary | PerformanceSubView::FoldScores
-            )
-        {
+        if sections[1].height < 25 && self.performance_sub_view == PerformanceSubView::FoldScores {
             self.render_fold_scores(frame, sections[1], cv);
             return;
         }
         match self.performance_sub_view {
             PerformanceSubView::Controls => unreachable!(),
             PerformanceSubView::Summary => {
-                let body = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(7),
-                        Constraint::Min(8),
-                        Constraint::Length(9),
-                    ])
-                    .split(sections[1]);
+                let body = Layout::vertical([
+                    Constraint::Length(if sections[1].height >= 30 { 7 } else { 0 }),
+                    Constraint::Min(8),
+                    Constraint::Length(if sections[1].height >= 22 { 8 } else { 0 }),
+                ])
+                .split(sections[1]);
                 frame.render_widget(self.performance_summary_widget(cv), body[0]);
-                self.render_fold_scores(frame, body[1], cv);
-                frame.render_widget(self.cv_model_size_table(cv), body[2]);
+                if self.data().response_type == OptimizeResponseType::Binary {
+                    self.render_roc_pr(frame, body[1], cv);
+                } else {
+                    self.render_residuals(frame, body[1], cv);
+                }
+                if body[2].height > 0 {
+                    self.render_fold_scores(frame, body[2], cv);
+                }
             }
             PerformanceSubView::FoldScores => {
                 let body = Layout::default()
@@ -3076,6 +3093,22 @@ impl App {
             frame.render_widget(empty_widget("ROC / PR"), area);
             return;
         }
+        if cv
+            .predictions
+            .iter()
+            .any(|p| !p.y_pred.is_finite() || !matches!(p.y_true, 0.0 | 1.0))
+        {
+            frame.render_widget(
+                Paragraph::new("ROC / PR requires finite predictions and binary labels (0/1).")
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("ROC / PR unavailable"),
+                    ),
+                area,
+            );
+            return;
+        }
         let positives = cv.predictions.iter().filter(|p| p.y_true >= 0.5).count();
         let negatives = cv.predictions.len().saturating_sub(positives);
         if positives == 0 || negatives == 0 {
@@ -3093,38 +3126,65 @@ impl App {
         )
         .unwrap_or(0.5);
         let average_precision = average_precision_score(&cv.predictions);
-        let rows = roc_pr_threshold_rows(&cv.predictions).into_iter().map(
-            |(threshold, tpr, fpr, precision, recall)| {
-                Row::new([
-                    format!("{threshold:.2}"),
-                    format!("{tpr:.3}"),
-                    format!("{fpr:.3}"),
-                    format!("{precision:.3}"),
-                    format!("{recall:.3}"),
-                ])
-            },
-        );
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(12),
-                Constraint::Length(10),
-            ],
-        )
-        .header(
-            Row::new(["threshold", "TPR", "FPR", "precision", "recall"]).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+        let rows = roc_pr_threshold_rows(&cv.predictions);
+        let roc: Vec<_> = rows.iter().map(|r| (r.2, r.1)).collect();
+        let pr: Vec<_> = rows.iter().map(|r| (r.4, r.3)).collect();
+        let prevalence = positives as f64 / cv.predictions.len() as f64;
+        let panels = Layout::default()
+            .direction(if area.width >= 90 {
+                Direction::Horizontal
+            } else {
+                Direction::Vertical
+            })
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        for (panel, points, reference, title, x_label, y_label) in [
+            (
+                panels[0],
+                &roc,
+                [(0.0, 0.0), (1.0, 1.0)],
+                format!("Pooled ROC | AUC {auc:.3} | chance diagonal"),
+                "False positive rate",
+                "True positive rate",
             ),
-        )
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            "ROC / PR | AUC {auc:.3} | avg precision {average_precision:.3}"
-        )));
-        frame.render_widget(table, area);
+            (
+                panels[1],
+                &pr,
+                [(0.0, prevalence), (1.0, prevalence)],
+                format!("Pooled PR | AP {average_precision:.3} | base {prevalence:.2}"),
+                "Recall",
+                "Precision",
+            ),
+        ] {
+            frame.render_widget(
+                Chart::new(vec![
+                    Dataset::default()
+                        .data(&reference)
+                        .graph_type(GraphType::Line)
+                        .marker(symbols::Marker::Braille)
+                        .style(Style::default().fg(Color::DarkGray)),
+                    Dataset::default()
+                        .data(points)
+                        .graph_type(GraphType::Line)
+                        .marker(symbols::Marker::Braille)
+                        .style(Style::default().fg(Color::Cyan)),
+                ])
+                .block(Block::default().borders(Borders::ALL).title(title))
+                .x_axis(
+                    Axis::default()
+                        .title(x_label)
+                        .bounds([0.0, 1.0])
+                        .labels(["0", "0.5", "1"]),
+                )
+                .y_axis(
+                    Axis::default()
+                        .title(y_label)
+                        .bounds([0.0, 1.0])
+                        .labels(["0", "0.5", "1"]),
+                ),
+                panel,
+            );
+        }
     }
 
     fn render_residuals(&self, frame: &mut Frame, area: Rect, cv: &slide_cv::FinalCvResult) {
@@ -3953,24 +4013,10 @@ fn histogram_counts(
 }
 
 fn average_precision_score(predictions: &[slide_cv::FinalCvPrediction]) -> Scalar {
-    let positives = predictions.iter().filter(|p| p.y_true >= 0.5).count() as Scalar;
-    if positives == 0.0 {
-        return 0.0;
-    }
-    let mut rows = predictions
-        .iter()
-        .map(|p| (p.y_pred, p.y_true >= 0.5))
-        .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.0.total_cmp(&left.0));
-    let mut true_positives = 0.0;
-    let mut precision_sum = 0.0;
-    for (rank, (_, is_positive)) in rows.iter().enumerate() {
-        if *is_positive {
-            true_positives += 1.0;
-            precision_sum += true_positives / (rank + 1) as Scalar;
-        }
-    }
-    precision_sum / positives
+    roc_pr_threshold_rows(predictions)
+        .windows(2)
+        .map(|pair| (pair[1].4 - pair[0].4) * pair[1].3)
+        .sum()
 }
 
 fn roc_pr_threshold_rows(
@@ -3978,33 +4024,28 @@ fn roc_pr_threshold_rows(
 ) -> Vec<(Scalar, Scalar, Scalar, Scalar, Scalar)> {
     let positives = predictions.iter().filter(|p| p.y_true >= 0.5).count() as Scalar;
     let negatives = predictions.len() as Scalar - positives;
-    [0.9, 0.75, 0.5, 0.25, 0.1]
-        .into_iter()
-        .map(|threshold| {
-            let mut tp = 0.0;
-            let mut fp = 0.0;
-            let mut fn_count = 0.0;
-            for prediction in predictions {
-                let predicted_positive = prediction.y_pred >= threshold;
-                let actual_positive = prediction.y_true >= 0.5;
-                match (predicted_positive, actual_positive) {
-                    (true, true) => tp += 1.0,
-                    (true, false) => fp += 1.0,
-                    (false, true) => fn_count += 1.0,
-                    (false, false) => {}
-                }
-            }
-            let tpr = if positives > 0.0 { tp / positives } else { 0.0 };
-            let fpr = if negatives > 0.0 { fp / negatives } else { 0.0 };
-            let precision = if tp + fp > 0.0 { tp / (tp + fp) } else { 0.0 };
-            let recall = if tp + fn_count > 0.0 {
-                tp / (tp + fn_count)
-            } else {
-                0.0
-            };
-            (threshold, tpr, fpr, precision, recall)
-        })
-        .collect()
+    let mut sorted: Vec<_> = predictions.iter().collect();
+    sorted.sort_by(|a, b| b.y_pred.total_cmp(&a.y_pred));
+    let mut rows = vec![(Scalar::INFINITY, 0.0, 0.0, 1.0, 0.0)];
+    let (mut tp, mut fp) = (0.0, 0.0);
+    for (i, prediction) in sorted.iter().enumerate() {
+        if prediction.y_true >= 0.5 {
+            tp += 1.0;
+        } else {
+            fp += 1.0;
+        }
+        // Include tied scores together so a threshold never splits a tie.
+        if sorted
+            .get(i + 1)
+            .is_some_and(|next| next.y_pred == prediction.y_pred)
+        {
+            continue;
+        }
+        let tpr = if positives > 0.0 { tp / positives } else { 0.0 };
+        let fpr = if negatives > 0.0 { fp / negatives } else { 0.0 };
+        rows.push((prediction.y_pred, tpr, fpr, tp / (tp + fp), tpr));
+    }
+    rows
 }
 
 fn infer_delimiter_from_path(path: &Path) -> Option<Delimiter> {
@@ -4806,6 +4847,9 @@ mod tests {
             });
             app.last_error = None;
         }
+        app.tab = Tab::Overview;
+        app.factor_sub_view = super::FactorSubView::Tables;
+        app.selection_sub_view = super::SelectionSubView::Marginal;
         app
     }
 
@@ -4819,6 +4863,87 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn startup_prioritizes_results_and_navigation_is_reversible() {
+        let mut app = App::load(TuiArgs {
+            checkpoint: Path::new("missing-checkpoint.json").to_owned(),
+            config: None,
+            result: None,
+            x: None,
+            poll_ms: 1000,
+            no_follow: true,
+        })
+        .unwrap();
+        assert_eq!(app.tab, Tab::Factors);
+        assert_eq!(app.factor_sub_view, super::FactorSubView::TextPlot);
+        assert_eq!(app.selection_sub_view, super::SelectionSubView::Network);
+        for next in [
+            Tab::Performance,
+            Tab::Slide,
+            Tab::Overview,
+            Tab::Love,
+            Tab::Factors,
+        ] {
+            let previous = app.tab;
+            app.next_tab();
+            assert_eq!(app.tab, next);
+            app.prev_tab();
+            assert_eq!(app.tab, previous);
+            app.next_tab();
+        }
+    }
+
+    #[test]
+    fn roc_curves_include_endpoints_and_group_ties() {
+        let mut predictions: Vec<_> = [(1.0, 0.8), (0.0, 0.8), (1.0, 0.2), (0.0, -0.1)]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (y_true, y_pred))| slide_cv::FinalCvPrediction {
+                sample_index: i,
+                y_true,
+                y_pred,
+                repeat: 0,
+                fold: 0,
+                method: slide_cv::FinalCvMethod::Slide,
+            })
+            .collect();
+        let rows = super::roc_pr_threshold_rows(&predictions);
+        assert_eq!(rows.len(), 4);
+        assert_eq!((rows[0].1, rows[0].2), (0.0, 0.0));
+        assert_eq!((rows[1].1, rows[1].2), (0.5, 0.5));
+        assert_eq!((rows[3].1, rows[3].2), (1.0, 1.0));
+        let ap = super::average_precision_score(&predictions);
+        assert!((ap - (0.25 + 1.0 / 3.0)).abs() < 1e-12);
+        let mut app = plot_app();
+        app.tab = Tab::Performance;
+        app.data.as_mut().unwrap().final_cv = Some(slide_cv::FinalCvResult {
+            metric: slide_score::ScoreMetric::Auc,
+            mean: Some(0.625),
+            standard_error: Some(0.1),
+            folds: Vec::new(),
+            predictions: predictions.clone(),
+        });
+        let text = render_text(&app, 140, 45);
+        assert!(text.contains("Pooled ROC | AUC 0.625"));
+        assert!(text.contains("Pooled PR | AP 0.583"));
+        assert!(text.contains("False positive rate") && text.contains("Precision"));
+        for (width, height) in [(80, 24), (60, 20), (20, 8), (1, 1)] {
+            render_text(&app, width, height);
+        }
+        app.data
+            .as_mut()
+            .unwrap()
+            .final_cv
+            .as_mut()
+            .unwrap()
+            .predictions[0]
+            .y_pred = f64::NAN;
+        assert!(render_text(&app, 140, 45).contains("requires finite predictions"));
+        predictions.swap(0, 1);
+        assert_eq!(super::average_precision_score(&predictions), ap);
+        assert_eq!(super::average_precision_score(&[]), 0.0);
     }
 
     #[test]
@@ -5016,6 +5141,9 @@ mod tests {
         };
         app.data.as_mut().unwrap().final_cv = Some(cv.clone());
         app.data.as_mut().unwrap().response_type = OptimizeResponseType::Continuous;
+        app.performance_sub_view = PerformanceSubView::Summary;
+        assert!(render_text(&app, 140, 45).contains("Residuals y-yhat"));
+        app.performance_sub_view = PerformanceSubView::FoldScores;
         for (width, height) in [(140, 45), (80, 24), (60, 20), (20, 8), (1, 1)] {
             app.row = 0;
             let text = render_text(&app, width, height);

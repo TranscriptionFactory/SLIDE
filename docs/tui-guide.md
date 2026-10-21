@@ -159,6 +159,9 @@ demonstrate selected interaction edges or continuous-response residuals.
 
 ### Outputs
 
+These captures show the earlier layout. The current dashboard uses the
+results-first order described below; rerun the capture tape for updated views.
+
 ![Ranked marginal selection](assets/tui/2026-10-21_visual-outputs/slide-selection.png)
 
 ![Exported OLS controls, not held-out CV](assets/tui/2026-10-21_visual-outputs/performance-controls.png)
@@ -256,7 +259,9 @@ A quick-test config with fewer iterations for verifying the TUI is at
 
 ## TUI Tabs and Views
 
-The dashboard has five tabs. Use the keys below to navigate.
+The dashboard opens on the factor text plot. Tab order is **Factors → Performance → SLIDE → Overview → LOVE diagnostics**.
+SLIDE opens on the selected-interaction network. Run metadata, gamma, and LOVE
+diagnostics remain available in the last two tabs. Use the keys below to navigate.
 The `Step:` label below the tabs shows the latest reported pipeline phase on
 every tab, including interaction progress. `No active step reported` means no
 progress report is available; it does not confirm that the run succeeded.
@@ -314,7 +319,7 @@ Per-factor detail for the selected run:
 - Factor score distributions rendered as sparkline histograms (`▁▂▃▅▆▇█`)
 
 Use `j` / `k` or Down / Up to select factors. Press `v` to cycle through
-these tables, a red/blue feature text plot, and a feature-correlation network.
+the red/blue feature text plot (default), a feature-correlation network, and these tables.
 
 The text plot uses the same top-feature selection as the exported gene plots:
 the union of the top 10 by absolute loading and response association. Red (+)
@@ -330,7 +335,7 @@ terminal to see all feature labels.
 
 ### SLIDE tab
 
-Four sub-views (cycle with `v`):
+Four sub-views (cycle with `v`), starting with Network:
 
 | Sub-view | What it shows |
 |----------|---------------|
@@ -354,7 +359,7 @@ Gamma (LOVE `6`) lists the highest 30 gamma values with rank, stable feature ID,
 exact value, and feature name. Its title reports the displayed count and total.
 LOVE `7` keeps its top-30 pair ranking; `assoc*` is the mean absolute
 association of the two constituent factors, not a pair-response estimate.
-At 60×20 and 80×24, Factors uses a compact full-width loading table; normal
+At 60×20 and 80×24, the Factors table view uses a compact full-width loading table; normal
 width retains both rankings. Very small terminals may lack room for data rows.
 Search input captures printable keys, including `j`, `k`, `q`, and `v`; Enter
 keeps the query and Esc clears it.
@@ -377,8 +382,15 @@ JSON. Cycle Performance sub-views with `v`. It shows:
 - Fold-score dots with exact metrics (correlation −1 to +1, AUC 0 to 1; expanded if values exceed those bounds)
 - Per-fold train/validation sizes and selected model sizes
 - Prediction histograms with numeric intervals, class counts, and scrollable count bars
-- ROC/PR threshold summary for binary responses
+- ROC and precision-recall curves with labeled 0–1 axes, chance diagonal, and prevalence reference for binary responses
 - Residual histogram with numeric intervals and count bars for continuous responses
+
+Performance opens on ROC/PR curves for binary responses or a residual histogram
+for continuous responses, with fold scores below when space permits. The header
+reports the held-out fold mean and SE. Curve AUC and average precision (AP) use
+pooled prediction rows across folds/repeats, so they can differ from the fold
+mean. Tied prediction scores share one threshold. Narrow terminals stack the
+curves vertically. Use the Fold Scores sub-view for model-size details.
 
 The **SLIDE / Permuted CV** sub-view reads the selected run's exported
 `ControlPerformance.csv`. Pass `--config` with the run YAML containing
