@@ -143,7 +143,7 @@ scripts/capture-tui-screenshots.sh
 ```
 
 Outputs go into `docs/assets/tui/YYYY-MM-DD_visual-outputs/`. The
-[2026-10-21 gallery](assets/tui/2026-10-21_results-first/README.md) includes
+[2026-10-21 gallery](assets/tui/2026-10-21_restored-tabs/README.md) includes
 19 PNGs and an animated GIF. This small binary-response fixture uses eight
 knockoff iterations and one grid cell; use it to inspect the UI, not to draw
 scientific conclusions. Interactions are disabled, so this gallery does not
@@ -151,29 +151,31 @@ demonstrate selected interaction edges or continuous-response residuals.
 
 ### Captured results
 
-These captures show the previous results-first tab order. The dashboard now
-opens on Overview and uses the tab order documented below.
+These captures show the restored tab order: Overview, LOVE, Factors, SLIDE,
+and Performance. LOVE diagnostics remain sub-views within LOVE.
 
-![Signed feature text plot](assets/tui/2026-10-21_results-first/factor-text-plot.png)
+![Overview and restored tab order](assets/tui/2026-10-21_restored-tabs/overview.png)
 
-![Held-out performance with pooled ROC and precision-recall curves](assets/tui/2026-10-21_results-first/performance.png)
+![Signed feature text plot](assets/tui/2026-10-21_restored-tabs/factor-text-plot.png)
 
-![Feature correlation network](assets/tui/2026-10-21_results-first/factor-network.png)
+![Held-out performance with pooled ROC and precision-recall curves](assets/tui/2026-10-21_restored-tabs/performance.png)
 
-![Selected interaction network: empty because this fixture disables interactions](assets/tui/2026-10-21_results-first/slide-interactions.png)
+![Feature correlation network](assets/tui/2026-10-21_restored-tabs/factor-network.png)
+
+![Selected interaction network: empty because this fixture disables interactions](assets/tui/2026-10-21_restored-tabs/slide-interactions.png)
 
 ### More views
 
-![Ranked marginal selection](assets/tui/2026-10-21_results-first/slide-selection.png)
+![Ranked marginal selection](assets/tui/2026-10-21_restored-tabs/slide-selection.png)
 
-![Exported OLS controls, not held-out CV](assets/tui/2026-10-21_results-first/performance-controls.png)
+![Exported OLS controls, not held-out CV](assets/tui/2026-10-21_restored-tabs/performance-controls.png)
 
-![LOVE loading matrix](assets/tui/2026-10-21_results-first/love-loading-matrix.png)
+![LOVE loading matrix](assets/tui/2026-10-21_restored-tabs/love-loading-matrix.png)
 
 The gallery also includes Overview, LOVE diagnostics/covariance/block correlation/
 gamma ranking, three factor tables, response dots, fold scores, prediction bins,
 and a full-size ROC/PR view. The
-[earlier gallery](assets/tui/archive/2026-10-21_visual-outputs/README.md)
+[previous results-first gallery](assets/tui/archive/2026-10-21_results-first/README.md)
 remains in the archive.
 
 At this 1600×960 capture size, the factor histogram title clips on the right.

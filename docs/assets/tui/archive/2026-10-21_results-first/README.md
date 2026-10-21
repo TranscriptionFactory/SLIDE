@@ -52,4 +52,4 @@ average precision use pooled prediction rows and can differ from that mean.
 - [love-gamma.png](love-gamma.png)
 - [Animated walkthrough](tui-demo.gif)
 
-[Archived earlier gallery](../archive/2026-10-21_visual-outputs/README.md)
+[Archived earlier gallery](../2026-10-21_visual-outputs/README.md)
