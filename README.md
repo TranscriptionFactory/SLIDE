@@ -162,6 +162,9 @@ pixi run --locked -e rust ./target/release/slide run --tui --config rust-quick.y
 pixi run --locked -e rust ./target/release/slide view --config rust-quick.yaml --checkpoint out/checkpoint.json
 ```
 
+For repeated CV on saved factors without refitting LOVE, use [`slide cv`](docs/native-cv.md).
+It runs observed and permuted-label branches and reports separate pooled-repeat summaries.
+
 On Windows, use `./target/release/slide.exe` in these commands.
 Run these from the repository root; Rust resolves relative input paths against
 the working directory. The bundled data live in `examples/`. Add `-v` to print per-stage timing.

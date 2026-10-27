@@ -30,6 +30,8 @@ pub struct GaussianLassoPathConfig {
     /// 0 = population std (glmnet default), 1 = sample std (R's `scale()`).
     /// The knockoff package uses ddof=1 via `scale()` before calling glmnet.
     pub scale_ddof: usize,
+    /// Use the R knockoff lambda grid rather than the dimension-dependent grid.
+    pub match_r_lambda: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,6 +117,7 @@ impl Default for GaussianLassoPathConfig {
             lambda: None,
             early_stop_all_entered: false,
             scale_ddof: 0,
+            match_r_lambda: false,
         }
     }
 }
@@ -149,6 +152,7 @@ fn gaussian_lasso_path_with_grid_endpoint(
             config.nlambda,
             config.alpha,
             include_lambda_min,
+            config.match_r_lambda,
         )?,
     };
 
@@ -202,6 +206,7 @@ pub fn gaussian_lasso_path_with_left_cache(
             config.nlambda,
             config.alpha,
             false,
+            config.match_r_lambda,
         )?,
     };
 
@@ -358,7 +363,7 @@ pub fn build_lambda_grid(
     nlambda: usize,
     alpha: Scalar,
 ) -> Result<Vector, GlmnetError> {
-    build_gaussian_lambda_grid(x, y, nlambda, alpha, true)
+    build_gaussian_lambda_grid(x, y, nlambda, alpha, true, false)
 }
 
 fn build_gaussian_lambda_grid(
@@ -367,6 +372,7 @@ fn build_gaussian_lambda_grid(
     nlambda: usize,
     alpha: Scalar,
     include_lambda_min: bool,
+    match_r_lambda: bool,
 ) -> Result<Vector, GlmnetError> {
     validate_lambda_grid_inputs(x, y, nlambda, alpha)?;
 
@@ -393,7 +399,7 @@ fn build_gaussian_lambda_grid(
         nlambda,
         alpha,
         include_lambda_min,
-        !include_lambda_min && knockoff_match_r_lambda(),
+        !include_lambda_min && (match_r_lambda || knockoff_match_r_lambda()),
     )
 }
 
@@ -2051,6 +2057,16 @@ mod tests {
     use slide_types::{Matrix, Vector};
 
     const TOL: f64 = 1.0e-8;
+
+    #[test]
+    fn explicit_r_knockoff_grid_uses_fixed_ratio_without_environment_changes() {
+        let x = Matrix::from_ndarray(ndarray::arr2(&[[0.], [1.], [2.], [3.], [4.], [5.]]));
+        let y = Vector::from_ndarray(ndarray::arr1(&[0., 1., 0., 1., 0., 1.]));
+        let grid = super::build_gaussian_lambda_grid(&x, &y, 4, 1.0, false, true)
+            .unwrap_or_else(|error| panic!("grid: {error}"));
+        let values = grid.as_ndarray();
+        assert!((values[3] / values[0] - (1.0_f64 / 2000.0).powf(3.0 / 4.0)).abs() < 1e-12);
+    }
 
     #[test]
     fn signed_max_statistic_zeroes_exact_entry_ties() {

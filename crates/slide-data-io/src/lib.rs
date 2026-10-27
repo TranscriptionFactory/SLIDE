@@ -149,7 +149,7 @@ pub fn read_feature_matrix(
     }
 
     let records = reader.records().collect::<Result<Vec<_>, _>>()?;
-    let has_sample_ids = first_column_is_sample_ids(&records);
+    let has_sample_ids = headers.get(0) == Some("") || first_column_is_sample_ids(&records);
     let column_offset = usize::from(has_sample_ids);
     if headers.len() <= column_offset {
         return Err(DataIoError::NoFeatureColumns {
@@ -607,6 +607,18 @@ mod tests {
         assert_eq!(loaded.feature_names, vec!["f1", "f2"]);
         assert_eq!(loaded.sample_ids, Some(vec!["s1".into(), "s2".into()]));
         assert_eq!(loaded.matrix.as_ndarray(), &arr2(&[[1.0, 2.0], [3.0, 4.0]]));
+    }
+
+    #[test]
+    fn reads_r_csv_numeric_row_names_as_ids() {
+        let dir = tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+        let path = dir.path().join("z.csv");
+        fs::write(&path, "\"\",Z1\n\"1\",2.0\n\"2\",3.0\n")
+            .unwrap_or_else(|error| panic!("write: {error}"));
+        let loaded = read_feature_matrix(&path, &MatrixReadOptions::default())
+            .unwrap_or_else(|error| panic!("read: {error}"));
+        assert_eq!(loaded.sample_ids, Some(vec!["1".into(), "2".into()]));
+        assert_eq!(loaded.matrix.as_ndarray(), &arr2(&[[2.0], [3.0]]));
     }
 
     #[test]

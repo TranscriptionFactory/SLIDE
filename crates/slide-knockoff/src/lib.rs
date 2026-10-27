@@ -93,6 +93,9 @@ pub struct KnockoffConfig {
     /// Whether to use rayon parallelism for the voting iterations.
     /// Set to `false` when called from an outer parallel context.
     pub parallel: bool,
+    /// Match R SLIDEcv covariance gating and Gaussian knockoff lambda grid.
+    #[serde(default)]
+    pub r_compatible: bool,
 }
 
 impl Default for KnockoffConfig {
@@ -111,6 +114,7 @@ impl Default for KnockoffConfig {
             f_size: None,
             family: GlmnetFamily::Gaussian,
             parallel: true,
+            r_compatible: false,
         }
     }
 }
@@ -294,16 +298,38 @@ pub fn prepare_knockoff_cache(
     x: &Matrix,
     method: &KnockoffMethod,
 ) -> Result<KnockoffCache, KnockoffError> {
+    prepare_knockoff_cache_with_policy(x, method, false)
+}
+
+fn prepare_knockoff_cache_with_policy(
+    x: &Matrix,
+    method: &KnockoffMethod,
+    r_compatible: bool,
+) -> Result<KnockoffCache, KnockoffError> {
     validate_feature_matrix(x)?;
     let mu = estimate_mean(x);
     // Native defaults add a condition-number gate to avoid expensive lasso fits
     // on ill-conditioned designs. SLIDE_KNOCKOFF_MATCH_R_COV=1 keeps positive
     // definite sample covariances, matching Python/R's shrinkage decision.
     let sigma = match sample_covariance(x) {
-        Some(cov) if raw_covariance_is_usable(&cov) => cov,
+        Some(cov)
+            if if r_compatible {
+                minimum_eigenvalue(&cov) > POSDEF_EIGENVALUE_TOL
+            } else {
+                raw_covariance_is_usable(&cov)
+            } =>
+        {
+            cov
+        }
         _ => estimate_covariance(x)?,
     };
-    let diag_s = solve_diag_s(&sigma, method)?;
+    let diag_s = match solve_diag_s(&sigma, method) {
+        Ok(value) => value,
+        Err(_) if r_compatible && matches!(method, KnockoffMethod::Asdp { .. }) => {
+            solve_diag_s(&sigma, &KnockoffMethod::Equi)?
+        }
+        Err(error) => return Err(error),
+    };
     build_knockoff_cache(x, &mu, &sigma, &diag_s)
 }
 
@@ -315,7 +341,9 @@ pub fn knockoff_filter_voting(
     validate_voting_inputs(x, y, config)?;
     let (cache, r_samples) = match &config.knockoff_backend {
         KnockoffBackend::Rust => (
-            Some(prepare_knockoff_cache(x, &config.knockoff_method)?),
+            Some(prepare_knockoff_cache_with_policy(
+                x, &config.knockoff_method, config.r_compatible,
+            )?),
             None,
         ),
         KnockoffBackend::R { rscript } => (
@@ -354,6 +382,7 @@ pub fn knockoff_filter_voting(
         // Use ddof=1 to match R's knockoff package which calls scale() (sample std)
         // before passing to glmnet with standardize=FALSE.
         scale_ddof: 1,
+        match_r_lambda: config.r_compatible,
         ..GaussianLassoPathConfig::default()
     };
 
@@ -1313,6 +1342,28 @@ mod tests {
     use ndarray::{arr1, arr2};
 
     #[test]
+    fn r_cv_policy_keeps_positive_definite_ill_conditioned_covariance() {
+        let x = Matrix::from_ndarray(arr2(&[
+            [0., 0.001],
+            [1., 0.999],
+            [2., 2.002],
+            [3., 2.998],
+            [4., 4.001],
+            [5., 4.999],
+        ]));
+        let sigma = sample_covariance(&x).unwrap_or_else(|| panic!("sample covariance"));
+        let min = minimum_eigenvalue(&sigma);
+        assert!(min > POSDEF_EIGENVALUE_TOL);
+        assert!(maximum_eigenvalue(&sigma) > MAX_RAW_COV_CONDITION * min);
+        let diag = solve_diag_s(&sigma, &KnockoffMethod::Equi).unwrap_or_else(|e| panic!("diag: {e}"));
+        let expected = build_knockoff_cache(&x, &estimate_mean(&x), &sigma, &diag)
+            .unwrap_or_else(|e| panic!("cache: {e}"));
+        let actual = prepare_knockoff_cache_with_policy(&x, &KnockoffMethod::Equi, true)
+            .unwrap_or_else(|e| panic!("R policy: {e}"));
+        assert_eq!(actual.mu_k, expected.mu_k);
+    }
+
+    #[test]
     fn default_lambda_count_uses_rust_grid() {
         assert_eq!(KnockoffConfig::default().nlambda, 250);
     }
@@ -1625,6 +1676,7 @@ mod tests {
             f_size: None,
             family: GlmnetFamily::Gaussian,
             parallel: true,
+            r_compatible: false,
         };
         let voting = knockoff_filter_voting(&z, &y, &config)
             .unwrap_or_else(|e| panic!("knockoff_filter_voting: {e}"));

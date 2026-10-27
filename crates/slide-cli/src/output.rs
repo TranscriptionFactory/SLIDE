@@ -1,10 +1,9 @@
 use std::path::Path;
 
 use anyhow::{ensure, Result};
-use ndarray::Array1;
 use slide_core::{OptimizeSlideConfig, OptimizeSlideResult};
 use slide_data_io::{write_params_json, LoadedMatrix, OutputWriteOptions};
-use slide_score::{auc_score, control_performance, pearson_correlation, ResponseType};
+use slide_score::{auc_score, control_performance, pearson_correlation, ranks, ResponseType};
 use slide_types::{Matrix, Vector};
 
 #[derive(Clone, Debug)]
@@ -22,24 +21,6 @@ impl Feature {
             _ => "white",
         }
     }
-}
-
-fn ranks(values: &Array1<f64>) -> Array1<f64> {
-    let mut order: Vec<_> = (0..values.len()).collect();
-    order.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
-    let mut result = Array1::zeros(values.len());
-    let mut i = 0;
-    while i < order.len() {
-        let mut j = i + 1;
-        while j < order.len() && values[order[i]] == values[order[j]] {
-            j += 1;
-        }
-        for &index in &order[i..j] {
-            result[index] = (i + j + 1) as f64 / 2.0;
-        }
-        i = j;
-    }
-    result
 }
 
 pub(crate) fn top_features(
@@ -344,6 +325,7 @@ pub(crate) fn export_results(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::Array1;
     #[test]
     fn labelled_csv_escapes_identifiers_and_features_follow_r_union() -> Result<()> {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))

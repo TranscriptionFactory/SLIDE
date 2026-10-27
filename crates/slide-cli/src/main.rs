@@ -30,6 +30,8 @@ struct Cli {
 enum Command {
     /// Start or resume optimization (headless unless --tui is supplied).
     Run(run::RunArgs),
+    /// Run method-4 CV on saved factors without rerunning LOVE or optimization.
+    Cv(run::CvArgs),
     /// View checkpoint files without starting or stopping computation.
     View(TuiArgs),
     /// Submit a SLURM batch job and monitor it in the TUI.
@@ -115,6 +117,7 @@ fn main() -> Result<()> {
             }
             run::run(args)
         }
+        Command::Cv(args) => run::run_cv(args),
         Command::View(args) => tui::run(args),
         Command::Submit(args) => submit(args),
     }

@@ -2953,13 +2953,21 @@ impl App {
                 "design: {repeats} repeat(s) x {folds_per_repeat} fold(s) | predictions: {prediction_count}"
             )),
             Line::from(format!(
-                "mean selected model size: {:.1} marginal LF(s), {:.1} interaction(s)",
+                "mean selections before final fit: {:.1} marginal LF(s), {:.1} interaction(s)",
                 mean_marginals, mean_interactions
             )),
         ];
+        if !cv.repeat_scores.is_empty() {
+            lines.push(Line::from(format!(
+                "pooled-repeat means | observed: {} | SLIDE_y: {}",
+                format_optional_scalar(cv.mean), format_optional_scalar(cv.permuted_mean)
+            )));
+        } else {
+            lines.push(Line::from("legacy CV: fold-averaged score, no native permutation branch"));
+        }
         if empty_count > 0 {
             lines.push(Line::from(
-                "warning: some folds produced no scored model; inspect fold bars/model sizes.",
+                "warning: some fold metrics are undefined; inspect pooled-repeat scores.",
             ));
         }
 
@@ -3026,7 +3034,7 @@ impl App {
     }
 
     fn cv_model_size_table(&self, cv: &slide_cv::FinalCvResult) -> Table<'static> {
-        let title = "Fold Model Sizes";
+        let title = "Fold Selections";
         let rows = cv.folds.iter().take(8).map(|fold| {
             Row::new([
                 format!("{}", fold.repeat + 1),
@@ -3095,8 +3103,10 @@ impl App {
                         neg.push(prediction.y_pred);
                     }
                 }
-                let neg_bins = histogram_counts(&neg, 10, 0.0, 1.0);
-                let pos_bins = histogram_counts(&pos, 10, 0.0, 1.0);
+                let lower = neg.iter().chain(&pos).copied().fold(0.0_f64, f64::min);
+                let upper = neg.iter().chain(&pos).copied().fold(1.0_f64, f64::max);
+                let neg_bins = histogram_counts(&neg, 10, lower, upper);
+                let pos_bins = histogram_counts(&pos, 10, lower, upper);
                 let max_count = neg_bins
                     .iter()
                     .chain(pos_bins.iter())
@@ -3111,7 +3121,7 @@ impl App {
                         bins.into_iter().enumerate().map(move |(i, count)| {
                             vec![
                                 class.into(),
-                                bin_interval(i, 10, 0.0, 1.0),
+                                bin_interval(i, 10, lower, upper),
                                 count.to_string(),
                                 "█".repeat(
                                     (count as usize * width / max_count as usize).min(width),
@@ -3124,11 +3134,11 @@ impl App {
                     frame,
                     area,
                     format!(
-                        "Probability histogram | y=0 n={} | y=1 n={}",
+                        "Prediction histogram | y=0 n={} | y=1 n={}",
                         neg.len(),
                         pos.len()
                     ),
-                    vec!["class", "probability", "count", "histogram"],
+                    vec!["class", "prediction", "count", "histogram"],
                     rows,
                     vec![
                         Constraint::Length(5),
@@ -5094,6 +5104,11 @@ mod tests {
         let mut app = plot_app();
         app.tab = Tab::Performance;
         app.data.as_mut().unwrap().final_cv = Some(slide_cv::FinalCvResult {
+            repeat_scores: Vec::new(),
+            permuted_mean: None,
+            permuted_standard_error: None,
+            permuted_folds: Vec::new(),
+            permuted_predictions: Vec::new(),
             metric: slide_score::ScoreMetric::Auc,
             mean: Some(0.625),
             standard_error: Some(0.1),
@@ -5287,11 +5302,18 @@ mod tests {
         app.tab = Tab::Performance;
         app.performance_sub_view = PerformanceSubView::FoldScores;
         let cv = slide_cv::FinalCvResult {
+            repeat_scores: Vec::new(),
+            permuted_mean: None,
+            permuted_standard_error: None,
+            permuted_folds: Vec::new(),
+            permuted_predictions: Vec::new(),
             metric: slide_score::ScoreMetric::Correlation,
             mean: Some(0.1),
             standard_error: None,
             folds: (0..90)
                 .map(|i| slide_cv::FinalCvFoldResult {
+                    selected_upsilon_lfs: Vec::new(),
+                    used_random_fallback: false,
                     repeat: 0,
                     fold: i,
                     train_n: 20,
@@ -5846,6 +5868,11 @@ mod tests {
         assert!(text.contains("SLIDE: 0.8000"));
         assert!(text.contains("best model): unavailable"));
         app.data.as_mut().unwrap().final_cv = Some(slide_cv::FinalCvResult {
+            repeat_scores: Vec::new(),
+            permuted_mean: None,
+            permuted_standard_error: None,
+            permuted_folds: Vec::new(),
+            permuted_predictions: Vec::new(),
             metric: slide_score::ScoreMetric::Auc,
             mean: Some(0.75),
             standard_error: Some(0.02),

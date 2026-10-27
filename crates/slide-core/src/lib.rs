@@ -92,6 +92,7 @@ impl MarginalLfSelectionConfig {
             f_size: self.f_size,
             family: self.family,
             parallel: true,
+            r_compatible: false,
         }
     }
 }

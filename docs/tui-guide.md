@@ -405,16 +405,19 @@ JSON. Cycle Performance sub-views with `v`. It shows:
 - Final CV metric, mean, and standard error
 - Scored fold count vs empty or degenerate folds
 - Fold-score dots with exact metrics (correlation −1 to +1, AUC 0 to 1; expanded if values exceed those bounds)
-- Per-fold train/validation sizes and selected model sizes
+- Per-fold train/validation sizes and marginal/interaction selection counts
 - Prediction histograms with numeric intervals, class counts, and scrollable count bars
 - ROC and precision-recall curves with labeled 0–1 axes, chance diagonal, and prevalence reference for binary responses
 - Residual histogram with numeric intervals and count bars for continuous responses
 
 Performance opens on ROC/PR curves for binary responses or a residual histogram
 for continuous responses, with fold scores below when space permits. The header
-reports the held-out fold mean and SE. Curve AUC and average precision (AP) use
-pooled prediction rows across folds/repeats, so they can differ from the fold
-mean. Tied prediction scores share one threshold. Narrow terminals stack the
+reports the observed pooled-repeat mean and SE for [native CV](native-cv.md).
+Legacy checkpoints retain their fold means and are labeled as legacy. Curve AUC
+and average precision (AP) use observed prediction rows pooled across all repeats,
+without the per-repeat AUC direction flip, so they can differ from the header.
+Binary Gaussian predictions are not probabilities; histograms include values
+outside [0, 1]. Tied prediction scores share one threshold. Narrow terminals stack the
 curves vertically when space permits. At 80×24 and 60×20, a compact summary
 shows the same pooled AUC, AP, and prevalence instead of overlapping axes;
 enlarge the terminal to see curves. Use the Fold Scores sub-view for model-size details.

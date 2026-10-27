@@ -193,6 +193,24 @@ pub fn fit_logistic_predict(
     ))
 }
 
+pub fn ranks(values: &Array1<f64>) -> Array1<f64> {
+    let mut order: Vec<_> = (0..values.len()).collect();
+    order.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+    let mut result = Array1::zeros(values.len());
+    let mut i = 0;
+    while i < order.len() {
+        let mut j = i + 1;
+        while j < order.len() && values[order[i]] == values[order[j]] {
+            j += 1;
+        }
+        for &index in &order[i..j] {
+            result[index] = (i + j + 1) as f64 / 2.0;
+        }
+        i = j;
+    }
+    result
+}
+
 pub fn pearson_correlation(
     actual: &Array1<Scalar>,
     predicted: &Array1<Scalar>,

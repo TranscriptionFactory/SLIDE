@@ -25,5 +25,4 @@ slide-knockoff = { version = "1.0.0", path = "../slide-knockoff" }
 slide-score = { version = "1.0.0", path = "../slide-score" }
 slide-types = { version = "1.0.0", path = "../slide-types" }
 
-[dev-dependencies]
 slide-glmnet = { version = "1.0.0", path = "../slide-glmnet" }

@@ -37,6 +37,188 @@ pub struct RunArgs {
     pub threads: Option<usize>,
 }
 
+/// R SLIDEcv input YAML is read without modifying its output directory.
+#[derive(Debug, Parser, Clone)]
+pub struct CvArgs {
+    #[arg(long)]
+    pub config: PathBuf,
+    /// Saved z_matrix.csv; defaults to the YAML out_path/z_matrix.csv.
+    #[arg(long)]
+    pub z: Option<PathBuf>,
+    /// New output directory; must not already exist.
+    #[arg(long)]
+    pub out: PathBuf,
+    #[arg(long, default_value_t = 20)]
+    pub nrep: usize,
+    #[arg(long, default_value_t = 10)]
+    pub k: usize,
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
+    #[arg(long)]
+    pub threads: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeCvInput {
+    y_path: PathBuf,
+    out_path: PathBuf,
+    eval_type: String,
+    #[serde(rename = "SLIDE_iter")]
+    slide_iter: usize,
+    spec: Scalar,
+    fdr: Option<Scalar>,
+    #[serde(default, deserialize_with = "r_yaml_bool")]
+    do_interacts: Option<bool>,
+    y_levels: Option<Vec<Scalar>>,
+}
+
+fn r_yaml_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    match Option::<serde_yaml::Value>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(serde_yaml::Value::Bool(value)) => Ok(Some(value)),
+        Some(serde_yaml::Value::String(value)) => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" => Ok(Some(true)),
+            "no" | "false" => Ok(Some(false)),
+            _ => Err(serde::de::Error::custom("do_interacts must be true/false or R YAML yes/no")),
+        },
+        _ => Err(serde::de::Error::custom("do_interacts must be a boolean")),
+    }
+}
+
+pub fn run_cv(args: CvArgs) -> Result<()> {
+    use anyhow::ensure;
+    use slide_cv::run_final_slide_cv;
+    use slide_knockoff::KnockoffConfig;
+    use slide_types::Vector;
+    ensure!(
+        !args.out.exists(),
+        "CV output directory already exists: {}",
+        args.out.display()
+    );
+    let yaml = std::fs::read_to_string(&args.config)?;
+    let input: NativeCvInput = serde_yaml::from_str(&yaml).context("invalid SLIDEcv input YAML")?;
+    let z_path = args
+        .z
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| input.out_path.join("z_matrix.csv"));
+    let loaded_z = read_feature_matrix(&z_path, &MatrixReadOptions::default())?;
+    let loaded_y = read_feature_matrix(&input.y_path, &MatrixReadOptions::default())?;
+    ensure!(
+        loaded_y.matrix.ncols() == 1,
+        "y_path must contain exactly one response column"
+    );
+    ensure!(
+        loaded_z.sample_ids == loaded_y.sample_ids,
+        "Z and y sample IDs must match in the same order (or both omit IDs)"
+    );
+    if let Some(ids) = &loaded_z.sample_ids {
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        ensure!(
+            unique.len() == ids.len(),
+            "Z and y sample IDs must be unique"
+        );
+    }
+    let response_type = match input.eval_type.as_str() {
+        "auc" => ResponseType::Binary,
+        "corr" => ResponseType::Continuous,
+        other => anyhow::bail!("unsupported eval_type: {other}; use auc or corr"),
+    };
+    if response_type == ResponseType::Binary {
+        ensure!(
+            input
+                .y_levels
+                .as_ref()
+                .is_none_or(|levels| levels == &[0.0, 1.0]),
+            "native CV currently requires y_levels: [0, 1] and numeric 0/1 responses"
+        );
+    }
+    let y = Vector::from_ndarray(loaded_y.matrix.as_ndarray().column(0).to_owned());
+    let config = FinalCvConfig {
+        repeats: args.nrep,
+        folds: args.k,
+        base_seed: args.seed,
+        response_type,
+        include_interactions: input.do_interacts.unwrap_or(true),
+        knockoff: KnockoffConfig {
+            niter: input.slide_iter,
+            spec: input.spec,
+            fdr: input.fdr.unwrap_or(0.1),
+            ..KnockoffConfig::default()
+        },
+    };
+    let mut pool = rayon::ThreadPoolBuilder::new();
+    if let Some(threads) = args.threads {
+        ensure!(threads > 0, "threads must be positive");
+        pool = pool.num_threads(threads);
+    }
+    let result = pool
+        .build()?
+        .install(|| run_final_slide_cv(&loaded_z.matrix, &y, &config))?;
+    // Atomic directory creation prevents concurrent runs from overwriting each other.
+    std::fs::create_dir(&args.out)?;
+    std::fs::write(
+        args.out.join("cv-result.json"),
+        serde_json::to_vec_pretty(&result)?,
+    )?;
+    std::fs::write(
+        args.out.join("requested-config.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({ "config": config, "env_overrides": active_env_overrides() }))?,
+    )?;
+    let mut scores = csv::Writer::from_path(args.out.join("SLIDECV_boxplot_data.csv"))?;
+    let metric = if response_type == ResponseType::Binary {
+        "auc"
+    } else {
+        "corr"
+    };
+    scores.write_record([
+        "repeat",
+        "method",
+        metric,
+        &format!("raw_{metric}"),
+        "mse",
+        "imputed_predictions",
+    ])?;
+    for row in &result.repeat_scores {
+        scores.write_record([
+            (row.repeat + 1).to_string(),
+            match row.method {
+                slide_cv::FinalCvMethod::Slide => "SLIDE",
+                slide_cv::FinalCvMethod::SlideY => "SLIDE_y",
+            }
+            .to_string(),
+            row.metric_value.map(|v| v.to_string()).unwrap_or_default(),
+            row.raw_metric_value
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            row.mse.map(|v| v.to_string()).unwrap_or_default(),
+            row.imputed_predictions.to_string(),
+        ])?;
+    }
+    scores.flush()?;
+    let mut predictions = csv::Writer::from_path(args.out.join("predictions.csv"))?;
+    for row in result
+        .predictions
+        .iter()
+        .chain(&result.permuted_predictions)
+    {
+        predictions.serialize(row)?;
+    }
+    predictions.flush()?;
+    std::fs::write(args.out.join("README.md"), format!(
+        "# Native Rust SLIDEcv\n\nSaved-factor CV; no LOVE refit. RNG differs from R.\n\nConfig: `{}`\n\nZ: `{}`\n\nCommand: `slide cv --config {:?} --z {:?} --out {:?} --nrep {} --k {} --seed {}{}`\n\nObserved mean: {:?}; permuted mean: {:?}. Means use pooled predictions per repeat, not fold means. This is a separate native run, not a replacement of R outputs. CSV/JSON exports are not RDS files.\n",
+        args.config.display(), z_path.display(), args.config, z_path, args.out, args.nrep, args.k, args.seed,
+        args.threads.map(|n| format!(" --threads {n}")).unwrap_or_default(), result.mean, result.permuted_mean
+    ))?;
+    log::info!(
+        "CV completed: observed {:?}, permuted {:?}; {}",
+        result.mean,
+        result.permuted_mean,
+        args.out.display()
+    );
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunConfig {
@@ -273,6 +455,7 @@ fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfi
 
             let mut final_cv = FinalCvConfig {
                 response_type,
+                base_seed: cfg.base_seed.unwrap_or(42),
                 include_interactions: opt_config.do_interacts,
                 knockoff: opt_config.knockoff.to_knockoff_config(),
                 ..FinalCvConfig::default()
@@ -499,4 +682,68 @@ cv:
         assert_eq!(final_cv.repeats, FinalCvConfig::default().repeats);
         assert_eq!(final_cv.response_type, ResponseType::Continuous);
     }
+    #[test]
+    fn standalone_cv_uses_saved_factors_and_protects_ids_and_outputs() -> anyhow::Result<()> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../.tmpfiles/2026-10-27_native-cv-test/{stamp}"));
+        std::fs::create_dir_all(&root)?;
+        let z_path = root.join("z_matrix.csv");
+        let y_path = root.join("y.csv");
+        let mut z = String::from("\"\",Z1,Z2\n");
+        let mut y = String::from("\"\",y\n");
+        for i in 0..12 {
+            z.push_str(&format!(
+                "{}, {}, {}\n",
+                i + 1,
+                (i as f64).sin(),
+                (i as f64 * 1.3).cos()
+            ));
+            y.push_str(&format!("{},{}\n", i + 1, i % 2));
+        }
+        std::fs::write(&z_path, z)?;
+        std::fs::write(&y_path, &y)?;
+        let yaml_path = root.join("input.yaml");
+        std::fs::write(&yaml_path, format!("y_path: {:?}\nout_path: {:?}\neval_type: auc\ny_levels: [0, 1]\nSLIDE_iter: 4\nspec: 0.25\ndo_interacts: no\n", y_path, root))?;
+        let args = super::CvArgs {
+            config: yaml_path,
+            z: None,
+            out: root.join("results"),
+            nrep: 2,
+            k: 3,
+            seed: 17,
+            threads: Some(1),
+        };
+        super::run_cv(args.clone())?;
+        let result: slide_cv::FinalCvResult =
+            serde_json::from_slice(&std::fs::read(args.out.join("cv-result.json"))?)?;
+        assert_eq!(result.predictions.len(), 24);
+        assert_eq!(result.permuted_predictions.len(), 24);
+        assert_eq!(result.repeat_scores.len(), 4);
+        let records = std::fs::read_to_string(args.out.join("SLIDECV_boxplot_data.csv"))?;
+        assert!(records.starts_with("repeat,method,auc,raw_auc"));
+        assert!(records.contains("1,SLIDE_y,"));
+        assert!(super::run_cv(args.clone()).is_err());
+        std::fs::write(&y_path, y.replacen("1,0", "99,0", 1))?;
+        let bad = super::CvArgs {
+            out: root.join("misaligned"),
+            ..args
+        };
+        assert!(super::run_cv(bad.clone()).is_err());
+        assert!(!bad.out.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn native_cv_accepts_r_yaml_booleans_without_silently_coercing_invalid_values() {
+        for (value, expected) in [("yes", true), ("no", false), ("true", true), ("false", false)] {
+            let yaml = format!("y_path: y.csv\nout_path: model\neval_type: auc\nSLIDE_iter: 1000\nspec: 0.1\ndo_interacts: {value}\n");
+            let parsed: super::NativeCvInput = serde_yaml::from_str(&yaml).unwrap();
+            assert_eq!(parsed.do_interacts, Some(expected));
+            assert!(serde_yaml::from_str::<super::NativeCvInput>(&yaml.replace(value, "invalid")).is_err());
+        }
+    }
+
 }
