@@ -2310,6 +2310,7 @@ dependencies = [
  "slide-data-io",
  "slide-glmnet",
  "slide-knockoff",
+ "slide-love",
  "slide-score",
  "slide-types",
 ]

@@ -83,7 +83,7 @@ def tui_pty(binary, checkpoint, config):
         os.close(fd)
 
 
-def smoke(binary, workdir, out_path=None, reuse=False, check_tui=False):
+def smoke(binary, workdir, out_path=None, reuse=False, check_tui=False, full_fit=False, rscript=None):
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / "README.md").write_text(
         "# Rust artifact smoke\n\n40-feature HIV fixture, final CV, optional PDF/font checks and Unix PTY startup.\n"
@@ -102,6 +102,8 @@ def smoke(binary, workdir, out_path=None, reuse=False, check_tui=False):
         for row in csv.reader(src):
             writer.writerow(row[:41])
     shutil.copyfile(ROOT / "examples/HIV+cytokines_y.csv", y_path)
+    if full_fit:
+        return full_fit_smoke(binary, workdir, x_path, y_path, rscript)
     # JSON strings are valid YAML scalars, including Windows backslashes/spaces.
     config.write_text(
         f"x_path: {json.dumps(str(x_path))}\ny_path: {json.dumps(str(y_path))}\n"
@@ -116,6 +118,94 @@ def smoke(binary, workdir, out_path=None, reuse=False, check_tui=False):
         tui_pty(binary, checkpoint, config)
 
 
+def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
+    """Exercise fixed fitting, factor-only CV and ordered-weight validation."""
+    with y_path.open() as handle:
+        rows = list(csv.reader(handle))
+    levels = sorted({float(row[1]) for row in rows[1:]})
+    assert len(levels) == 2
+    for row in rows[1:]:
+        row[1] = str(int(float(row[1]) == levels[1]))
+    with y_path.open("w", newline="") as handle:
+        csv.writer(handle).writerows(rows)
+    weights = workdir / "weights.csv"
+    with weights.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["", "weight"])
+        writer.writerows((row[0], 1 + i % 3) for i, row in enumerate(rows[1:]))
+    out = workdir / "full-fit"
+    config = workdir / "full-fit.yaml"
+    config.write_text(f"x_path: {json.dumps(str(x_path))}\ny_path: {json.dumps(str(y_path))}\n"
+                      f"out_path: {json.dumps(str(out))}\n"
+                      "delta: 0.1\nlambda: 0.5\nthresh_fdr: 0.1\nspec: 0.1\nfdr: 0.1\n"
+                      "SLIDE_iter: 8\ndo_interacts: yes\neval_type: auc\ny_levels: [0, 1]\n")
+    subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(weights),
+                    "--out", str(out), "--seed", "37", "--threads", "2"], check=True)
+    status = json.loads((out / "status.json").read_text())
+    assert status["factors"] == "complete"
+    with (out / "z_matrix.csv").open() as handle:
+        z = list(csv.reader(handle))
+    assert [r[0] for r in z[1:]] == [r[0] for r in rows[1:]]
+    effective = json.loads((out / "effective-config.json").read_text())
+    assert effective["knockoff"]["f_size"] == min(20, len(z[0]) - 1)
+    assert effective["knockoff"]["r_compatible"] and effective["knockoff"]["nlambda"] == 500
+    bad = workdir / "misaligned-weights.csv"
+    with weights.open() as handle:
+        w = list(csv.reader(handle))
+    w[1], w[2] = w[2], w[1]
+    with bad.open("w", newline="") as handle:
+        csv.writer(handle).writerows(w)
+    rejected = workdir / "must-not-exist"
+    run = subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(bad),
+                          "--out", str(rejected)], capture_output=True, text=True)
+    assert run.returncode != 0 and "sample IDs" in run.stderr and not rejected.exists()
+    run = subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(weights),
+                          "--out", str(out)], capture_output=True, text=True)
+    assert run.returncode != 0 and "already exists" in run.stderr
+    subprocess.run([str(binary), "cv", "--config", str(config), "--z", str(out / "z_matrix.csv"),
+                    "--out", str(workdir / "full-fit-cv"), "--nrep", "2", "--k", "3",
+                    "--seed", "38", "--threads", "2"], check=True)
+    if rscript:
+        code = r"""
+            a <- commandArgs(TRUE); suppressPackageStartupMessages(library(SLIDE))
+            x <- as.matrix(read.csv(a[1],row.names=1)); y <- read.csv(a[2],row.names=1)[,1]
+            w <- read.csv(a[3],row.names=1)[,1]; out <- a[4]
+            lf <- getLatentFactors(y,x,scale(x),std_y=TRUE,delta=.1,lambda=.5,thresh_fdr=.1)
+            write.csv(lf$A,file.path(out,'r-A.csv')); write.csv(predZ(scale(x),lf),file.path(out,'r-Z.csv'))
+            d <- read.csv(file.path(out,'design.csv'),row.names=1,check.names=FALSE)
+            if(ncol(d)>0) {
+                d$.response <- y
+                fit <- glm(.response~.,data=d,family=binomial(),weights=w)
+                status <- fit$converged && !fit$boundary && all(is.finite(coef(fit))) &&
+                    all(fitted(fit)>10*.Machine$double.eps & fitted(fit)<1-10*.Machine$double.eps)
+                writeLines(if(status) 'complete' else 'failed',file.path(out,'r-predictor-status.txt'))
+                if(status) write.csv(data.frame(pred=predict(fit,type='response')),file.path(out,'r-predictions.csv'))
+            }
+        """
+        subprocess.run([str(rscript), "--vanilla", "-e", code, str(x_path), str(y_path), str(weights), str(out)], check=True)
+        def matrix(path):
+            with path.open() as handle:
+                return [[float(v) for v in row[1:]] for row in list(csv.reader(handle))[1:]]
+        rz, zz = matrix(out / "r-Z.csv"), matrix(out / "z_matrix.csv")
+        assert len(rz) == len(zz) and len(rz[0]) == len(zz[0])
+        # Factor numbering and signs need not agree across implementations.
+        matches = []
+        for j in range(len(zz[0])):
+            candidates = [(max(abs(u[j] - sign * v[k]) for u, v in zip(zz, rz)), k, sign)
+                          for k in range(len(rz[0])) for sign in [-1, 1]]
+            error, k, sign = min(candidates)
+            assert error < 1e-6, (j, k, error)
+            matches.append((k, sign))
+        assert len({k for k, _ in matches}) == len(matches)
+        ra, aa = matrix(out / "r-A.csv"), matrix(out / "A.csv")
+        assert max(abs(u[j] - sign*v[k]) for u,v in zip(aa,ra) for j,(k,sign) in enumerate(matches)) < 1e-6
+        if (out / "r-predictor-status.txt").exists():
+            assert (out / "r-predictor-status.txt").read_text().strip() == status["predictor"]
+        if status["predictor"] == "complete":
+            assert max(abs(a[0]-b[0]) for a,b in zip(matrix(out / "predictions.csv"),matrix(out / "r-predictions.csv"))) < 1e-8
+    logging.info("Full-fit smoke passed: %s", status)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path, help="Executable; on Windows use bin/slide.exe and set FONTCONFIG_FILE")
@@ -123,7 +213,9 @@ if __name__ == "__main__":
     parser.add_argument("--out-path", type=Path, help="Export and check embedded-font PDFs (not visual validation)")
     parser.add_argument("--reuse", action="store_true")
     parser.add_argument("--tui-pty", action="store_true", help="Require real Unix terminal startup/render/quit")
+    parser.add_argument("--full-fit", action="store_true", help="Test the fixed R-compatible fit and CV handoff")
+    parser.add_argument("--rscript", type=Path, help="Check full-fit factors and weighted predictions against R")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     smoke(args.binary.resolve(), args.workdir.resolve(), args.out_path.resolve() if args.out_path else None,
-          args.reuse, args.tui_pty)
+          args.reuse, args.tui_pty, args.full_fit, args.rscript)

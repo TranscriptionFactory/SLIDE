@@ -58,6 +58,222 @@ pub struct CvArgs {
     pub threads: Option<usize>,
 }
 
+/// Fixed full-data method-4 fitting; does not search or rescore a candidate grid.
+#[derive(Debug, Parser, Clone)]
+pub struct FitArgs {
+    #[arg(long)]
+    pub config: PathBuf,
+    /// Positive prior weights, one numeric column with the same ordered sample IDs as X/y.
+    #[arg(long)]
+    pub weights: PathBuf,
+    #[arg(long)]
+    pub out: PathBuf,
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
+    #[arg(long)]
+    pub threads: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeFitInput {
+    #[serde(flatten)]
+    cv: NativeCvInput,
+    x_path: PathBuf,
+    delta: Scalar,
+    lambda: Scalar,
+    thresh_fdr: Scalar,
+}
+
+pub fn run_fit(args: FitArgs) -> Result<()> {
+    use anyhow::ensure;
+    use slide_data_io::standardize;
+    use slide_knockoff::KnockoffConfig;
+    use slide_love::{compute_z_map, love, LoveConfig};
+    use slide_score::fit_weighted_logistic_predict;
+    use slide_types::{Matrix, Vector};
+    ensure!(
+        !args.out.exists(),
+        "fit output directory already exists: {}",
+        args.out.display()
+    );
+    let yaml = std::fs::read_to_string(&args.config)?;
+    let input: NativeFitInput = serde_yaml::from_str(&yaml)?;
+    ensure!(
+        input.cv.eval_type == "auc" && input.cv.y_levels.as_ref().is_none_or(|v| v == &[0., 1.]),
+        "fixed full fitting requires binary 0/1 responses and eval_type: auc"
+    );
+    ensure!(
+        input.delta.is_finite()
+            && input.delta > 0.
+            && input.lambda.is_finite()
+            && input.lambda > 0.,
+        "delta and lambda must be finite and positive"
+    );
+    for value in [input.thresh_fdr, input.cv.spec, input.cv.fdr.unwrap_or(0.1)] {
+        ensure!(
+            value.is_finite() && value > 0. && value <= 1.,
+            "thresholds must be in (0, 1]"
+        );
+    }
+    ensure!(input.cv.slide_iter > 0, "SLIDE_iter must be positive");
+    ensure!(
+        active_env_overrides().is_empty(),
+        "fixed full fitting does not accept result-changing knockoff environment overrides"
+    );
+    let x = read_feature_matrix(&input.x_path, &MatrixReadOptions::default())?;
+    let y = aligned_column(&input.cv.y_path, &x)?;
+    let weights = aligned_column(&args.weights, &x)?;
+    ensure!(
+        y.as_ndarray().iter().all(|v| *v == 0. || *v == 1.)
+            && y.as_ndarray().iter().any(|v| *v == 0.)
+            && y.as_ndarray().iter().any(|v| *v == 1.),
+        "y must contain both classes, 0 and 1"
+    );
+    ensure!(
+        weights
+            .as_ndarray()
+            .iter()
+            .all(|v| v.is_finite() && *v > 0.),
+        "weights must be finite and positive"
+    );
+    ensure!(
+        x.matrix.nrows() > 1
+            && x.matrix.ncols() > 0
+            && x.matrix.as_ndarray().iter().all(|v| v.is_finite()),
+        "X must have at least two rows and finite features"
+    );
+    let standardized = standardize(&x.matrix);
+    ensure!(
+        standardized.zero_variance_columns.is_empty(),
+        "X must contain only positive-variance features"
+    );
+    let labels = x
+        .sample_ids
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("fixed full fitting requires sample IDs"))?;
+    let config = LoveConfig {
+        pure_homo: true,
+        delta: Some(Vector::from_ndarray(ndarray::arr1(&[input.delta]))),
+        lbd: Vector::from_ndarray(ndarray::arr1(&[input.lambda])),
+        thresh_fdr: Some(input.thresh_fdr),
+        ..LoveConfig::default()
+    };
+    let mut pool = rayon::ThreadPoolBuilder::new();
+    if let Some(n) = args.threads {
+        ensure!(n > 0, "threads must be positive");
+        pool = pool.num_threads(n);
+    }
+    let pool = pool.build()?;
+    std::fs::create_dir(&args.out)?;
+    std::fs::write(args.out.join("input.yaml"), yaml)?;
+    std::fs::write(
+        args.out.join("preprocessing.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "feature_names": x.feature_names, "center": standardized.means, "scale": standardized.stds,
+            "normalization": "input must already be normalized; sample-SD standardization only"
+        }))?,
+    )?;
+    let lf = pool.install(|| love(&standardized.matrix, &config))?;
+    let z = compute_z_map(&standardized.matrix, &lf.a, &lf.gamma, &lf.c)?;
+    crate::output::labelled_matrix(&args.out.join("z_matrix.csv"), &z, &labels)?;
+    crate::output::labelled_matrix(&args.out.join("A.csv"), &lf.a, &x.feature_names)?;
+    std::fs::write(
+        args.out.join("latent-factors.json"),
+        serde_json::to_vec_pretty(&lf)?,
+    )?;
+    let ko = slide_cv::method4_knockoff_config(
+        &KnockoffConfig {
+            niter: input.cv.slide_iter,
+            spec: input.cv.spec,
+            fdr: input.cv.fdr.unwrap_or(0.1),
+            base_seed: args.seed,
+            ..KnockoffConfig::default()
+        },
+        20.min(z.ncols()),
+    );
+    std::fs::write(
+        args.out.join("effective-config.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "love": config, "knockoff": ko, "seed": args.seed,
+            "weights_path": args.weights, "do_interacts": input.cv.do_interacts.unwrap_or(true),
+            "predictor": "weighted binomial GLM; maxit=25, deviance epsilon=1e-8; strict rank/convergence/boundary checks",
+            "cv_eligibility": "valid factors, independent of full-data predictor status"
+        }))?,
+    )?;
+    let mut status = serde_json::json!({"factors":"complete","selection":"failed","predictor":"not_attempted","error":null});
+    match pool
+        .install(|| slide_cv::fit_full_data(&z, &y, &ko, input.cv.do_interacts.unwrap_or(true)))
+    {
+        Err(error) => status["error"] = error.to_string().into(),
+        Ok(design) => {
+            std::fs::write(
+                args.out.join("selection.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "marginals_zero_based":design.marginals, "interaction_pairs_zero_based":design.interactions,
+                    "upsilon_lfs_zero_based":design.upsilon_lfs, "random_fallback":design.used_random_fallback
+                }))?,
+            )?;
+            crate::output::labelled_matrix(&args.out.join("design.csv"), &design.train, &labels)?;
+            status["selection"] = "complete".into();
+            if design.train.ncols() == 0 {
+                status["predictor"] = "no_features_selected".into();
+            } else {
+                match fit_weighted_logistic_predict(&design.train, &y, &design.train, &weights) {
+                    Ok(predictions) => {
+                        crate::output::labelled_matrix(
+                            &args.out.join("predictions.csv"),
+                            &Matrix::from_ndarray(
+                                predictions
+                                    .as_ndarray()
+                                    .clone()
+                                    .insert_axis(ndarray::Axis(1)),
+                            ),
+                            &labels,
+                        )?;
+                        status["predictor"] = "complete".into();
+                    }
+                    Err(error) => {
+                        status["predictor"] = "failed".into();
+                        status["error"] = error.to_string().into();
+                    }
+                }
+            }
+        }
+    }
+    std::fs::write(
+        args.out.join("status.json"),
+        serde_json::to_vec_pretty(&status)?,
+    )?;
+    eprintln!("Full fit status: {status}; valid factors are available for separate CV");
+    Ok(())
+}
+
+fn aligned_column(
+    path: &std::path::Path,
+    x: &slide_data_io::LoadedMatrix,
+) -> Result<slide_types::Vector> {
+    use anyhow::ensure;
+    let column = read_feature_matrix(path, &MatrixReadOptions::default())?;
+    ensure!(
+        column.matrix.ncols() == 1 && column.matrix.nrows() == x.matrix.nrows(),
+        "{} must have one column and the same row count as X",
+        path.display()
+    );
+    ensure!(
+        x.sample_ids.is_some() && x.sample_ids == column.sample_ids,
+        "{} sample IDs must match X in order",
+        path.display()
+    );
+    let ids = x.sample_ids.as_ref().unwrap();
+    ensure!(
+        ids.iter().collect::<std::collections::HashSet<_>>().len() == ids.len(),
+        "sample IDs must be unique"
+    );
+    Ok(slide_types::Vector::from_ndarray(
+        column.matrix.as_ndarray().column(0).to_owned(),
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 struct NativeCvInput {
     y_path: PathBuf,

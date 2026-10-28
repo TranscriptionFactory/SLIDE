@@ -103,7 +103,7 @@ pub(crate) fn top_features(
 }
 
 // Existing matrix writers omit row labels; public artifacts must retain input identities.
-fn labelled_matrix(path: &Path, matrix: &Matrix, labels: &[String]) -> Result<()> {
+pub(crate) fn labelled_matrix(path: &Path, matrix: &Matrix, labels: &[String]) -> Result<()> {
     ensure!(
         matrix.nrows() == labels.len(),
         "row labels do not match matrix at {}",

@@ -28,6 +28,12 @@ pub enum ScoreMetric {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ScoreError {
+    #[error("prior weights must be finite, positive and aligned with finite binary training data")]
+    InvalidPriorWeights,
+    #[error(
+        "weighted binomial fit failed rank, convergence, boundary or finite-coefficient checks"
+    )]
+    InvalidWeightedFit,
     #[error("control scoring requires finite inputs, features, predictions, and scores")]
     NonFiniteControlScore,
     #[error("control scoring requires at least one marginal latent factor")]
@@ -161,36 +167,150 @@ pub fn fit_logistic_predict(
     y_train: &Vector,
     valid_features: &Matrix,
 ) -> Result<Vector, ScoreError> {
+    logistic_predict(train_features, y_train, valid_features, None)
+}
+
+/// Strict weighted binomial fitting for the full-data R workflow, not CV.
+pub fn fit_weighted_logistic_predict(
+    train_features: &Matrix,
+    y_train: &Vector,
+    valid_features: &Matrix,
+    prior: &Vector,
+) -> Result<Vector, ScoreError> {
+    logistic_predict(train_features, y_train, valid_features, Some(prior))
+}
+
+fn logistic_predict(
+    train_features: &Matrix,
+    y_train: &Vector,
+    valid_features: &Matrix,
+    prior: Option<&Vector>,
+) -> Result<Vector, ScoreError> {
     validate_binary_response(y_train)?;
 
-    let train_design = add_intercept(train_features.as_ndarray());
-    let ncols = train_design.ncols();
-    let mut beta = Array1::zeros(ncols);
-
-    for _ in 0..LOGISTIC_MAX_ITERATIONS {
-        let eta = train_design.dot(&beta);
-        let probabilities = eta.mapv(sigmoid_clamped);
-        let weights = probabilities.mapv(|p| (p * (1.0 - p)).max(LOGISTIC_WEIGHT_EPSILON));
-        let adjusted_response =
-            &eta + &((y_train.as_ndarray().to_owned() - &probabilities) / &weights);
-        let weighted_design = train_design.clone() * weights.view().insert_axis(Axis(1));
-        let hessian = train_design.t().dot(&weighted_design);
-        let rhs = train_design.t().dot(&(weights.clone() * adjusted_response));
-        let next_beta = Matrix::from_ndarray(hessian)
-            .pseudoinverse()?
+    let strict = prior.is_some();
+    let prior = prior.map_or_else(
+        || Array1::ones(y_train.len()),
+        |w| w.as_ndarray().to_owned(),
+    );
+    if train_features.nrows() != y_train.len()
+        || prior.len() != y_train.len()
+        || valid_features.ncols() != train_features.ncols()
+        || prior.iter().any(|w| !w.is_finite() || *w <= 0.0)
+        || !train_features
             .as_ndarray()
-            .dot(&rhs);
+            .iter()
+            .chain(valid_features.as_ndarray())
+            .all(|v| v.is_finite())
+    {
+        return Err(ScoreError::InvalidPriorWeights);
+    }
+    let train_design = add_intercept(train_features.as_ndarray());
+    let mut beta = Array1::zeros(train_design.ncols());
+    let mut eta = Array1::zeros(y_train.len());
+    if strict {
+        let mu = (&prior * y_train.as_ndarray() + 0.5) / (&prior + 1.0);
+        eta = mu.mapv(|p| (p / (1.0 - p)).ln());
+    }
+    let deviance = |p: &Array1<Scalar>| -> Scalar {
+        -2.0 * y_train
+            .as_ndarray()
+            .iter()
+            .zip(p)
+            .zip(&prior)
+            .map(|((&y, &mu), &w)| w * if y == 1.0 { mu.ln() } else { (1.0 - mu).ln() })
+            .sum::<Scalar>()
+    };
+    let mut old_deviance = deviance(&eta.mapv(sigmoid_clamped));
+    let mut converged = false;
+    for _ in 0..if strict { 25 } else { LOGISTIC_MAX_ITERATIONS } {
+        let probabilities = eta.mapv(if strict {
+            logistic_probability
+        } else {
+            sigmoid_clamped
+        });
+        let variance = probabilities.mapv(|p| {
+            (p * (1.0 - p)).max(if strict {
+                f64::MIN_POSITIVE
+            } else {
+                LOGISTIC_WEIGHT_EPSILON
+            })
+        });
+        let adjusted_response =
+            &eta + &((y_train.as_ndarray().to_owned() - &probabilities) / &variance);
+        let weights = &variance * &prior;
+        let next_beta = if strict {
+            let sqrt_w = weights.mapv(f64::sqrt);
+            let design = train_design.clone() * sqrt_w.view().insert_axis(Axis(1));
+            // glm.fit's rank tolerance is min(1e-7, epsilon / 1000).
+            let mut basis: Vec<Array1<Scalar>> = Vec::new();
+            for column in design.columns() {
+                let mut residual = column.to_owned();
+                for _ in 0..2 {
+                    for q in &basis {
+                        residual -= &(q * q.dot(&residual));
+                    }
+                }
+                let norm = residual.dot(&residual).sqrt();
+                if !norm.is_finite() || norm <= 1e-11 * column.dot(&column).sqrt() {
+                    return Err(ScoreError::InvalidWeightedFit);
+                }
+                basis.push(residual / norm);
+            }
+            Matrix::from_ndarray(design)
+                .pseudoinverse()?
+                .as_ndarray()
+                .dot(&(sqrt_w * adjusted_response))
+        } else {
+            let design = train_design.clone() * weights.view().insert_axis(Axis(1));
+            Matrix::from_ndarray(train_design.t().dot(&design))
+                .pseudoinverse()?
+                .as_ndarray()
+                .dot(&train_design.t().dot(&(weights * adjusted_response)))
+        };
         let step = (&next_beta - &beta).mapv(Scalar::abs).sum();
         beta = next_beta;
-        if step <= LOGISTIC_CONVERGENCE_TOLERANCE {
+        eta = train_design.dot(&beta);
+        if strict {
+            let p = eta.mapv(logistic_probability);
+            let dev = deviance(&p);
+            if !dev.is_finite()
+                || beta.iter().any(|v| !v.is_finite())
+                || p.iter()
+                    .any(|p| *p < 10.0 * f64::EPSILON || *p > 1.0 - 10.0 * f64::EPSILON)
+            {
+                return Err(ScoreError::InvalidWeightedFit);
+            }
+            if (dev - old_deviance).abs() / (0.1 + dev.abs()) < LOGISTIC_CONVERGENCE_TOLERANCE {
+                converged = true;
+                break;
+            }
+            old_deviance = dev;
+        } else if step <= LOGISTIC_CONVERGENCE_TOLERANCE {
             break;
         }
     }
-
+    if strict && !converged {
+        return Err(ScoreError::InvalidWeightedFit);
+    }
     let valid_design = add_intercept(valid_features.as_ndarray());
-    Ok(Vector::from_ndarray(
-        valid_design.dot(&beta).mapv(sigmoid_clamped),
-    ))
+    Ok(Vector::from_ndarray(valid_design.dot(&beta).mapv(
+        if strict {
+            logistic_probability
+        } else {
+            sigmoid_clamped
+        },
+    )))
+}
+
+fn logistic_probability(eta: Scalar) -> Scalar {
+    (if eta >= 0.0 {
+        1.0 / (1.0 + (-eta).exp())
+    } else {
+        let e = eta.exp();
+        e / (1.0 + e)
+    })
+    .clamp(f64::EPSILON, 1.0 - f64::EPSILON)
 }
 
 pub fn ranks(values: &Array1<f64>) -> Array1<f64> {
@@ -309,6 +429,62 @@ mod tests {
     };
     use ndarray::{arr1, arr2};
     use slide_types::{Matrix, Vector};
+
+    #[test]
+    fn strict_weighted_logistic_checks_weights_rank_and_separation() {
+        let x = Matrix::from_ndarray(ndarray::arr2(&[[-2.], [-1.], [0.], [1.], [2.], [3.]]));
+        let y = Vector::from_ndarray(ndarray::arr1(&[0., 1., 0., 1., 0., 1.]));
+        let weights = Vector::from_ndarray(ndarray::arr1(&[1., 2., 1., 1., 2., 1.]));
+        let p = super::fit_weighted_logistic_predict(&x, &y, &x, &weights).unwrap();
+        let scaled = Vector::from_ndarray(weights.as_ndarray() * 3.);
+        let q = super::fit_weighted_logistic_predict(&x, &y, &x, &scaled).unwrap();
+        assert!(p
+            .as_ndarray()
+            .iter()
+            .zip(q.as_ndarray())
+            .all(|(a, b)| (a - b).abs() < 1e-7));
+        let bad = Vector::from_ndarray(ndarray::arr1(&[1., 2., 1., -1., 2., 1.]));
+        assert!(super::fit_weighted_logistic_predict(&x, &y, &x, &bad).is_err());
+        let duplicate = Matrix::from_ndarray(
+            ndarray::concatenate(
+                ndarray::Axis(1),
+                &[x.as_ndarray().view(), x.as_ndarray().view()],
+            )
+            .unwrap(),
+        );
+        assert!(
+            super::fit_weighted_logistic_predict(&duplicate, &y, &duplicate, &weights).is_err()
+        );
+        let separated = Vector::from_ndarray(ndarray::arr1(&[0., 0., 0., 1., 1., 1.]));
+        assert!(super::fit_weighted_logistic_predict(&x, &separated, &x, &weights).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires SLIDE_RSCRIPT pointing to R for the explicit weighted-GLM reference"]
+    fn weighted_logistic_matches_r_glm() {
+        let x = Matrix::from_ndarray(ndarray::arr2(&[[-2.], [-1.], [0.], [1.], [2.], [3.]]));
+        let y = Vector::from_ndarray(ndarray::arr1(&[0., 1., 0., 1., 0., 1.]));
+        let w = Vector::from_ndarray(ndarray::arr1(&[1., 2., 1., 1., 2., 1.]));
+        let got = super::fit_weighted_logistic_predict(&x, &y, &x, &w).unwrap();
+        let output=std::process::Command::new(std::env::var("SLIDE_RSCRIPT").unwrap())
+            .args(["--vanilla","-e", "d<-data.frame(x=-2:3,y=c(0,1,0,1,0,1),w=c(1,2,1,1,2,1)); m<-glm(y~x,data=d,family=binomial(),weights=w); stopifnot(m$converged,!m$boundary); cat(paste(format(predict(m,type='response'),digits=17),collapse=','))"])
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected: Vec<f64> = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .split(',')
+            .map(|x| x.parse().unwrap())
+            .collect();
+        assert_eq!(expected.len(), got.len());
+        for (a, b) in got.as_ndarray().iter().zip(expected) {
+            assert!((a - b).abs() < 1e-8, "{a} vs {b}");
+        }
+    }
 
     #[test]
     fn build_selected_feature_matrix_appends_interaction_columns() {

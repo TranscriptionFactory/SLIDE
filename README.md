@@ -162,6 +162,9 @@ pixi run --locked -e rust ./target/release/slide run --tui --config rust-quick.y
 pixi run --locked -e rust ./target/release/slide view --config rust-quick.yaml --checkpoint out/checkpoint.json
 ```
 
+For a fixed R-compatible full-data fit with prior sample weights, use
+[`slide fit`](docs/native-full-fit.md). This is separate from the legacy optimizer.
+
 For repeated CV on saved factors without refitting LOVE, use [`slide cv`](docs/native-cv.md).
 It runs observed and permuted-label branches and reports separate pooled-repeat summaries.
 

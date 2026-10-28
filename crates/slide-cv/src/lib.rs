@@ -151,13 +151,8 @@ pub fn run_final_slide_cv(
     let z = standardize(z)?;
     let splits = repeated_kfold_splits(y, config)?;
     let mut config = config.clone();
-    config.knockoff.family = GlmnetFamily::Gaussian;
-    config.knockoff.statistic = KnockoffStatistic::GlmnetLambdasMax;
-    config.knockoff.knockoff_offset = 0;
-    config.knockoff.nlambda = 500;
-    config.knockoff.slide_selection = true;
-    config.knockoff.f_size = Some(calc_default_fsize(z.nrows(), z.ncols()));
-    config.knockoff.r_compatible = true;
+    config.knockoff =
+        method4_knockoff_config(&config.knockoff, calc_default_fsize(z.nrows(), z.ncols()));
     config.knockoff.parallel = false; // Folds share one Rayon pool, not per-fit process clusters.
     let outputs = splits
         .par_iter()
@@ -280,16 +275,58 @@ pub fn repeated_kfold_splits(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn evaluate_fold(
+/// R method-4 design, including selected Gaussian submodel predictions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Method4Design {
+    pub train: Matrix,
+    pub valid: Matrix,
+    pub marginals: Vec<usize>,
+    pub interactions: Vec<(usize, usize)>,
+    pub upsilon_lfs: Vec<usize>,
+    pub used_random_fallback: bool,
+}
+
+/// Full-data selection keeps empty fits empty; random fallback belongs only to CV.
+pub fn fit_full_data(
+    z: &Matrix,
+    y: &Vector,
+    config: &KnockoffConfig,
+    include_interactions: bool,
+) -> Result<Method4Design, CvError> {
+    let mut config = FinalCvConfig {
+        include_interactions,
+        repeats: 1,
+        folds: 2,
+        base_seed: config.base_seed,
+        knockoff: config.clone(),
+        ..FinalCvConfig::default()
+    };
+    validate_cv_inputs(z, y, &config)?;
+    config.knockoff = method4_knockoff_config(&config.knockoff, 20.min(z.ncols()));
+    let mut rng = StdRng::seed_from_u64(config.base_seed);
+    method4_design(z, y, z, &config, &mut rng, false)
+}
+
+pub fn method4_knockoff_config(config: &KnockoffConfig, f_size: usize) -> KnockoffConfig {
+    let mut config = config.clone();
+    config.family = GlmnetFamily::Gaussian;
+    config.statistic = KnockoffStatistic::GlmnetLambdasMax;
+    config.knockoff_offset = 0;
+    config.nlambda = 500;
+    config.slide_selection = true;
+    config.f_size = Some(f_size);
+    config.r_compatible = true;
+    config
+}
+
+fn method4_design(
     train: &Matrix,
     y: &Vector,
     valid: &Matrix,
-    valid_y: &Array1<Scalar>,
     config: &FinalCvConfig,
-    split: &FoldSplit,
-    method: FinalCvMethod,
     rng: &mut StdRng,
-) -> Result<(FinalCvFoldResult, Vec<FinalCvPrediction>), CvError> {
+    allow_fallback: bool,
+) -> Result<Method4Design, CvError> {
     let mut ko = config.knockoff.clone();
     let marginals = loop {
         let selected = select(train, y, &ko, rng)?;
@@ -298,23 +335,24 @@ fn evaluate_fold(
         }
         increase_spec(&mut ko)?;
     };
-    let fallback = marginals.is_empty();
+    let fallback = allow_fallback && marginals.is_empty();
     let marginals = if fallback {
         vec![rng.gen_range(0..train.ncols())]
     } else {
         marginals
     };
-    let mut fold = FinalCvFoldResult {
-        repeat: split.repeat,
-        fold: split.fold,
-        train_n: train.nrows(),
-        valid_n: valid.nrows(),
-        selected_marginal_lfs: marginals.clone(),
-        selected_interactions: Vec::new(),
-        metric_value: None,
-        selected_upsilon_lfs: Vec::new(),
-        used_random_fallback: fallback,
-    };
+    if marginals.is_empty() {
+        return Ok(Method4Design {
+            train: Matrix::from_ndarray(Array2::zeros((train.nrows(), 0))),
+            valid: Matrix::from_ndarray(Array2::zeros((valid.nrows(), 0))),
+            marginals,
+            interactions: Vec::new(),
+            upsilon_lfs: Vec::new(),
+            used_random_fallback: false,
+        });
+    }
+    let mut interactions = Vec::new();
+    let mut upsilon_lfs = Vec::new();
     let (mut train_features, mut valid_features) = (
         build_selected_feature_matrix(train, &marginals, &[])?,
         build_selected_feature_matrix(valid, &marginals, &[])?,
@@ -322,7 +360,7 @@ fn evaluate_fold(
     if config.include_interactions && marginals.len() < train.nrows() {
         let (pairs, ups_train, ups_valid) =
             interaction_submodels(train, y, valid, &marginals, &config.knockoff, rng)?;
-        fold.selected_interactions = pairs;
+        interactions = pairs;
         let selected = if marginals.len() == 1 {
             vec![0]
         } else {
@@ -334,9 +372,43 @@ fn evaluate_fold(
                 Matrix::from_ndarray(ups_train.as_ndarray().select(Axis(1), &selected));
             valid_features =
                 Matrix::from_ndarray(ups_valid.as_ndarray().select(Axis(1), &selected));
-            fold.selected_upsilon_lfs = selected.iter().map(|&i| marginals[i]).collect();
+            upsilon_lfs = selected.iter().map(|&i| marginals[i]).collect();
         }
     }
+    Ok(Method4Design {
+        train: train_features,
+        valid: valid_features,
+        marginals,
+        interactions,
+        upsilon_lfs,
+        used_random_fallback: fallback,
+    })
+}
+
+fn evaluate_fold(
+    train: &Matrix,
+    y: &Vector,
+    valid: &Matrix,
+    valid_y: &Array1<Scalar>,
+    config: &FinalCvConfig,
+    split: &FoldSplit,
+    method: FinalCvMethod,
+    rng: &mut StdRng,
+) -> Result<(FinalCvFoldResult, Vec<FinalCvPrediction>), CvError> {
+    let design = method4_design(train, y, valid, config, rng, true)?;
+    let train_features = design.train;
+    let valid_features = design.valid;
+    let mut fold = FinalCvFoldResult {
+        repeat: split.repeat,
+        fold: split.fold,
+        train_n: train.nrows(),
+        valid_n: valid.nrows(),
+        selected_marginal_lfs: design.marginals,
+        selected_interactions: design.interactions,
+        metric_value: None,
+        selected_upsilon_lfs: design.upsilon_lfs,
+        used_random_fallback: design.used_random_fallback,
+    };
     let predictions = gaussian_predict(&train_features, y, &valid_features)?;
     fold.metric_value = score(valid_y, predictions.as_ndarray(), config.response_type).ok();
     let rows = split
@@ -761,6 +833,21 @@ mod tests {
     }
 
     #[test]
+    fn full_fit_and_cv_normalize_method4_without_changing_rng_seed() {
+        let original = super::KnockoffConfig {
+            base_seed: 123,
+            ..super::KnockoffConfig::default()
+        };
+        let config = super::method4_knockoff_config(&original, 20);
+        assert_eq!(config.f_size, Some(20));
+        assert_eq!(config.nlambda, 500);
+        assert!(config.r_compatible && config.slide_selection);
+        assert_eq!(config.base_seed, 123);
+        assert_eq!(config.family, GlmnetFamily::Gaussian);
+        assert_eq!(config.knockoff_offset, 0);
+    }
+
+    #[test]
     fn repeated_kfold_splits_are_deterministic_and_stratified_for_binary() {
         let y = Vector::from_ndarray(arr1(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
         let config = FinalCvConfig {
@@ -1153,6 +1240,11 @@ mod tests {
         assert_eq!(fold.selected_marginal_lfs.len(), 1);
         assert_eq!(predictions.len(), 2);
         assert!(predictions.iter().all(|p| p.y_pred.is_finite()));
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(42);
+        let full = super::method4_design(&train, &y, &train, &config, &mut rng, false).unwrap();
+        assert!(!full.used_random_fallback);
+        assert!(full.marginals.is_empty());
+        assert_eq!(full.train.ncols(), 0);
     }
     #[test]
     fn leave_one_out_does_not_depend_on_strata_collision_luck() {
