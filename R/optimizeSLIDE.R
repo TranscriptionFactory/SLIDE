@@ -167,7 +167,19 @@ optimizeSLIDE <- function(input_params, sink_file = F){
       z_matrix <- calcZMatrix(x_std, all_latent_factors, x_path = NULL, lf_path = NULL, loop_outpath)
 
       # run SLIDE
-      SLIDE_res <- runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts,fdr=fdr)
+      SLIDE_res <- tryCatch(
+        runSLIDE(y, y_path = NULL, z_path = NULL, z_matrix, all_latent_factors, lf_path = NULL, niter = SLIDE_iter, spec = spec, do_interacts=do_interacts,fdr=fdr),
+        error = function(e) {
+          warning("SLIDE failed for delta=", d, ", lambda=", l, ": ", e$message,
+                  ". Skipping this combination.", immediate. = TRUE)
+          NULL
+        }
+      )
+      if (is.null(SLIDE_res)) {
+        summary_table[cnt, ] = c(d, l, NA, all_latent_factors$K, NA, NA, NA)
+        cnt = cnt + 1
+        next
+      }
       saveRDS(SLIDE_res, paste0(loop_outpath, 'SLIDE_LFs.rds'))
 
       if(length(SLIDE_res$SLIDE_res$marginal_vars) != 0) {
