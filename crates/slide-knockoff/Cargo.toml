@@ -16,6 +16,7 @@ unsafe_code = "forbid"
 path = "src/lib.rs"
 
 [dependencies]
+log = "0.4"
 nalgebra.workspace = true
 ndarray.workspace = true
 rand.workspace = true

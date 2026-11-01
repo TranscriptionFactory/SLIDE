@@ -2219,6 +2219,7 @@ dependencies = [
 name = "slide-cv"
 version = "1.0.0"
 dependencies = [
+ "log",
  "ndarray",
  "rand",
  "rayon",
@@ -2266,6 +2267,7 @@ dependencies = [
 name = "slide-knockoff"
 version = "1.0.0"
 dependencies = [
+ "log",
  "nalgebra",
  "ndarray",
  "rand",

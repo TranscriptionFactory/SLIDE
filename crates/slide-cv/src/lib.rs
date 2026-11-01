@@ -15,6 +15,8 @@ use slide_score::{
 };
 use slide_types::{Matrix, Scalar, Vector};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -167,6 +169,13 @@ pub fn run_final_slide_cv(
     config.knockoff =
         method4_knockoff_config(&config.knockoff, calc_default_fsize(z.nrows(), z.ncols()));
     config.knockoff.parallel = false; // Folds share one Rayon pool, not per-fit process clusters.
+    let started = Instant::now();
+    let completed = AtomicUsize::new(0);
+    log::info!(
+        "CV started: rows={} factors={} repeats={} folds={} workers={} draws={} interactions={}",
+        z.nrows(), z.ncols(), config.repeats, config.folds,
+        rayon::current_num_threads(), config.knockoff.niter, config.include_interactions
+    );
     let mut outputs = Vec::with_capacity(splits.len());
     #[cfg(test)]
     let active = std::sync::atomic::AtomicUsize::new(0);
@@ -214,6 +223,12 @@ pub fn run_final_slide_cv(
                     FinalCvMethod::SlideY,
                     &mut rng,
                 )?;
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                log::info!(
+                    "CV completed fold pairs={}/{} repeat={} fold={} elapsed_s={:.1}",
+                    done, splits.len(), split.repeat + 1, split.fold + 1,
+                    started.elapsed().as_secs_f64()
+                );
                 #[cfg(test)]
                 active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 Ok((observed, null))
@@ -352,6 +367,7 @@ fn method4_design(
     allow_fallback: bool,
 ) -> Result<Method4Design, CvError> {
     let mut ko = config.knockoff.clone();
+    log::info!("SLIDE selection stage=marginal factors={}", train.ncols());
     let marginals = loop {
         let selected = select(train, y, &ko, rng)?;
         if selected.len() < train.nrows() {
@@ -360,6 +376,7 @@ fn method4_design(
         increase_spec(&mut ko)?;
     };
     let fallback = allow_fallback && marginals.is_empty();
+    log::info!("SLIDE marginal selected={} random_fallback={}", marginals.len(), fallback);
     let marginals = if fallback {
         vec![rng.gen_range(0..train.ncols())]
     } else {
@@ -388,6 +405,7 @@ fn method4_design(
         let selected = if marginals.len() == 1 {
             vec![0]
         } else {
+            log::info!("SLIDE selection stage=upsilon candidates={}", marginals.len());
             select(&ups_train, y, &config.knockoff, rng)?
         };
         // testUpsilon returns NULL on empty selection: runSLIDEBeta then uses marginals.
@@ -419,6 +437,11 @@ fn evaluate_fold(
     method: FinalCvMethod,
     rng: &mut StdRng,
 ) -> Result<(FinalCvFoldResult, Vec<FinalCvPrediction>), CvError> {
+    let started = Instant::now();
+    log::info!(
+        "CV fold started: repeat={} fold={} method={:?} train_n={} valid_n={}",
+        split.repeat + 1, split.fold + 1, method, train.nrows(), valid.nrows()
+    );
     let design = method4_design(train, y, valid, config, rng, true)?;
     let train_features = design.train;
     let valid_features = design.valid;
@@ -448,6 +471,12 @@ fn evaluate_fold(
             method,
         })
         .collect();
+    log::info!(
+        "CV fold completed: repeat={} fold={} method={:?} marginals={} interactions={} elapsed_s={:.1}",
+        split.repeat + 1, split.fold + 1, method,
+        fold.selected_marginal_lfs.len(), fold.selected_interactions.len(),
+        started.elapsed().as_secs_f64()
+    );
     Ok((fold, rows))
 }
 
@@ -494,6 +523,7 @@ fn increase_spec(config: &mut KnockoffConfig) -> Result<(), CvError> {
         return Err(CvError::ModelSizeLimit);
     }
     config.spec = (config.spec + 0.1).min(1.0);
+    log::info!("SLIDE selection retry: model too large; spec={:.2}", config.spec);
     Ok(())
 }
 
@@ -516,6 +546,10 @@ fn interaction_submodels(
         let mut valid_ups = Array2::zeros((valid.nrows(), marginals.len()));
         let mut oversized = false;
         for (i, &marginal) in marginals.iter().enumerate() {
+            log::info!(
+                "SLIDE selection stage=interaction marginal=Z{} ({}/{}) candidates={}",
+                marginal + 1, i + 1, marginals.len(), train.ncols() - 1
+            );
             let marginal_features = build_selected_feature_matrix(train, &[marginal], &[])?;
             let fitted = gaussian_predict(&marginal_features, y, &marginal_features)?;
             let residual = Vector::from_ndarray(y.as_ndarray() - fitted.as_ndarray());
