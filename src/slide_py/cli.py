@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 
 from . import __version__
+from .tools import normalize_config_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def load_config(config_path, overrides=None):
         if params.get(key) is not None and not isinstance(params[key], list):
             params[key] = [params[key]]
 
-    return params
+    return normalize_config_aliases(params)
 
 
 def run(args):

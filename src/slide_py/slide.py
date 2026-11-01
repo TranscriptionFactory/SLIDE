@@ -5,6 +5,7 @@ import datetime
 import warnings
 from glob import glob
 import pickle
+import json
 from tqdm import tqdm
 from itertools import product
 from collections import defaultdict
@@ -20,6 +21,7 @@ from .knockoffs import Knockoffs
 
 from .plotting import Plotter
 from .score import SLIDE_Estimator
+from .sample_cv import sample_cv
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +85,16 @@ class SLIDE:
 
             interact_path = os.path.join(out_iter, "sig_interacts.txt")
             if os.path.exists(interact_path):
-                self.sig_interacts = (
-                    np.loadtxt(interact_path, dtype=str).reshape(-1).tolist()
-                )
+                labels = np.loadtxt(interact_path, dtype=str).reshape(-1).tolist()
+                pairs = [tuple(int(term[1:]) for term in label.split('.')) for label in labels]
+                if any(len(pair) != 2 for pair in pairs):
+                    raise ValueError(f"{interact_path}: expected Z<index>.Z<index> interaction labels")
+                self.interaction_pairs = (np.asarray(pairs, dtype=int).T if pairs
+                                          else np.empty((2, 0), dtype=int))
+                self.sig_interacts = [f'Z{right}' for _, right in pairs]
             else:
                 self.sig_interacts = []
+                self.interaction_pairs = np.empty((2, 0), dtype=int)
 
             self.sig_LFs = (
                 np.loadtxt(os.path.join(out_iter, "sig_LFs.txt"), dtype=str)
@@ -138,7 +145,7 @@ class SLIDE:
 
         return selected
 
-    def save_params(self, outpath, scores):
+    def save_params(self, outpath, scores, screening=None):
         """
         Save the parameters and scores.
         """
@@ -159,6 +166,14 @@ class SLIDE:
                 os.path.join(outpath, "ControlPerformance.csv"), index=False)
             full_random = np.mean([x for x in scores["full_random"] if x is not None])
 
+        if screening is not None:
+            pd.DataFrame(screening['predictions'], columns=[
+                'iteration', 'row_index', 'sample_id', 'y_true', 'y_pred']).to_csv(
+                    os.path.join(outpath, 'sampleCV_predictions.csv'), index=False)
+            with open(os.path.join(outpath, 'sampleCV_model.json'), 'w') as model_file:
+                json.dump({key: value for key, value in screening.items()
+                           if key != 'predictions'}, model_file, indent=2, allow_nan=False)
+
         with open(os.path.join(outpath, "scores.txt"), "w") as f:
             f.write(
                 f"Run completed: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -166,13 +181,19 @@ class SLIDE:
             f.write("\n#########################\n\n")
 
             f.write(f"True Scores: {true_scores}\n")
+            metric = screening['metric'] if screening is not None else None
+            f.write(f"sampleCV Performance: {metric if metric is not None else 'NA'}\n")
+            f.write("sampleCV Provenance: pooled_holdout_last_split_ols\n")
+            f.write(f"sampleCV Status: {screening['status'] if screening else 'not_run'}\n")
+            f.write(f"Feature block size: {self.calc_default_fsize(self.latent_factors.shape[1])}\n")
             f.write(f"Partial Random: {partial_random}\n")
             f.write(f"Full Random: {full_random}\n")
             f.write("\n#########################\n\n")
 
             f.write(f"Number of latent factors: {self.latent_factors.shape[1]}\n")
-            f.write(f"Number of marginals: {len(self.sig_LFs)}\n")
-            f.write(f"Number of interactions: {len(self.sig_interacts)}\n")
+            failed = screening is not None and screening['status'] == 'selection_failed'
+            f.write(f"Number of marginals: {'NA' if failed else len(self.sig_LFs)}\n")
+            f.write(f"Number of interactions: {'NA' if failed else len(self.sig_interacts)}\n")
 
         with open(os.path.join(outpath, "run_params.txt"), "w") as f:
             f.write(
@@ -186,11 +207,13 @@ class SLIDE:
             f.write(output.getvalue())
 
     @staticmethod
-    def create_summary_table(outpath):
+    def create_summary_table(outpath, candidate_dirs=None):
         """
         Create a summary table of the results.
         """
-        outs = glob(os.path.join(outpath, "*_out/scores.txt"))
+        outs = (glob(os.path.join(outpath, "*_out/scores.txt")) if candidate_dirs is None
+                else [os.path.join(path, 'scores.txt') for path in candidate_dirs
+                      if os.path.exists(os.path.join(path, 'scores.txt'))])
         df = pd.DataFrame(
             columns=[
                 "delta",
@@ -199,6 +222,10 @@ class SLIDE:
                 "num_of_Sig_LFs",
                 "num_of_Interactors",
                 "Control_Performance",
+                "sampleCV_Performance",
+                "sampleCV_Provenance",
+                "sampleCV_Status",
+                "f_size",
             ]
         )
 
@@ -207,6 +234,7 @@ class SLIDE:
             delta_ = basename.split("_")[0]
             lambda_ = basename.split("_")[1]
 
+            sample_metric, provenance, status, f_size = 'NA', 'legacy_control_only', 'not_run', 'NA'
             with open(out, "r") as f:
                 lines = f.readlines()
                 for line in lines:
@@ -216,6 +244,14 @@ class SLIDE:
                         num_interactions = line.split(": ")[1].strip()
                     if "marginals" in line:
                         num_marginals = line.split(": ")[1].strip()
+                    if line.startswith('sampleCV Performance:'):
+                        sample_metric = line.split(': ', 1)[1].strip()
+                    if line.startswith('sampleCV Provenance:'):
+                        provenance = line.split(': ', 1)[1].strip()
+                    if line.startswith('sampleCV Status:'):
+                        status = line.split(': ', 1)[1].strip()
+                    if line.startswith('Feature block size:'):
+                        f_size = line.split(': ', 1)[1].strip()
                     if "True Scores" in line:
                         true_scores = line.split(": ")[1].strip()
 
@@ -230,6 +266,10 @@ class SLIDE:
                             "num_of_Sig_LFs": [num_marginals],
                             "num_of_Interactors": [num_interactions],
                             "Control_Performance": [true_scores],
+                            "sampleCV_Performance": [sample_metric],
+                            "sampleCV_Provenance": [provenance],
+                            "sampleCV_Status": [status],
+                            "f_size": [f_size],
                         }
                     ),
                 ],
@@ -241,7 +281,7 @@ class SLIDE:
         df["Control_Performance"] = pd.to_numeric(
             df["Control_Performance"].astype(str), errors="coerce"
         ).round(3)
-        df.sort_values(by="Control_Performance", inplace=True)
+        df['sampleCV_Performance'] = pd.to_numeric(df['sampleCV_Performance'], errors='coerce')
 
         df.to_csv(os.path.join(outpath, "summary_table.csv"), index=False)
 
@@ -778,6 +818,8 @@ class OptimizeSLIDE(SLIDE):
         if verbose:
             self.show_params()
 
+        candidate_dirs = []
+        self.selected_candidate = None
         for delta_iter, lambda_iter in product(
             self.input_params["delta"], self.input_params["lambda"]
         ):
@@ -785,17 +827,18 @@ class OptimizeSLIDE(SLIDE):
                 self.input_params["out_path"], f"{delta_iter}_{lambda_iter}_out"
             )
 
+            candidate_dirs.append(out_iter)
             if rerun and os.path.exists(out_iter):
                 self.load_state(out_iter)
 
                 try:
-                    self.data.Y = self.adata.Y.loc[self.latent_factors.index]
+                    self.data.Y = self.data.Y.loc[self.latent_factors.index]
                 except:
                     logger.info("input data obs do not match previous results")
                     continue
 
                 try:
-                    self.data.X = self.data.X[self.A.columns]
+                    self.data.X = self.data.X.loc[self.latent_factors.index, self.A.index]
                 except:
                     logger.info("input data vars do not match previous results")
                     continue
@@ -841,24 +884,31 @@ class OptimizeSLIDE(SLIDE):
                 if verbose:
                     logger.info("\nRunning SLIDE knockoffs...")
 
-                self.run_SLIDE(
-                    latent_factors=self.latent_factors,
-                    niter=self.input_params["niter"],
-                    spec=self.input_params["spec"],
-                    fdr=self.input_params["fdr"],
-                    n_workers=self.input_params["n_workers"],
-                    verbose=verbose,
-                    outpath=out_iter,
-                    do_interacts=self.input_params["do_interacts"],
-                    knockoff_backend=self.input_params.get("knockoff_backend", "r"),
-                    knockoff_method=self.input_params.get("knockoff_method", "asdp"),
-                    knockoff_shrink=self.input_params.get("knockoff_shrink", False),
-                    knockoff_offset=self.input_params.get("knockoff_offset", 0),
-                    knockoff_base_seed=self.input_params.get("knockoff_base_seed"),
-                    fstat=self.input_params.get("fstat", "glmnet_lambdasmax"),
-                    slide_selection=self.input_params.get("slide_selection", True),
-                    sdp_solver=self.input_params.get("sdp_solver", "dsdp"),
-                )
+                try:
+                    self.run_SLIDE(
+                        latent_factors=self.latent_factors,
+                        niter=self.input_params["niter"],
+                        spec=self.input_params["spec"],
+                        fdr=self.input_params["fdr"],
+                        n_workers=self.input_params["n_workers"],
+                        verbose=verbose,
+                        outpath=out_iter,
+                        do_interacts=self.input_params["do_interacts"],
+                        knockoff_backend=self.input_params.get("knockoff_backend", "r"),
+                        knockoff_method=self.input_params.get("knockoff_method", "asdp"),
+                        knockoff_shrink=self.input_params.get("knockoff_shrink", False),
+                        knockoff_offset=self.input_params.get("knockoff_offset", 0),
+                        knockoff_base_seed=self.input_params.get("knockoff_base_seed"),
+                        fstat=self.input_params.get("fstat", "glmnet_lambdasmax"),
+                        slide_selection=self.input_params.get("slide_selection", True),
+                        sdp_solver=self.input_params.get("sdp_solver", "dsdp"),
+                    )
+                except Exception as e:
+                    logger.error("Error running SLIDE: %s", e)
+                    screening = dict(status='selection_failed', metric=None,
+                                     predictions=[], guard='selection_failed')
+                    self.save_params(out_iter, None, screening)
+                    continue
 
                 if verbose:
                     logger.info("\nSLIDE complete.")
@@ -927,10 +977,32 @@ class OptimizeSLIDE(SLIDE):
                 scores = None
                 self.sig_interacts = []
 
-            self.save_params(out_iter, scores)
+            base_seed = self.input_params.get('knockoff_base_seed')
+            screening_seed = (None if base_seed is None else int(
+                np.random.SeedSequence([base_seed, 0x534356]).generate_state(1)[0]))
+            screening = sample_cv(
+                self.latent_factors, self.data.Y, self.marginal_idxs,
+                self.interaction_pairs if self.input_params['do_interacts'] else None,
+                condition=self.input_params['eval_type'],
+                k=self.input_params['sample_cv_k'],
+                iterations=self.input_params['sample_cv_iterations'],
+                seed=screening_seed, sample_ids=self.latent_factors.index)
+            self.save_params(out_iter, scores, screening)
+            metric = screening['metric']
+            if (self.input_params['auto_select'] and metric is not None and np.isfinite(metric)
+                    and (self.selected_candidate is None
+                         or metric > self.selected_candidate['sampleCV_Performance'])):
+                self.selected_candidate = dict(
+                    delta=delta_iter, **{'lambda': lambda_iter},
+                    sampleCV_Performance=metric, score_provenance='pooled_holdout',
+                    candidate_dir=out_iter)
 
             if verbose:
                 logger.info(f"\nCompleted {delta_iter}_{lambda_iter}\n")
                 logger.info("##################\n")
 
-        self.create_summary_table(self.input_params["out_path"])
+        self.create_summary_table(self.input_params["out_path"], candidate_dirs)
+        with open(os.path.join(self.input_params['out_path'], 'selected_candidate.json'), 'w') as f:
+            json.dump(dict(status=('selected' if self.selected_candidate else 'no_scorable_candidate')
+                           if self.input_params['auto_select'] else 'manual',
+                           candidate=self.selected_candidate), f, indent=2, allow_nan=False)

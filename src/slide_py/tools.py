@@ -7,6 +7,20 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+def normalize_config_aliases(input_params):
+    """Resolve R parameter names without silently overriding Python values."""
+    params = dict(input_params)
+    for alias, key in (('SLIDE_iter', 'niter'),
+                       ('sampleCV_iter', 'sample_cv_iterations'),
+                       ('sampleCV_K', 'sample_cv_k')):
+        value = params.pop(alias, None)
+        if value is not None:
+            if params.get(key) is not None and params[key] != value:
+                raise ValueError(f"Conflicting config aliases: {alias} and {key}")
+            params[key] = value
+    return params
+
+
 def init_data(input_params, x=None, y=None):
     """
     Initialize the data object and set default parameters.
@@ -20,7 +34,7 @@ def init_data(input_params, x=None, y=None):
     """
 
     data = EasyDict()
-    input_params = defaultdict(lambda: None, input_params)
+    input_params = defaultdict(lambda: None, normalize_config_aliases(input_params))
 
     if input_params['x_path'] is None and x is None:
         raise ValueError("x_path is not provided")
@@ -50,10 +64,10 @@ def init_data(input_params, x=None, y=None):
         input_params['pure_homo'] = True
 
     if input_params['spec'] is None:
-        input_params['spec'] = 0.2
+        input_params['spec'] = 0.1
 
     if input_params['niter'] is None:
-        input_params['niter'] = 100
+        input_params['niter'] = 1000
     
     if input_params['SLIDE_top_feats'] is None:
         input_params['SLIDE_top_feats'] = 20
@@ -92,6 +106,21 @@ def init_data(input_params, x=None, y=None):
     # Flip Y encoding to match R's convention (Control=1, Case=0)
     if input_params['y_flip'] is True:
         data.Y = 1 - data.Y
+
+    if input_params['auto_select'] is None:
+        input_params['auto_select'] = False
+    if not isinstance(input_params['auto_select'], bool):
+        raise ValueError('auto_select must be a boolean')
+    if input_params['sample_cv_iterations'] is None:
+        input_params['sample_cv_iterations'] = 500
+    if input_params['sample_cv_k'] is None:
+        input_params['sample_cv_k'] = 4
+    if len(data.X) <= 20:
+        input_params['sample_cv_k'] = len(data.X)
+    if input_params['eval_type'] is None:
+        input_params['eval_type'] = 'auc' if np.unique(data.Y).size <= 2 else 'corr'
+    if input_params['eval_type'] not in ('auc', 'corr'):
+        raise ValueError('eval_type must be auc or corr')
 
     return data, input_params
 

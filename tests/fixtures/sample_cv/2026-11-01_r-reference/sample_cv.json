@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "binary_auc_reversed",
+      "condition": "auc",
+      "y": [0, 0, 0, 1, 1, 1, 1, 0],
+      "z": [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+        [5, 6],
+        [6, 7],
+        [7, 8]
+      ],
+      "marginal_indices": [0],
+      "interaction_pairs": [],
+      "splits": [
+        {
+          "train_indices": [0, 1, 2, 3, 4, 5]
+        },
+        {
+          "train_indices": [0, 1, 2, 3, 4, 5]
+        }
+      ],
+      "expected": {
+        "metric": 0,
+        "predictions": [
+          {
+            "iteration": 0,
+            "row_index": 6,
+            "y_true": 1,
+            "y_pred": 1.4000000000000004
+          },
+          {
+            "iteration": 0,
+            "row_index": 7,
+            "y_true": 0,
+            "y_pred": 1.6571428571428575
+          },
+          {
+            "iteration": 1,
+            "row_index": 6,
+            "y_true": 1,
+            "y_pred": 1.4000000000000004
+          },
+          {
+            "iteration": 1,
+            "row_index": 7,
+            "y_true": 0,
+            "y_pred": 1.6571428571428575
+          }
+        ],
+        "last_coefficients": {
+          "(Intercept)": -0.14285714285714313,
+          "Z1": 0.25714285714285723
+        },
+        "last_rank": 2,
+        "last_aliased_terms": [],
+        "last_train_indices": [0, 1, 2, 3, 4, 5],
+        "term_order": ["(Intercept)", "Z1"],
+        "guard": "ok"
+      }
+    },
+    {
+      "name": "binary_auc_ties",
+      "condition": "auc",
+      "y": [0, 0, 0, 1, 1, 1, 1, 0],
+      "z": [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+        [5, 6],
+        [6, 7],
+        [6, 8]
+      ],
+      "marginal_indices": [0],
+      "interaction_pairs": [],
+      "splits": [
+        {
+          "train_indices": [0, 1, 2, 3, 4, 5]
+        },
+        {
+          "train_indices": [0, 1, 2, 3, 4, 5]
+        }
+      ],
+      "expected": {
+        "metric": 0.5,
+        "predictions": [
+          {
+            "iteration": 0,
+            "row_index": 6,
+            "y_true": 1,
+            "y_pred": 1.4000000000000004
+          },
+          {
+            "iteration": 0,
+            "row_index": 7,
+            "y_true": 0,
+            "y_pred": 1.4000000000000004
+          },
+          {
+            "iteration": 1,
+            "row_index": 6,
+            "y_true": 1,
+            "y_pred": 1.4000000000000004
+          },
+          {
+            "iteration": 1,
+            "row_index": 7,
+            "y_true": 0,
+            "y_pred": 1.4000000000000004
+          }
+        ],
+        "last_coefficients": {
+          "(Intercept)": -0.14285714285714313,
+          "Z1": 0.25714285714285723
+        },
+        "last_rank": 2,
+        "last_aliased_terms": [],
+        "last_train_indices": [0, 1, 2, 3, 4, 5],
+        "term_order": ["(Intercept)", "Z1"],
+        "guard": "ok"
+      }
+    },
+    {
+      "name": "continuous_spearman_raw_interaction",
+      "condition": "corr",
+      "y": [1, 2, 1, 4, 3, 5, 4, 8],
+      "z": [
+        [-2, 3],
+        [-1, 1],
+        [0, 4],
+        [1, 2],
+        [2, 5],
+        [3, 0],
+        [4, 6],
+        [5, 7]
+      ],
+      "marginal_indices": [0, 1],
+      "interaction_pairs": [
+        [0, 1]
+      ],
+      "splits": [
+        {
+          "train_indices": [0, 1, 2, 4, 5, 6]
+        },
+        {
+          "train_indices": [0, 2, 3, 4, 6, 7]
+        }
+      ],
+      "expected": {
+        "metric": -0.40000000000000002,
+        "predictions": [
+          {
+            "iteration": 0,
+            "row_index": 3,
+            "y_true": 4,
+            "y_pred": 3.0374961012191335
+          },
+          {
+            "iteration": 0,
+            "row_index": 7,
+            "y_true": 8,
+            "y_pred": 4.6053620102792205
+          },
+          {
+            "iteration": 1,
+            "row_index": 1,
+            "y_true": 2,
+            "y_pred": 5.1904988123515485
+          },
+          {
+            "iteration": 1,
+            "row_index": 5,
+            "y_true": 5,
+            "y_pred": 4.7111638954869335
+          }
+        ],
+        "last_coefficients": {
+          "(Intercept)": 6.3565320665083176,
+          "Z1": -0.54845605700712807,
+          "Z2": -1.3380047505938248,
+          "Z1.Z2": 0.37648456057007168
+        },
+        "last_rank": 4,
+        "last_aliased_terms": [],
+        "last_train_indices": [0, 2, 3, 4, 6, 7],
+        "term_order": ["(Intercept)", "Z1", "Z2", "Z1.Z2"],
+        "guard": "ok"
+      }
+    },
+    {
+      "name": "constant_response_missing_metric",
+      "condition": "corr",
+      "y": [2, 2, 2, 2, 2, 2, 2, 2],
+      "z": [
+        [0, 0],
+        [1, 1],
+        [2, 4],
+        [3, 9],
+        [4, 16],
+        [5, 25],
+        [6, 36],
+        [7, 49]
+      ],
+      "marginal_indices": [0],
+      "interaction_pairs": [],
+      "splits": [
+        {
+          "train_indices": [0, 1, 2, 4, 5, 6]
+        },
+        {
+          "train_indices": [0, 2, 3, 4, 6, 7]
+        }
+      ],
+      "expected": {
+        "metric": null,
+        "predictions": [
+          {
+            "iteration": 0,
+            "row_index": 3,
+            "y_true": 2,
+            "y_pred": 2.0000000000000004
+          },
+          {
+            "iteration": 0,
+            "row_index": 7,
+            "y_true": 2,
+            "y_pred": 2
+          },
+          {
+            "iteration": 1,
+            "row_index": 1,
+            "y_true": 2,
+            "y_pred": 2.0000000000000009
+          },
+          {
+            "iteration": 1,
+            "row_index": 5,
+            "y_true": 2,
+            "y_pred": 2.0000000000000004
+          }
+        ],
+        "last_coefficients": {
+          "(Intercept)": 2.0000000000000009,
+          "Z1": -1.2440503207923815e-16
+        },
+        "last_rank": 2,
+        "last_aliased_terms": [],
+        "last_train_indices": [0, 2, 3, 4, 6, 7],
+        "term_order": ["(Intercept)", "Z1"],
+        "guard": "ok"
+      }
+    },
+    {
+      "name": "rank_deficient_heldout_nonestimable",
+      "condition": "corr",
+      "y": [0, 1, 2, 4, 3, 6, 5, 8],
+      "z": [
+        [0, 0, 0],
+        [1, 2, 2],
+        [2, 4, 4],
+        [3, 6, 6],
+        [4, 8, 8],
+        [5, 10.0000000001, 99],
+        [6, 12, 12],
+        [7, 14, 14]
+      ],
+      "marginal_indices": [0, 1, 2],
+      "interaction_pairs": [],
+      "splits": [
+        {
+          "train_indices": [0, 1, 2, 4, 5, 6]
+        },
+        {
+          "train_indices": [0, 1, 3, 4, 6, 7]
+        }
+      ],
+      "expected": {
+        "metric": 1,
+        "predictions": [
+          {
+            "iteration": 0,
+            "row_index": 3,
+            "y_true": 4,
+            "y_pred": 2.5172413793103448
+          },
+          {
+            "iteration": 0,
+            "row_index": 7,
+            "y_true": 8,
+            "y_pred": 5.6896551724137936
+          },
+          {
+            "iteration": 1,
+            "row_index": 2,
+            "y_true": 2,
+            "y_pred": 1.9999999999999996
+          },
+          {
+            "iteration": 1,
+            "row_index": 5,
+            "y_true": 6,
+            "y_pred": 5
+          }
+        ],
+        "last_coefficients": {
+          "(Intercept)": -7.7715611723760968e-16,
+          "Z1": 1.0000000000000002,
+          "Z2": null,
+          "Z3": null
+        },
+        "last_rank": 2,
+        "last_aliased_terms": [2, 3],
+        "last_train_indices": [0, 1, 3, 4, 6, 7],
+        "term_order": ["(Intercept)", "Z1", "Z2", "Z3"],
+        "guard": "ok"
+      }
+    },
+    {
+      "name": "endpoint_union_guard",
+      "condition": "corr",
+      "y": [1, 2, 3, 4],
+      "z": [
+        [1, 5, 9, 13],
+        [2, 6, 10, 14],
+        [3, 7, 11, 15],
+        [4, 8, 12, 16]
+      ],
+      "marginal_indices": [0, 1, 2, 3],
+      "interaction_pairs": [],
+      "splits": [],
+      "expected": {
+        "metric": null,
+        "predictions": [],
+        "last_coefficients": [],
+        "last_rank": null,
+        "last_aliased_terms": [],
+        "last_train_indices": [],
+        "term_order": [],
+        "guard": "model_too_large"
+      }
+    }
+  ]
+}

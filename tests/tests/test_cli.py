@@ -89,3 +89,21 @@ def test_run_end_to_end(tmp_path):
     assert (run_dir / "z_matrix.csv").exists()
     assert (run_dir / "run_params.txt").exists()
     assert (out / "summary_table.csv").exists()
+
+
+@pytest.mark.parametrize('body', [
+    'SLIDE_iter: 9\nniter: 10\n',
+    'sampleCV_iter: 3\nsample_cv_iterations: 4\n',
+    'sampleCV_K: 4\nsample_cv_k: 5\n',
+])
+def test_config_rejects_conflicting_aliases(tmp_path, body):
+    with pytest.raises(ValueError, match='Conflicting config aliases'):
+        load_config(_write_config(tmp_path, body))
+
+
+def test_config_accepts_r_aliases(tmp_path):
+    params = load_config(_write_config(tmp_path, 'SLIDE_iter: 9\nsampleCV_iter: 3\nsampleCV_K: 4\neval_type: corr\n'))
+    assert params['niter'] == 9
+    assert params['sample_cv_iterations'] == 3
+    assert params['sample_cv_k'] == 4
+    assert params['eval_type'] == 'corr'
