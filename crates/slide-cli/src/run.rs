@@ -56,9 +56,9 @@ pub struct CvArgs {
     pub seed: u64,
     #[arg(long)]
     pub threads: Option<usize>,
-    /// Bound simultaneous folds independently of --threads (1 minimizes memory).
-    #[arg(long, default_value_t = 1)]
-    pub max_active_folds: usize,
+    /// Override automatic CPU/memory-based fold concurrency (1 minimizes memory).
+    #[arg(long)]
+    pub max_active_folds: Option<usize>,
 }
 
 /// Fixed full-data method-4 fitting; does not search or rescore a candidate grid.
@@ -304,6 +304,93 @@ fn r_yaml_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Opti
     }
 }
 
+fn kib_field(text: &str, key: &str) -> Option<u64> {
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        (name == key).then_some(value)?.split_whitespace().next()?
+            .parse::<u64>().ok()?.checked_mul(1024)
+    })
+}
+
+fn cv_memory_headroom() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let resident = kib_field(&status, "VmRSS")?;
+    let mut headroom = std::fs::read_to_string("/proc/meminfo").ok()
+        .and_then(|text| kib_field(&text, "MemAvailable"));
+    let env_number = |key| std::env::var(key).ok()?.parse::<u64>().ok().filter(|n| *n > 0);
+    let slurm_mib = env_number("SLURM_MEM_PER_NODE").or_else(|| {
+        env_number("SLURM_MEM_PER_CPU")?.checked_mul(
+            env_number("SLURM_CPUS_ON_NODE").or_else(|| env_number("SLURM_CPUS_PER_TASK"))?,
+        )
+    });
+    let mut allocation_known = false;
+    if let Some(limit) = slurm_mib.and_then(|n| n.checked_mul(1024 * 1024)) {
+        let remaining = limit.saturating_sub(resident);
+        headroom = Some(headroom.map_or(remaining, |h| h.min(remaining)));
+        allocation_known = true;
+    }
+    let membership = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    if let Some(relative) = membership.lines().find_map(|line| line.strip_prefix("0::")) {
+        let root = std::path::Path::new("/sys/fs/cgroup");
+        let current = root.join(relative.trim_start_matches('/'));
+        // A parent cgroup can impose the limit even when the leaf says "max".
+        for directory in current.ancestors().take_while(|p| p.starts_with(root)) {
+            let limit = std::fs::read_to_string(directory.join("memory.max")).ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            if let Some(limit) = limit {
+                let used = std::fs::read_to_string(directory.join("memory.current")).ok()?
+                    .trim().parse::<u64>().ok()?;
+                let remaining = limit.saturating_sub(used);
+                headroom = Some(headroom.map_or(remaining, |h| h.min(remaining)));
+                allocation_known = true;
+            }
+        }
+    }
+    let in_slurm = std::env::var_os("SLURM_JOB_ID").is_some() || membership.contains("/job_");
+    if in_slurm && !allocation_known { None } else { headroom }
+}
+
+fn cv_memory_estimate(config: &FinalCvConfig, rows: usize, factors: usize) -> (u64, u64) {
+    let (n, p) = (rows as u64, factors as u64);
+    let np = n.saturating_mul(p);
+    let pp = p.saturating_mul(p);
+    let tasks = (config.repeats as u64).saturating_mul(config.folds as u64);
+    // Conservative sizing heuristic, not a certified peak bound; see native-cv.md.
+    let per_fold = (128_u64 * 1024 * 1024)
+        .saturating_add(128_u64.saturating_mul(np.saturating_add(pp)))
+        .saturating_add(8_u64.saturating_mul(config.knockoff.niter as u64)
+            .saturating_mul(p.saturating_add(3)));
+    let retained = np.saturating_mul(8)
+        .saturating_add(n.saturating_mul(tasks).saturating_mul(8))
+        .saturating_add(2_u64.saturating_mul(n).saturating_mul(config.repeats as u64)
+            .saturating_mul(std::mem::size_of::<slide_cv::FinalCvPrediction>() as u64))
+        .saturating_add(2_u64.saturating_mul(tasks).saturating_mul(pp)
+            .saturating_mul(std::mem::size_of::<(usize, usize)>() as u64));
+    (per_fold, retained)
+}
+
+fn automatic_cv_fold_limit(
+    config: &FinalCvConfig, rows: usize, factors: usize, workers: usize, headroom: Option<u64>,
+) -> Result<usize> {
+    let tasks = config.repeats.checked_mul(config.folds)
+        .filter(|n| *n > 0).context("CV repeats and folds must be positive and fit in usize")?;
+    anyhow::ensure!(workers > 0, "CV requires at least one available CPU");
+    let Some(headroom) = headroom else {
+        log::warn!("CV auto concurrency: memory allowance unknown; using 1 active fold. Set --max-active-folds only after sizing memory.");
+        return Ok(1);
+    };
+    let (per_fold, retained) = cv_memory_estimate(config, rows, factors);
+    let usable = headroom - headroom / 4;
+    let memory_folds = usable.saturating_sub(retained) / per_fold;
+    anyhow::ensure!(memory_folds > 0,
+        "CV auto concurrency cannot fit one estimated fold ({} MiB plus {} MiB retained buffers) within 75% of {} MiB memory headroom; request more memory, or use an explicit cap only after measuring actual memory",
+        per_fold / 1024 / 1024, retained / 1024 / 1024, headroom / 1024 / 1024);
+    let limit = memory_folds.min(workers as u64).min(tasks as u64) as usize;
+    log::info!("CV auto concurrency: active_folds={} cpu_budget={} memory_headroom_MiB={} estimated_fold_MiB={} retained_MiB={} reserve_percent=25",
+        limit, workers, headroom / 1024 / 1024, per_fold / 1024 / 1024, retained / 1024 / 1024);
+    Ok(limit)
+}
+
 pub fn run_cv(args: CvArgs) -> Result<()> {
     use anyhow::ensure;
     use slide_cv::run_final_slide_cv;
@@ -357,9 +444,9 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
         );
     }
     let y = Vector::from_ndarray(loaded_y.matrix.as_ndarray().column(0).to_owned());
-    let config = FinalCvConfig {
+    let mut config = FinalCvConfig {
         repeats: args.nrep,
-        max_active_folds: args.max_active_folds,
+        max_active_folds: args.max_active_folds.unwrap_or(1),
         folds: args.k,
         base_seed: args.seed,
         response_type,
@@ -376,9 +463,17 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
         ensure!(threads > 0, "threads must be positive");
         pool = pool.num_threads(threads);
     }
-    let result = pool
-        .build()?
-        .install(|| run_final_slide_cv(&loaded_z.matrix, &y, &config))?;
+    let pool = pool.build()?;
+    if args.max_active_folds.is_none() {
+        let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let slurm_cpus = std::env::var("SLURM_CPUS_PER_TASK").ok()
+            .and_then(|s| s.parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(available);
+        let workers = pool.current_num_threads().min(available).min(slurm_cpus);
+        config.max_active_folds = automatic_cv_fold_limit(
+            &config, loaded_z.matrix.nrows(), loaded_z.matrix.ncols(), workers, cv_memory_headroom(),
+        )?;
+    }
+    let result = pool.install(|| run_final_slide_cv(&loaded_z.matrix, &y, &config))?;
     // Atomic directory creation prevents concurrent runs from overwriting each other.
     std::fs::create_dir(&args.out)?;
     std::fs::write(
@@ -387,7 +482,7 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
     )?;
     std::fs::write(
         args.out.join("requested-config.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({ "config": config, "env_overrides": active_env_overrides() }))?,
+        serde_json::to_vec_pretty(&serde_json::json!({ "config": config, "requested_max_active_folds": args.max_active_folds, "env_overrides": active_env_overrides() }))?,
     )?;
     let mut scores = csv::Writer::from_path(args.out.join("SLIDECV_boxplot_data.csv"))?;
     let metric = if response_type == ResponseType::Binary {
@@ -939,7 +1034,7 @@ cv:
             k: 3,
             seed: 17,
             threads: Some(1),
-            max_active_folds: 1,
+            max_active_folds: Some(1),
         };
         super::run_cv(args.clone())?;
         let result: slide_cv::FinalCvResult =
