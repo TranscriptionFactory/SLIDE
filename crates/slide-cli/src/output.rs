@@ -127,6 +127,78 @@ pub(crate) fn labelled_matrix(path: &Path, matrix: &Matrix, labels: &[String]) -
     Ok(())
 }
 
+const SAMPLE_CV_PROVENANCE: &str = "R-compatible repeated uniform holdout OLS on fixed raw marginal/product terms; screening, not rigorous SLIDEcv";
+
+pub(crate) fn export_ols_model(
+    path: &Path,
+    name: &str,
+    coefficients: &[Option<f64>],
+    terms: &[String],
+    mut metadata: serde_json::Value,
+) -> Result<()> {
+    metadata["coefficients"] = serde_json::to_value(coefficients)?;
+    metadata["term_order"] = serde_json::to_value(terms)?;
+    std::fs::write(
+        path.join(format!("{name}.json")),
+        serde_json::to_vec_pretty(&metadata)?,
+    )?;
+    let mut writer = csv::Writer::from_path(path.join(format!("{name}-coefficients.csv")))?;
+    writer.write_record(["term", "coefficient"])?;
+    for (term, coefficient) in terms.iter().zip(coefficients) {
+        writer.write_record([
+            term.clone(),
+            coefficient.map(|v| v.to_string()).unwrap_or_default(),
+        ])?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+pub(crate) fn export_sample_cv(
+    path: &Path,
+    cv: &slide_cv::SampleCvResult,
+    sample_ids: &[String],
+) -> Result<()> {
+    let mut metadata = serde_json::to_value(cv)?;
+    metadata.as_object_mut().unwrap().remove("predictions");
+    metadata["provenance"] = SAMPLE_CV_PROVENANCE.into();
+    metadata["model_provenance"] = "LAST holdout training split; not a full-data predictor".into();
+    if let Some(model) = &cv.last_model {
+        metadata["training_sample_ids"] = serde_json::to_value(
+            model
+                .train_indices
+                .iter()
+                .map(|&i| &sample_ids[i])
+                .collect::<Vec<_>>(),
+        )?;
+        export_ols_model(
+            path,
+            "sampleCV_model",
+            &model.coefficients,
+            &model.terms,
+            metadata,
+        )?;
+    } else {
+        std::fs::write(
+            path.join("sampleCV_model.json"),
+            serde_json::to_vec_pretty(&metadata)?,
+        )?;
+    }
+    let mut writer = csv::Writer::from_path(path.join("sampleCV_predictions.csv"))?;
+    writer.write_record(["iteration", "row_index", "sample_id", "y_true", "y_pred"])?;
+    for row in &cv.predictions {
+        writer.write_record([
+            row.iteration.to_string(),
+            row.row_index.to_string(),
+            sample_ids[row.row_index].clone(),
+            row.y_true.to_string(),
+            row.y_pred.to_string(),
+        ])?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 pub(crate) fn export_results(
     path: &Path,
     loaded: &LoadedMatrix,
@@ -182,12 +254,31 @@ pub(crate) fn export_results(
         "num_of_Sig_LFs",
         "num_of_Interactors",
         "Control_Performance",
+        "sampleCV_Performance",
+        "sampleCV_Provenance",
+        "sampleCV_Status",
+        "f_size",
     ])?;
     for result in results.evaluations.iter().flatten() {
         let out = path.join(format!("{}_{}_out", result.delta, result.lambda));
         std::fs::create_dir_all(&out)?;
         labelled_matrix(&out.join("A.csv"), &result.love.a, &loaded.feature_names)?;
         labelled_matrix(&out.join("z_matrix.csv"), &result.z, &sample_ids)?;
+        if let Some(cv) = &result.sample_cv {
+            export_sample_cv(&out, cv, &sample_ids)?;
+        }
+        let sample_score = result
+            .sample_cv
+            .as_ref()
+            .and_then(|cv| cv.metric)
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let sample_status = result
+            .sample_cv
+            .as_ref()
+            .map(|cv| serde_json::to_value(cv.status).map(|v| v.as_str().unwrap().to_owned()))
+            .transpose()?
+            .unwrap_or_else(|| "unavailable".into());
         let marginals = &result.marginal.sig_lfs;
         let interactions = &result.interactions.sig_interacts;
         std::fs::write(
@@ -272,38 +363,47 @@ pub(crate) fn export_results(
                 },
                 1000,
                 config.knockoff.base_seed,
-            )?;
-            control_score = control.real.to_string();
-            full_random = (control.full_random.iter().sum::<f64>()
-                / control.full_random.len() as f64)
-                .to_string();
-            if !control.partial_random.is_empty() {
-                partial_random = (control.partial_random.iter().sum::<f64>()
-                    / control.partial_random.len() as f64)
+            );
+            if let Ok(control) = control {
+                control_score = control.real.to_string();
+                full_random = (control.full_random.iter().sum::<f64>()
+                    / control.full_random.len() as f64)
                     .to_string();
-            }
-            let mut writer = csv::Writer::from_path(out.join("ControlPerformance.csv"))?;
-            writer.write_record(["group", "value"])?;
-            for (group, values) in [
-                ("FullRandom", &control.full_random),
-                ("PartialRandom", &control.partial_random),
-            ] {
-                for value in values {
-                    writer.write_record([group, &value.to_string()])?;
+                if !control.partial_random.is_empty() {
+                    partial_random = (control.partial_random.iter().sum::<f64>()
+                        / control.partial_random.len() as f64)
+                        .to_string();
                 }
+                let mut writer = csv::Writer::from_path(out.join("ControlPerformance.csv"))?;
+                writer.write_record(["group", "value"])?;
+                for (group, values) in [
+                    ("FullRandom", &control.full_random),
+                    ("PartialRandom", &control.partial_random),
+                ] {
+                    for value in values {
+                        writer.write_record([group, &value.to_string()])?;
+                    }
+                }
+                writer.write_record(["Real", &control.real.to_string()])?;
+                writer.flush()?;
+                crate::plotting::control_plot(
+                    &out.join(if config.do_interacts {
+                        "ControlPerformancePlot.png"
+                    } else {
+                        "ControlPerformancePlot.pdf"
+                    }),
+                    &control,
+                )?;
+            } else if let Err(error) = control {
+                log::warn!(
+                    "control score unavailable for delta={}, lambda={}: {}",
+                    result.delta,
+                    result.lambda,
+                    error
+                );
             }
-            writer.write_record(["Real", &control.real.to_string()])?;
-            writer.flush()?;
-            crate::plotting::control_plot(
-                &out.join(if config.do_interacts {
-                    "ControlPerformancePlot.png"
-                } else {
-                    "ControlPerformancePlot.pdf"
-                }),
-                &control,
-            )?;
         }
-        std::fs::write(out.join("scores.txt"), format!("Score contract: R in-sample OLS control performance (not held-out CV)\nTrue Scores: {}\nPartial Random: {}\nFull Random: {}\nNumber of latent factors: {}\nNumber of marginals: {}\nNumber of interactions: {}\n", if control_score.is_empty() { "NA" } else { &control_score }, partial_random, full_random, result.z.ncols(), marginals.len(), interactions.len()))?;
+        std::fs::write(out.join("scores.txt"), format!("Score contract: R in-sample OLS control performance (not held-out CV)\nTrue Scores: {}\nPartial Random: {}\nFull Random: {}\nNumber of latent factors: {}\nNumber of marginals: {}\nNumber of interactions: {}\nsampleCV Performance: {}\nsampleCV Provenance: {}\nsampleCV Status: {}\n", if control_score.is_empty() { "NA" } else { &control_score }, partial_random, full_random, result.z.ncols(), marginals.len(), interactions.len(), if sample_score.is_empty() { "NA" } else { &sample_score }, SAMPLE_CV_PROVENANCE, sample_status))?;
         write_params_json(
             out.join("run_params.txt"),
             &serde_json::json!({"delta":result.delta,"lambda":result.lambda,"config":config,"control_random_draws":1000,"control_score_contract":"R in-sample OLS; not held-out CV"}),
@@ -316,9 +416,31 @@ pub(crate) fn export_results(
             marginals.len().to_string(),
             interactions.len().to_string(),
             control_score,
+            sample_score,
+            SAMPLE_CV_PROVENANCE.to_owned(),
+            sample_status,
+            config
+                .knockoff
+                .f_size
+                .unwrap_or_else(|| {
+                    slide_knockoff::calc_default_fsize(result.z.nrows(), result.z.ncols())
+                })
+                .to_string(),
         ])?;
     }
     summary.flush()?;
+    if config.auto_select {
+        std::fs::write(
+            path.join("selected_candidate.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "status":results.selection_status,
+                "delta":results.best.as_ref().map(|r| r.delta),
+                "lambda":results.best.as_ref().map(|r| r.lambda),
+                "sampleCV_Performance":results.best.as_ref().and_then(|r| r.sample_cv.as_ref()).and_then(|cv| cv.metric),
+                "provenance":SAMPLE_CV_PROVENANCE
+            }))?,
+        )?;
+    }
     Ok(())
 }
 
@@ -420,8 +542,19 @@ mod tests {
             if !selected {
                 run.marginal.sig_lfs.clear();
             }
+            run.sample_cv = Some(slide_cv::run_sample_cv(
+                &run.z,
+                &y,
+                &run.marginal.sig_lfs,
+                &[],
+                &slide_cv::SampleCvConfig {
+                    iterations: 2,
+                    ..Default::default()
+                },
+            )?);
             let results = OptimizeSlideResult {
-                best: run.clone(),
+                best: Some(run.clone()),
+                selection_status: slide_core::SelectionStatus::SingleCandidate,
                 evaluations: vec![Some(run)],
                 final_cv: None,
             };
@@ -459,6 +592,31 @@ mod tests {
                 assert_eq!(y.as_ndarray().to_vec(), vec![0.0, 0.0, 1.0, 1.0]);
             }
             assert!(out.join("scores.txt").exists());
+            let screening: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(out.join("sampleCV_model.json"))?)?;
+            assert!(screening["model_provenance"]
+                .as_str()
+                .unwrap()
+                .contains("LAST holdout"));
+            assert_eq!(screening["last_model"].is_object(), selected);
+            if selected {
+                assert_eq!(screening["term_order"], serde_json::json!(["(Intercept)", "Z0"]));
+            }
+            assert_eq!(
+                out.join("sampleCV_model-coefficients.csv").exists(),
+                selected
+            );
+            assert!(out.join("sampleCV_predictions.csv").exists());
+            assert!(!path.join("selected_candidate.json").exists());
+            let mut automatic = results.clone();
+            automatic.selection_status = if selected { slide_core::SelectionStatus::AutoSelected } else { slide_core::SelectionStatus::NoScorableCandidate };
+            if !selected { automatic.best = None; }
+            let auto_path = root.join(format!("export-{unique}-{selected}-auto"));
+            export_results(&auto_path, &loaded, &y, &automatic,
+                &OptimizeSlideConfig { auto_select: true, ..Default::default() })?;
+            let selection: serde_json::Value = serde_json::from_slice(&std::fs::read(auto_path.join("selected_candidate.json"))?)?;
+            assert_eq!(selection["delta"].is_number(), selected);
+            assert!(auto_path.join("0.1_0.2_out/z_matrix.csv").exists());
             assert_eq!(out.join("ControlPerformance.csv").exists(), selected);
             assert_eq!(out.join("plotSigGenes_marginals.pdf").exists(), selected);
             assert!(export_results(

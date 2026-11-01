@@ -48,6 +48,8 @@ pub struct MarginalLfSelectionConfig {
     #[serde(default = "default_true")]
     pub interaction_size_cap: bool,
     pub family: GlmnetFamily,
+    #[serde(default = "default_true")]
+    pub r_compatible: bool,
 }
 
 fn default_true() -> bool {
@@ -59,18 +61,19 @@ impl Default for MarginalLfSelectionConfig {
         let knockoff = KnockoffConfig::default();
         Self {
             fdr: knockoff.fdr,
-            spec: knockoff.spec,
-            niter: knockoff.niter,
+            spec: 0.1,
+            niter: 1000,
             f_size: knockoff.f_size,
             knockoff_method: knockoff.knockoff_method,
             knockoff_backend: knockoff.knockoff_backend,
             knockoff_offset: knockoff.knockoff_offset,
             statistic: knockoff.statistic,
-            nlambda: knockoff.nlambda,
+            nlambda: 500,
             base_seed: knockoff.base_seed,
             slide_selection: knockoff.slide_selection,
             interaction_size_cap: true,
             family: knockoff.family,
+            r_compatible: true,
         }
     }
 }
@@ -93,7 +96,7 @@ impl MarginalLfSelectionConfig {
             family: self.family,
             parallel: true,
             max_voting_workers: None,
-            r_compatible: false,
+            r_compatible: self.r_compatible,
         }
     }
 }
@@ -108,6 +111,10 @@ pub enum OptimizeResponseType {
 pub struct OptimizeSlideConfig {
     pub do_interacts: bool,
     pub response_type: OptimizeResponseType,
+    #[serde(default)]
+    pub sample_cv: slide_cv::SampleCvConfig,
+    #[serde(default)]
+    pub auto_select: bool,
     pub love: LoveConfig,
     pub knockoff: MarginalLfSelectionConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +128,8 @@ impl Default for OptimizeSlideConfig {
         Self {
             do_interacts: true,
             response_type: OptimizeResponseType::Continuous,
+            sample_cv: slide_cv::SampleCvConfig { iterations: 500, ..slide_cv::SampleCvConfig::default() },
+            auto_select: false,
             love: LoveConfig::default(),
             knockoff: MarginalLfSelectionConfig::default(),
             final_cv: None,
@@ -159,7 +168,11 @@ pub struct SlideRunResult {
     pub z: Matrix,
     pub marginal: MarginalLfSelection,
     pub interactions: InteractionLfSelection,
-    pub score: Scalar,
+    /// Legacy in-sample score, not control performance or held-out screening.
+    pub score: Option<Scalar>,
+    /// None identifies checkpoints written before sampleCV screening.
+    #[serde(default)]
+    pub sample_cv: Option<slide_cv::SampleCvResult>,
 }
 
 /// Written as a sidecar file during evaluation so the TUI can show
@@ -174,10 +187,21 @@ pub struct LiveEvaluation {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OptimizeSlideResult {
-    pub best: SlideRunResult,
+    pub best: Option<SlideRunResult>,
+    pub selection_status: SelectionStatus,
     pub evaluations: Vec<Option<SlideRunResult>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_cv: Option<slide_cv::FinalCvResult>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionStatus {
+    SingleCandidate,
+    Manual,
+    AutoSelected,
+    NoScorableCandidate,
+    NoSuccessfulEvaluations,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,6 +323,14 @@ pub enum SlideCoreError {
         expected_delta: Scalar,
         expected_lambda: Scalar,
     },
+    #[error("checkpoint contains legacy in-sample scores without sampleCV; use a new checkpoint path and rerun")]
+    LegacyCheckpoint,
+    #[error("multi-candidate final CV requires auto_select=true or a manually chosen saved candidate with slide cv")]
+    FinalCvNeedsSelection,
+    #[error("no candidate is selected; choose a saved candidate or enable auto_select with finite sampleCV scores")]
+    NoSelectedCandidate,
+    #[error(transparent)]
+    SampleCv(#[from] slide_cv::SampleCvError),
     #[error("checkpoint contents do not match the requested OptimizeSLIDE inputs")]
     CheckpointInputMismatch,
     #[error(transparent)]
@@ -403,6 +435,10 @@ impl PartialEq for SlideCoreError {
                     && left_expected_lambda == right_expected_lambda
             }
             (FinalCv(left), FinalCv(right)) => left == right,
+            (Self::SampleCv(left), Self::SampleCv(right)) => left == right,
+            (Self::LegacyCheckpoint, Self::LegacyCheckpoint)
+            | (Self::FinalCvNeedsSelection, Self::FinalCvNeedsSelection)
+            | (Self::NoSelectedCandidate, Self::NoSelectedCandidate) => true,
             (Self::Io(_), Self::Io(_)) | (Self::SerdeJson(_), Self::SerdeJson(_)) => false,
             _ => false,
         }
@@ -864,7 +900,9 @@ pub fn load_optimize_slide_checkpoint(
     path: impl AsRef<Path>,
 ) -> Result<OptimizeSlideCheckpoint, SlideCoreError> {
     let file = File::open(path)?;
-    Ok(serde_json::from_reader(file)?)
+    let checkpoint: OptimizeSlideCheckpoint = serde_json::from_reader(file)?;
+    reject_legacy_evaluations(&checkpoint.evaluations)?;
+    Ok(checkpoint)
 }
 
 fn validate_checkpoint_inputs(
@@ -883,6 +921,19 @@ fn validate_checkpoint_inputs(
             expected: x.nrows(),
             actual: y.len(),
         });
+    }
+    if checkpoint.config.final_cv.is_some()
+        && checkpoint.delta_grid.len() * checkpoint.lambda_grid.len() > 1
+        && !checkpoint.config.auto_select
+    {
+        return Err(SlideCoreError::FinalCvNeedsSelection);
+    }
+    Ok(())
+}
+
+fn reject_legacy_evaluations(evaluations: &[Option<SlideRunResult>]) -> Result<(), SlideCoreError> {
+    if evaluations.iter().flatten().any(|evaluation| evaluation.sample_cv.is_none()) {
+        return Err(SlideCoreError::LegacyCheckpoint);
     }
     Ok(())
 }
@@ -913,25 +964,44 @@ fn validate_checkpoint_evaluations(
         }
     }
 
-    Ok(())
+    reject_legacy_evaluations(evaluations)
 }
 
 fn finalize_checkpoint(
     checkpoint: OptimizeSlideCheckpoint,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
-    let best = checkpoint
-        .evaluations
-        .iter()
-        .filter_map(|eval| eval.as_ref())
-        .max_by(|left, right| left.score.total_cmp(&right.score))
-        .cloned()
-        .ok_or(SlideCoreError::NoSuccessfulEvaluations)?;
-
+    let (best, selection_status) = select_checkpoint_candidate(&checkpoint);
     Ok(OptimizeSlideResult {
-        best,
+        best: best.cloned(),
+        selection_status,
         evaluations: checkpoint.evaluations,
         final_cv: checkpoint.final_cv,
     })
+}
+
+pub fn select_checkpoint_candidate(checkpoint: &OptimizeSlideCheckpoint) -> (Option<&SlideRunResult>, SelectionStatus) {
+    let mut candidates = checkpoint.evaluations.iter().flatten();
+    if checkpoint.evaluations.iter().all(Option::is_none) {
+        return (None, SelectionStatus::NoSuccessfulEvaluations);
+    }
+    if checkpoint.config.auto_select {
+        let mut best: Option<(&SlideRunResult, Scalar)> = None;
+        for candidate in candidates {
+            if let Some(metric) = candidate.sample_cv.as_ref().and_then(|cv| cv.metric).filter(|v| v.is_finite()) {
+                if best.is_none_or(|(_, score)| metric > score) {
+                    best = Some((candidate, metric));
+                }
+            }
+        }
+        return match best {
+            Some((candidate, _)) => (Some(candidate), SelectionStatus::AutoSelected),
+            None => (None, SelectionStatus::NoScorableCandidate),
+        };
+    }
+    if checkpoint.delta_grid.len() * checkpoint.lambda_grid.len() == 1 {
+        return (candidates.next(), SelectionStatus::SingleCandidate);
+    }
+    (None, SelectionStatus::Manual)
 }
 
 fn maybe_run_final_cv(
@@ -947,12 +1017,9 @@ fn maybe_run_final_cv(
         return Ok(false);
     };
 
-    let best = checkpoint
-        .evaluations
-        .iter()
-        .filter_map(|eval| eval.as_ref())
-        .max_by(|left, right| left.score.total_cmp(&right.score))
-        .ok_or(SlideCoreError::NoSuccessfulEvaluations)?;
+    let (Some(best), _) = select_checkpoint_candidate(checkpoint) else {
+        return Ok(false);
+    };
     write_progress(
         progress_path,
         &ProgressReport {
@@ -972,7 +1039,8 @@ pub fn run_final_slide_cv_for_best(
     y: &Vector,
     config: &slide_cv::FinalCvConfig,
 ) -> Result<OptimizeSlideResult, SlideCoreError> {
-    let final_cv = slide_cv::run_final_slide_cv(&result.best.z, y, config)?;
+    let best = result.best.as_ref().ok_or(SlideCoreError::NoSelectedCandidate)?;
+    let final_cv = slide_cv::run_final_slide_cv(&best.z, y, config)?;
     result.final_cv = Some(final_cv);
     Ok(result)
 }
@@ -1072,7 +1140,19 @@ fn run_slide_evaluation(
         y,
         &marginal.sig_lfs,
         config.response_type,
-    )?;
+    );
+    let score = match score {
+        Ok(value) if value.is_finite() => Some(value),
+        Ok(_) => None,
+        Err(error) => {
+            log::warn!("[SLIDE] legacy in-sample score unavailable: {error}");
+            None
+        }
+    };
+    let sample_config = slide_cv::optimizer_sample_cv_config(&config.sample_cv, z.nrows());
+    let sample_cv = Some(slide_cv::run_sample_cv(
+        &z, y, &marginal.sig_lfs, &interactions.sig_interacts, &sample_config,
+    )?);
     log::info!("[SLIDE timing] Scoring: {:.2}s", stage_start.elapsed().as_secs_f64());
     log::info!("[SLIDE timing] TOTAL: {:.2}s (delta={}, lambda={})", eval_start.elapsed().as_secs_f64(), delta, lambda);
 
@@ -1084,6 +1164,7 @@ fn run_slide_evaluation(
         marginal,
         interactions,
         score,
+        sample_cv,
     })
 }
 
@@ -1395,8 +1476,77 @@ mod tests {
                 interaction_terms: Matrix::from_ndarray(Array2::zeros((nrows, 0))),
                 voting: Vec::new(),
             },
-            score,
+            score: Some(score),
+            sample_cv: Some(slide_cv::SampleCvResult {
+                condition: slide_cv::SampleCvCondition::Corr, k: nrows, iterations: 1,
+                n: nrows, train_n: nrows.saturating_sub(1), test_n: 1, seed: 42,
+                metric: Some(score), status: slide_cv::SampleCvStatus::Ok,
+                predictions: Vec::new(), last_model: None,
+            }),
         }
+    }
+
+    #[test]
+    fn workflow_defaults_match_r_screening_without_changing_explicit_alternatives() {
+        let config = OptimizeSlideConfig::default();
+        let ko = config.knockoff.to_knockoff_config();
+        assert_eq!((ko.spec, ko.niter, ko.nlambda, ko.knockoff_offset), (0.1, 1000, 500, 0));
+        assert_eq!(ko.family, GlmnetFamily::Gaussian);
+        assert!(ko.r_compatible && ko.slide_selection);
+        assert_eq!(config.sample_cv.iterations, 500);
+        assert!(!config.auto_select);
+        let explicit = MarginalLfSelectionConfig {
+            r_compatible: false, nlambda: 30, family: GlmnetFamily::Binomial,
+            ..MarginalLfSelectionConfig::default()
+        }.to_knockoff_config();
+        assert!(!explicit.r_compatible);
+        assert_eq!(explicit.nlambda, 30);
+        assert_eq!(explicit.family, GlmnetFamily::Binomial);
+    }
+
+    #[test]
+    fn candidate_selection_is_manual_unless_opted_in_and_preserves_missing_results() {
+        let z = Matrix::from_ndarray(arr2(&[[0.0], [1.0], [2.0]]));
+        let first = dummy_slide_run(z.clone(), 0.4);
+        let mut second = dummy_slide_run(z, 0.4);
+        second.delta = 0.1;
+        second.score = Some(1.0);
+        let mut checkpoint = OptimizeSlideCheckpoint {
+            x_ref: None, y_ref: None, delta_grid: vec![0.05, 0.1], lambda_grid: vec![0.1],
+            config: OptimizeSlideConfig::default(), evaluations: vec![Some(first), Some(second)], final_cv: None,
+        };
+        let manual = super::finalize_checkpoint(checkpoint.clone()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(manual.selection_status, super::SelectionStatus::Manual);
+        assert!(manual.best.is_none());
+        assert_eq!(manual.evaluations.len(), 2);
+        checkpoint.config.auto_select = true;
+        let selected = super::finalize_checkpoint(checkpoint.clone()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(selected.best.as_ref().map(|r| r.delta), Some(0.05));
+        for evaluation in checkpoint.evaluations.iter_mut().flatten() {
+            if let Some(cv) = evaluation.sample_cv.as_mut() {
+                cv.metric = None;
+                cv.status = slide_cv::SampleCvStatus::MissingMetric;
+            }
+        }
+        let missing = super::finalize_checkpoint(checkpoint).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(missing.selection_status, super::SelectionStatus::NoScorableCandidate);
+        assert!(missing.best.is_none());
+        assert_eq!(missing.evaluations.iter().flatten().count(), 2);
+    }
+
+    #[test]
+    fn legacy_checkpoint_scores_are_not_screening_and_multi_grid_cv_needs_selection() {
+        let z = Matrix::from_ndarray(arr2(&[[0.0], [1.0], [2.0]]));
+        let mut evaluation = dummy_slide_run(z.clone(), 1.0);
+        evaluation.sample_cv = None;
+        assert_eq!(super::reject_legacy_evaluations(&[Some(evaluation)]), Err(SlideCoreError::LegacyCheckpoint));
+        let checkpoint = OptimizeSlideCheckpoint {
+            x_ref: None, y_ref: None, delta_grid: vec![0.05, 0.1], lambda_grid: vec![0.1],
+            config: OptimizeSlideConfig { final_cv: Some(FinalCvConfig::default()), ..OptimizeSlideConfig::default() },
+            evaluations: Vec::new(), final_cv: None,
+        };
+        let y = Vector::from_ndarray(arr1(&[0.0,1.0,2.0]));
+        assert_eq!(super::validate_checkpoint_inputs(&checkpoint, &z, &y), Err(SlideCoreError::FinalCvNeedsSelection));
     }
 
     #[test]
@@ -1561,6 +1711,8 @@ mod tests {
             knockoff_method: KnockoffMethod::Equi,
             family: GlmnetFamily::Gaussian,
             slide_selection: false,
+            // The committed fixed-draw fixture uses the explicit 30-point native grid.
+            r_compatible: false,
             ..MarginalLfSelectionConfig::default()
         }
     }
@@ -1762,7 +1914,7 @@ mod tests {
             [1.6, 0.1, 1.4, 0.0],
             [0.1, 1.8, 0.0, 1.2],
         ]));
-        let y = Vector::from_ndarray(arr1(&[2.0, 1.8, 0.2, 0.0, 1.7, 0.1]));
+        let y = Vector::from_ndarray(arr1(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
         let config = OptimizeSlideConfig {
             do_interacts: false,
             response_type: OptimizeResponseType::Continuous,
@@ -1791,6 +1943,8 @@ mod tests {
                 family: GlmnetFamily::Gaussian,
                 ..MarginalLfSelectionConfig::default()
             },
+            sample_cv: slide_cv::SampleCvConfig::default(),
+            auto_select: false,
             final_cv: None,
             env_overrides: Default::default(),
         };
@@ -1799,10 +1953,28 @@ mod tests {
             .unwrap_or_else(|error| panic!("optimize_slide failed: {error}"));
 
         assert_eq!(result.evaluations.len(), 1);
-        assert_eq!(result.best.delta, 0.05);
-        assert_eq!(result.best.lambda, 0.1);
-        assert_eq!(result.best.z.nrows(), x.nrows());
-        assert!(result.best.score.is_finite());
+        assert_eq!(result.best.as_ref().unwrap_or_else(|| panic!("missing single candidate")).delta, 0.05);
+        assert_eq!(result.best.as_ref().unwrap_or_else(|| panic!("missing single candidate")).lambda, 0.1);
+        assert_eq!(result.best.as_ref().unwrap_or_else(|| panic!("missing single candidate")).z.nrows(), x.nrows());
+        assert!(result.best.as_ref().unwrap_or_else(|| panic!("missing single candidate")).score.is_some_and(f64::is_finite));
+        assert_eq!(
+            result.best.as_ref().and_then(|candidate| candidate.sample_cv.as_ref()).map(|cv| cv.condition),
+            Some(slide_cv::SampleCvCondition::Auc),
+        );
+
+        let explicit_corr = OptimizeSlideConfig {
+            sample_cv: slide_cv::SampleCvConfig {
+                condition: Some(slide_cv::SampleCvCondition::Corr),
+                ..config.sample_cv.clone()
+            },
+            ..config
+        };
+        let corr_result = optimize_slide(&x, &y, &[0.05], &[0.1], &explicit_corr)
+            .unwrap_or_else(|error| panic!("optimize_slide with explicit Corr failed: {error}"));
+        assert_eq!(
+            corr_result.best.as_ref().and_then(|candidate| candidate.sample_cv.as_ref()).map(|cv| cv.condition),
+            Some(slide_cv::SampleCvCondition::Corr),
+        );
     }
 
     #[test]
@@ -1900,7 +2072,8 @@ mod tests {
         let y = Vector::from_ndarray(arr1(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
         let best = dummy_slide_run(z, 1.0);
         let result = OptimizeSlideResult {
-            best: best.clone(),
+            best: Some(best.clone()),
+            selection_status: super::SelectionStatus::SingleCandidate,
             evaluations: vec![Some(best)],
             final_cv: None,
         };
@@ -1969,6 +2142,7 @@ mod tests {
             delta_grid: vec![0.05, 0.10],
             lambda_grid: vec![0.1],
             config: OptimizeSlideConfig {
+                auto_select: true,
                 final_cv: Some(FinalCvConfig {
                     repeats: 1,
                     folds: 3,
@@ -1994,7 +2168,7 @@ mod tests {
         let result = optimize_slide_resume(checkpoint, &x, &y)
             .unwrap_or_else(|error| panic!("resume with final CV should succeed: {error}"));
 
-        assert_eq!(result.best.delta, 0.10);
+        assert_eq!(result.best.as_ref().unwrap_or_else(|| panic!("missing single candidate")).delta, 0.10);
         let final_cv = result
             .final_cv
             .unwrap_or_else(|| panic!("configured final CV should be attached"));
@@ -2121,7 +2295,8 @@ mod tests {
                     interaction_terms: Matrix::from_ndarray(arr2(&[[]])),
                     voting: Vec::new(),
                 },
-                score: 0.0,
+                score: Some(0.0),
+                sample_cv: None,
             })],
             final_cv: None,
         };
@@ -2181,6 +2356,8 @@ mod tests {
                 family: GlmnetFamily::Gaussian,
                 ..MarginalLfSelectionConfig::default()
             },
+            sample_cv: slide_cv::SampleCvConfig::default(),
+            auto_select: false,
             final_cv: None,
             env_overrides: Default::default(),
         };

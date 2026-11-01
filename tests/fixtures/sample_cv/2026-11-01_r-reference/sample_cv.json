@@ -60,7 +60,8 @@
         "last_rank": 2,
         "last_aliased_terms": [],
         "last_train_indices": [0, 1, 2, 3, 4, 5],
-        "term_order": ["(Intercept)", "Z1"],
+        "term_order": ["(Intercept)", "Z0"],
+        "r_term_order": ["(Intercept)", "Z1"],
         "guard": "ok"
       }
     },
@@ -123,7 +124,8 @@
         "last_rank": 2,
         "last_aliased_terms": [],
         "last_train_indices": [0, 1, 2, 3, 4, 5],
-        "term_order": ["(Intercept)", "Z1"],
+        "term_order": ["(Intercept)", "Z0"],
+        "r_term_order": ["(Intercept)", "Z1"],
         "guard": "ok"
       }
     },
@@ -190,7 +192,8 @@
         "last_rank": 4,
         "last_aliased_terms": [],
         "last_train_indices": [0, 2, 3, 4, 6, 7],
-        "term_order": ["(Intercept)", "Z1", "Z2", "Z1.Z2"],
+        "term_order": ["(Intercept)", "Z0", "Z1", "Z0.Z1"],
+        "r_term_order": ["(Intercept)", "Z1", "Z2", "Z1.Z2"],
         "guard": "ok"
       }
     },
@@ -253,7 +256,8 @@
         "last_rank": 2,
         "last_aliased_terms": [],
         "last_train_indices": [0, 2, 3, 4, 6, 7],
-        "term_order": ["(Intercept)", "Z1"],
+        "term_order": ["(Intercept)", "Z0"],
+        "r_term_order": ["(Intercept)", "Z1"],
         "guard": "ok"
       }
     },
@@ -318,7 +322,8 @@
         "last_rank": 2,
         "last_aliased_terms": [2, 3],
         "last_train_indices": [0, 1, 3, 4, 6, 7],
-        "term_order": ["(Intercept)", "Z1", "Z2", "Z3"],
+        "term_order": ["(Intercept)", "Z0", "Z1", "Z2"],
+        "r_term_order": ["(Intercept)", "Z1", "Z2", "Z3"],
         "guard": "ok"
       }
     },
@@ -343,6 +348,7 @@
         "last_aliased_terms": [],
         "last_train_indices": [],
         "term_order": [],
+        "r_term_order": [],
         "guard": "model_too_large"
       }
     }

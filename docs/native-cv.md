@@ -98,15 +98,31 @@ This command handles one candidate, not R's recursive scan of optimization runs.
 
 CSV/JSON exports do not replace R's serialized RDS files or its PDF boxplot.
 Existing Rust `cv.enabled: true` callers use the same implementation on their
-best saved candidate; their configured `base_seed` now reaches final CV.
+selected saved candidate; their configured `base_seed` reaches final CV.
+A single requested candidate can be evaluated directly. A multi-candidate grid
+requires `auto_select: true`, or a manual choice followed by `slide cv` on its
+saved factors. By default, optimization reports candidates in grid order without
+selecting or ranking them. Opt-in auto-selection uses the highest finite
+sampleCV metric and keeps the first grid candidate on ties. No scorable metric
+means no automatic winner; exported factors remain available.
+
+SampleCV is screening on a fixed selected raw marginal/product design using
+unstratified repeated holdouts and OLS. Its pooled AUC has fixed direction
+(higher sorted response label is positive); continuous outcomes use Spearman
+correlation with average ranks. It neither repeats selection nor estimates the
+rigorous SLIDEcv procedure described above. `sampleCV_model.json` represents the
+last holdout model, not a full-data fit. Keep the in-sample control performance,
+sampleCV screening metric, and final SLIDEcv summaries separate.
 The dashboard's mean/SE and prediction plots use only observed results. Its
 ROC/PR curves pool observed predictions across repeats and therefore need not
 equal the mean of per-repeat, direction-flipped AUCs.
 
-Old checkpoints remain readable. Their missing `repeat_scores` identifies the
-legacy fold-average procedure. Resuming an already completed checkpoint does
-not recompute its CV. Use `slide cv` with a fresh output directory to reevaluate
-those factors. Do not combine old and new CV summaries.
+The dashboard can display old checkpoints, but missing sampleCV metrics remain
+unavailable. Optimization refuses to resume legacy checkpoints with completed
+candidates lacking sampleCV; start a fresh checkpoint instead of reinterpreting
+old control scores. For saved-factor final CV, missing `repeat_scores` identifies
+the legacy fold-average procedure. Use `slide cv` with a fresh output directory
+to reevaluate those factors. Do not combine old and new CV summaries.
 
 ## Verification
 

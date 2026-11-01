@@ -27,3 +27,6 @@ slide-score = { version = "1.0.0", path = "../slide-score" }
 slide-types = { version = "1.0.0", path = "../slide-types" }
 
 slide-glmnet = { version = "1.0.0", path = "../slide-glmnet" }
+
+[dev-dependencies]
+serde_json = "1.0"

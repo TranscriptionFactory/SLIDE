@@ -7,7 +7,7 @@ suppressPackageStartupMessages({
 
 root <- normalizePath(file.path(dirname(sub("^--file=", "", commandArgs(FALSE)[grep("^--file=", commandArgs(FALSE))])), "../../.."), mustWork = TRUE)
 fixture_dir <- file.path(root, "tests/fixtures/sample_cv/2026-11-01_r-reference")
-tmp_dir <- file.path(root, ".tmpfiles/2026-11-01_samplecv-parity/tmp")
+tmp_dir <- Sys.getenv("TMPDIR", file.path(root, ".tmpfiles/tmp"))
 dir.create(fixture_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -56,7 +56,7 @@ run_case <- function(case) {
   if (length(case$train) == 0) {
     value <- sample_cv_env$sampleCV(matrix(case$y, ncol = 1), z, slide_res, sampleCV_K = 4, condition = case$condition, sampleCV_iter = 1, out_path = paste0(tmp_dir, "/"))
     stopifnot(identical(as.character(value), "NA"))
-    return(list(metric = NA_real_, predictions = list(), last_coefficients = list(), last_rank = NA_integer_, last_aliased_terms = integer(), last_train_indices = integer(), term_order = character(), guard = "model_too_large"))
+    return(list(metric = NA_real_, predictions = list(), last_coefficients = list(), last_rank = NA_integer_, last_aliased_terms = integer(), last_train_indices = integer(), term_order = character(), r_term_order = character(), guard = "model_too_large"))
   }
   value <- withCallingHandlers(
     sample_cv_env$sampleCV(matrix(case$y, ncol = 1), z, slide_res, sampleCV_K = 4, condition = case$condition, sampleCV_iter = length(case$train), out_path = paste0(tmp_dir, "/")),
@@ -68,13 +68,15 @@ run_case <- function(case) {
                             y_pred = as.numeric(model$samplesCV$pred_y))
   stopifnot(length(test_rows) == length(model$samplesCV$pred_y))
   coefficients <- as.list(coef(model))
-  term_order <- c("(Intercept)", paste0("Z", case$marginals),
+  r_term_order <- c("(Intercept)", paste0("Z", case$marginals),
                   unlist(lapply(case$pairs, function(pair) paste0("Z", pair[1], ".Z", pair[2]))))
-  names(coefficients) <- term_order
+  names(coefficients) <- r_term_order
+  term_order <- c("(Intercept)", paste0("Z", case$marginals - 1L),
+                  unlist(lapply(case$pairs, function(pair) paste0("Z", pair[1] - 1L, ".Z", pair[2] - 1L))))
   list(metric = as.numeric(value), predictions = lapply(seq_len(nrow(predictions)), function(i) as.list(predictions[i, , drop = FALSE])),
        last_coefficients = coefficients, last_rank = model$rank,
        last_aliased_terms = I(which(is.na(coef(model))) - 1L), last_train_indices = I(as.integer(case$train[[length(case$train)]] - 1L)),
-       term_order = term_order, guard = "ok")
+       term_order = term_order, r_term_order = r_term_order, guard = "ok")
 }
 
 out <- lapply(cases, function(case) {

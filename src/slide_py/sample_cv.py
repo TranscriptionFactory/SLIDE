@@ -70,8 +70,8 @@ def sample_cv(z, y, marginal_indices, interaction_pairs=None, *, condition=None,
     train_n = math.ceil((1 - 1 / k) * len(y))
     result = dict(metric=None, predictions=[], last_coefficients=None, last_rank=None,
                   last_aliased_terms=[], last_train_indices=[], last_train_ids=[],
-                  term_order=['(Intercept)'] + [f'Z{i+1}' for i in marginals]
-                  + [f'Z{i+1}.Z{j+1}' for i, j in pairs.T], guard='ok', status='ok',
+                  term_order=['(Intercept)'] + [f'Z{i}' for i in marginals]
+                  + [f'Z{i}.Z{j}' for i, j in pairs.T], guard='ok', status='ok',
                   settings=dict(condition=condition, k=int(k), iterations=int(iterations),
                                 n=len(y), train_n=train_n, test_n=len(y)-train_n,
                                 seed=None if seed is None else int(seed),

@@ -121,7 +121,7 @@ def smoke(binary, workdir, out_path=None, reuse=False, check_tui=False, full_fit
 
 
 def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
-    """Exercise fixed fitting, factor-only CV and ordered-weight validation."""
+    """Exercise OLS default, explicit weighted fitting, sampleCV and factor-only CV."""
     with y_path.open() as handle:
         rows = list(csv.reader(handle))
     levels = sorted({float(row[1]) for row in rows[1:]})
@@ -141,15 +141,52 @@ def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
                       f"out_path: {json.dumps(str(out))}\n"
                       "delta: 0.1\nlambda: 0.5\nthresh_fdr: 0.1\nspec: 0.1\nfdr: 0.1\n"
                       "SLIDE_iter: 8\ndo_interacts: yes\neval_type: auc\ny_levels: [0, 1]\n")
-    subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(weights),
+    ols_out = workdir / "full-fit-ols"
+    subprocess.run([str(binary), "fit", "--config", str(config), "--out", str(ols_out),
+                    "--seed", "37", "--threads", "2"], check=True)
+    subprocess.run([str(binary), "fit", "--config", str(config), "--predictor", "weighted-binomial", "--weights", str(weights),
                     "--out", str(out), "--seed", "37", "--threads", "2"], check=True)
     status = json.loads((out / "status.json").read_text())
     assert status["factors"] == "complete"
+    for candidate in [ols_out, out]:
+        candidate_status = json.loads((candidate / "status.json").read_text())
+        assert candidate_status["selection"] == "complete", candidate_status
+        screening = json.loads((candidate / "sampleCV_model.json").read_text())
+        assert "LAST holdout" in screening["model_provenance"]
+        if screening["last_model"] is not None:
+            assert screening["training_sample_ids"]
+            assert screening["coefficients"] == screening["last_model"]["coefficients"]
+        with (candidate / "sampleCV_predictions.csv").open() as handle:
+            reader = csv.DictReader(handle)
+            assert reader.fieldnames == ["iteration", "row_index", "sample_id", "y_true", "y_pred"]
+            for row in reader:
+                assert row["sample_id"] == rows[int(row["row_index"]) + 1][0]
+    ols_status = json.loads((ols_out / "status.json").read_text())
+    assert ols_status["predictor"] in ["complete", "no_features_selected"], ols_status
+    if ols_status["predictor"] == "complete":
+        model = json.loads((ols_out / "full-data-model.json").read_text())
+        assert len(model["training_sample_ids"]) == len(rows) - 1
+        assert "full-data" in model["provenance"]
+        selection = json.loads((ols_out / "selection.json").read_text())
+        expected_terms = (["(Intercept)"] + [f"Z{i}" for i in selection["marginals_zero_based"]]
+                          + [f"Z{a}.Z{b}" for a, b in selection["interaction_pairs_zero_based"]])
+        assert model["term_order"] == expected_terms
+        assert len(model["coefficients"]) == len(expected_terms)
+    else:
+        assert ols_status["selection"] == "complete" and ols_status["factors"] == "complete"
+        assert not (ols_out / "predictions.csv").exists()
+        assert not (ols_out / "full-data-model.json").exists()
     with (out / "z_matrix.csv").open() as handle:
         z = list(csv.reader(handle))
     assert [r[0] for r in z[1:]] == [r[0] for r in rows[1:]]
     effective = json.loads((out / "effective-config.json").read_text())
-    assert effective["knockoff"]["f_size"] == min(20, len(z[0]) - 1)
+    n, k = len(z) - 1, len(z[0]) - 1
+    expected_block = k
+    if n <= k and k < 100:
+        expected_block = max(0, n - 2) if abs(n - k) <= 2 else n
+    if n < k:
+        expected_block = n
+    assert effective["knockoff"]["f_size"] == expected_block
     assert effective["knockoff"]["r_compatible"] and effective["knockoff"]["nlambda"] == 500
     bad = workdir / "misaligned-weights.csv"
     with weights.open() as handle:
@@ -158,9 +195,12 @@ def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
     with bad.open("w", newline="") as handle:
         csv.writer(handle).writerows(w)
     rejected = workdir / "must-not-exist"
-    run = subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(bad),
+    run = subprocess.run([str(binary), "fit", "--config", str(config), "--predictor", "weighted-binomial", "--weights", str(bad),
                           "--out", str(rejected)], capture_output=True, text=True)
     assert run.returncode != 0 and "sample IDs" in run.stderr and not rejected.exists()
+    run = subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(weights),
+                          "--out", str(rejected)], capture_output=True, text=True)
+    assert run.returncode != 0 and "only used" in run.stderr and not rejected.exists()
     run = subprocess.run([str(binary), "fit", "--config", str(config), "--weights", str(weights),
                           "--out", str(out)], capture_output=True, text=True)
     assert run.returncode != 0 and "already exists" in run.stderr
@@ -183,8 +223,14 @@ def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
                 writeLines(if(status) 'complete' else 'failed',file.path(out,'r-predictor-status.txt'))
                 if(status) write.csv(data.frame(pred=predict(fit,type='response')),file.path(out,'r-predictions.csv'))
             }
+            d <- read.csv(file.path(a[5],'design.csv'),row.names=1,check.names=FALSE)
+            if(ncol(d)>0) {
+                d$.response <- y
+                fit <- lm(.response~.,data=d)
+                write.csv(data.frame(pred=predict(fit)),file.path(a[5],'r-predictions.csv'))
+            }
         """
-        subprocess.run([str(rscript), "--vanilla", "-e", code, str(x_path), str(y_path), str(weights), str(out)], check=True)
+        subprocess.run([str(rscript), "--vanilla", "-e", code, str(x_path), str(y_path), str(weights), str(out), str(ols_out)], check=True)
         def matrix(path):
             with path.open() as handle:
                 return [[float(v) for v in row[1:]] for row in list(csv.reader(handle))[1:]]
@@ -203,6 +249,8 @@ def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
         assert max(abs(u[j] - sign*v[k]) for u,v in zip(aa,ra) for j,(k,sign) in enumerate(matches)) < 1e-6
         if (out / "r-predictor-status.txt").exists():
             assert (out / "r-predictor-status.txt").read_text().strip() == status["predictor"]
+        if ols_status["predictor"] == "complete":
+            assert max(abs(a[0]-b[0]) for a,b in zip(matrix(ols_out / "predictions.csv"),matrix(ols_out / "r-predictions.csv"))) < 1e-8
         if status["predictor"] == "complete":
             assert max(abs(a[0]-b[0]) for a,b in zip(matrix(out / "predictions.csv"),matrix(out / "r-predictions.csv"))) < 1e-8
     logging.info("Full-fit smoke passed: %s", status)

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Add R-compatible sampleCV screening to Python and Rust: fixed raw selected
+  terms, repeated holdout OLS, pooled metrics, explicit missing states, and
+  last-holdout model/prediction exports with sample IDs.
+- Report candidates in grid order with manual choice by default. Opt-in
+  `auto_select` uses finite sampleCV scores and first-grid ties; legacy Rust
+  checkpoints without screening results require a fresh run.
+- Default `slide fit` to unweighted OLS without weights. Keep the strict
+  weighted-binomial upsilon predictor behind `--predictor weighted-binomial`;
+  preserve separate full-data and holdout model provenance.
+- Align downstream optimizer defaults (`spec=0.1`, 1000 knockoff iterations),
+  screening aliases and full-fit marginal block sizing. LOVE is unchanged.
+
+## Unreleased
+
 - Breaking Rust CLI change: replace `slide monitor` with `slide run --tui`
   and `slide tui` with `slide view`; the old names are rejected, not aliases.
   Owned dashboards show worker exit status and ask before stopping an active

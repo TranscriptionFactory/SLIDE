@@ -656,7 +656,8 @@ impl App {
                 interaction_terms: Matrix::from_ndarray(Array2::zeros((n, 0))),
                 voting: Vec::new(),
             },
-            score: 0.0,
+            score: None,
+            sample_cv: None,
         };
         if self.ensure_x().is_ok() && self.ensure_y().is_ok() {
             if let Some(data) = self.data.as_ref() {
@@ -1680,13 +1681,13 @@ impl App {
             )),
             Line::from(running_line),
             Line::from(format!(
-                "best: {}",
+                "selected candidate: {}",
                 best.map_or_else(
                     || "n/a".to_owned(),
                     |run| {
                         format!(
-                            "score {:.4} at delta {:.4}, lambda {:.4}, k={}, pure={}",
-                            run.score,
+                            "sampleCV {} at delta {:.4}, lambda {:.4}, k={}, pure={}",
+                            format_optional_scalar(sample_cv_metric(run)),
                             run.delta,
                             run.lambda,
                             run.love.k,
@@ -1751,7 +1752,7 @@ impl App {
             "sel",
             "delta",
             "lambda",
-            "score",
+            "sampleCV",
             "k",
             "pure",
             "sig",
@@ -1779,7 +1780,7 @@ impl App {
                     selected.to_owned(),
                     format!("{:.4}", run.delta),
                     format!("{:.4}", run.lambda),
-                    format!("{:.4}", run.score),
+                    format_optional_scalar(sample_cv_metric(run)),
                     run.love.k.to_string(),
                     run.love.pure_vec.len().to_string(),
                     run.marginal.sig_lfs.len().to_string(),
@@ -2018,7 +2019,7 @@ impl App {
                         |&index| {
                             let run = &self.data().runs[index];
                             let value = match metric {
-                                GridMetric::Score => run.score,
+                                GridMetric::Score => sample_cv_metric(run).unwrap_or(f64::NAN),
                                 GridMetric::K => run.love.k as Scalar,
                                 GridMetric::PureCount => run.love.pure_vec.len() as Scalar,
                                 GridMetric::MarginalSelected => {
@@ -2077,10 +2078,10 @@ impl App {
                 love_view_scope(self.love_sub_view, run.love.k, self.selected_factor),
             )),
             Line::from(format!(
-                "d/l {:.3}/{:.3} | score {:.3} | k{} | pure {}/{} {:.0}% | gamma {:.3}/{:.3}",
+                "d/l {:.3}/{:.3} | sampleCV {} | k{} | pure {}/{} {:.0}% | gamma {:.3}/{:.3}",
                 run.delta,
                 run.lambda,
-                run.score,
+                format_optional_scalar(sample_cv_metric(run)),
                 run.love.k,
                 run.love.pure_vec.len(),
                 run.love.a.nrows(),
@@ -2109,8 +2110,8 @@ impl App {
         let min_group = group_sizes.iter().copied().min().unwrap_or(0);
         let mut lines = vec![
             Line::from(format!(
-                "run: d {:.4} | l {:.4} | score {:.4}",
-                run.delta, run.lambda, run.score
+                "run: d {:.4} | l {:.4} | sampleCV {}",
+                run.delta, run.lambda, format_optional_scalar(sample_cv_metric(run))
             )),
             Line::from(format!(
                 "k {} | pure {}/{} ({:.1}%)",
@@ -2796,10 +2797,10 @@ impl App {
             }
         };
         let cv = self.data().final_cv.as_ref().map_or_else(
-            || "Held-out CV (best model): unavailable".to_owned(),
+            || "Held-out CV (selected candidate): unavailable".to_owned(),
             |cv| {
                 format!(
-                    "Held-out CV (best model): {:?} {} | SE {}",
+                    "Held-out CV (selected candidate): {:?} {} | SE {}",
                     cv.metric,
                     format_optional_scalar(cv.mean),
                     format_optional_scalar(cv.standard_error)
@@ -3513,7 +3514,7 @@ impl GridMetric {
 
     fn title(self) -> &'static str {
         match self {
-            Self::Score => "Grid: Score",
+            Self::Score => "Grid: sampleCV screening",
             Self::K => "Grid: Factor Count",
             Self::PureCount => "Grid: Pure Variables",
             Self::MarginalSelected => "Grid: Selected Marginals",
@@ -3784,6 +3785,9 @@ impl DashboardData {
         } else {
             None
         };
+        let best_run = result.as_ref().map(|result| result.best.clone()).unwrap_or_else(|| {
+            slide_core::select_checkpoint_candidate(&checkpoint).0.cloned()
+        });
         let (runs, final_cv, completed_grid) = if let Some(result) = result {
             let completed_grid = result.evaluations.len();
             (
@@ -3804,10 +3808,6 @@ impl DashboardData {
         };
         let response_type = checkpoint.config.response_type;
         let config_lines = build_config_lines(&checkpoint, args.config.as_deref())?;
-        let best_run = runs
-            .iter()
-            .max_by(|left, right| left.score.total_cmp(&right.score))
-            .cloned();
         let delta_values = dedupe_sorted(&checkpoint.delta_grid);
         let lambda_values = dedupe_sorted(&checkpoint.lambda_grid);
         let mut run_lookup = BTreeMap::new();
@@ -3955,6 +3955,8 @@ fn build_config_lines(
     lines.extend(vec![
         format!("response_type: {:?}", checkpoint.config.response_type),
         format!("do_interacts: {}", checkpoint.config.do_interacts),
+        format!("candidate selection: {}", if checkpoint.config.auto_select { "opt-in highest finite sampleCV; first-grid ties" } else { "manual (single requested candidate usable directly)" }),
+        format!("sampleCV screening: {:?}; K={} (forced n for n<=20), iterations={}; LAST holdout model, not full-data", checkpoint.config.sample_cv.condition, checkpoint.config.sample_cv.k, checkpoint.config.sample_cv.iterations),
         format!(
             "delta_grid: {} values | lambda_grid: {} values",
             checkpoint.delta_grid.len(),
@@ -4214,7 +4216,12 @@ fn dedupe_sorted(values: &[Scalar]) -> Vec<Scalar> {
     unique
 }
 
+fn sample_cv_metric(run: &SlideRunResult) -> Option<Scalar> {
+    run.sample_cv.as_ref().and_then(|cv| cv.metric).filter(|v| v.is_finite())
+}
+
 fn color_for_metric(metric: GridMetric, value: Scalar) -> Color {
+    if !value.is_finite() { return Color::DarkGray; }
     match metric {
         GridMetric::Score => {
             if value >= 0.8 {
@@ -4243,6 +4250,7 @@ fn color_for_metric(metric: GridMetric, value: Scalar) -> Color {
 }
 
 fn format_metric(metric: GridMetric, value: Scalar) -> String {
+    if !value.is_finite() { return "NA".to_owned(); }
     match metric {
         GridMetric::Score => format!("{value:.2}"),
         GridMetric::K
@@ -4945,6 +4953,13 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
     use slide_core::OptimizeResponseType;
     use std::path::Path;
+
+    #[test]
+    fn legacy_checkpoint_scores_do_not_become_sample_cv_metrics() {
+        let app = fixture_app("../../tests/test_config_checkpoint.json");
+        assert!(super::sample_cv_metric(&app.data().runs[0]).is_none());
+        assert_eq!(super::format_metric(GridMetric::Score, f64::NAN), "NA");
+    }
 
     #[test]
     fn unpinned_loading_rows_obey_limit() {
@@ -5866,7 +5881,7 @@ mod tests {
         assert!(text.contains("NOT held-out CV"));
         assert!(text.contains("Permuted CV mean: 0.5000"));
         assert!(text.contains("SLIDE: 0.8000"));
-        assert!(text.contains("best model): unavailable"));
+        assert!(text.contains("selected candidate): unavailable"));
         app.data.as_mut().unwrap().final_cv = Some(slide_cv::FinalCvResult {
             repeat_scores: Vec::new(),
             permuted_mean: None,
@@ -5880,7 +5895,7 @@ mod tests {
             predictions: Vec::new(),
         });
         let text = render_text(&app, 60, 20);
-        assert!(text.contains("best model): Auc 0.7500 | SE 0.0200"));
+        assert!(text.contains("selected candidate): Auc 0.7500 | SE 0.0200"));
         for (width, height) in [(140, 45), (60, 20), (20, 8), (1, 1)] {
             render_text(&app, width, height);
             app.tab = Tab::Factors;

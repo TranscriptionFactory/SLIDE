@@ -162,8 +162,9 @@ pixi run --locked -e rust ./target/release/slide run --tui --config rust-quick.y
 pixi run --locked -e rust ./target/release/slide view --config rust-quick.yaml --checkpoint out/checkpoint.json
 ```
 
-For a fixed R-compatible full-data fit with prior sample weights, use
-[`slide fit`](docs/native-full-fit.md). This is separate from the legacy optimizer.
+For a fixed full-data fit, use [`slide fit`](docs/native-full-fit.md). It defaults
+to unweighted OLS and needs no weights. Select `--predictor weighted-binomial`
+explicitly to use prior sample weights with the method-4 upsilon predictor.
 
 For repeated CV on saved factors without refitting LOVE, use [`slide cv`](docs/native-cv.md).
 It runs observed and permuted-label branches and reports separate pooled-repeat summaries.
@@ -259,9 +260,13 @@ OptimizeSLIDE(params).run_pipeline(verbose=True, n_workers=1)
 | `lambda` | list | LOVE penalty values | `[0.1]` |
 | `fdr` | float | Knockoff FDR target | 0.1 |
 | `thresh_fdr` | float | FDR threshold for LOVE correlations | 0.2 |
-| `spec` | float | Minimum selection frequency for a factor | 0.2 |
+| `spec` | float | Minimum selection frequency for a factor | 0.1 |
 | `y_factor` | bool | Treat `y` as categorical | True |
-| `niter` | int | Knockoff iterations | 100 |
+| `niter` | int | Knockoff iterations (`SLIDE_iter` alias) | 1000 |
+| `sample_cv_iterations` | int | Screening holdouts (`sampleCV_iter` alias) | 500 |
+| `sample_cv_k` | int | Screening holdout denominator (`sampleCV_K` alias); K=n when n ≤ 20 | 4 |
+| `eval_type` | str | Screening metric: `auc` or `corr`; infer from response if omitted | inferred |
+| `auto_select` | bool | Choose highest finite sampleCV metric; first-grid tie break | false |
 | `SLIDE_top_feats` | int | Top features per factor to plot | 20 |
 | `pure_homo` | bool | Pure variables have loading 1 | True |
 
@@ -287,6 +292,29 @@ The control plot follows R's in-sample OLS calculation, including binary
 responses, with 1,000 full-random fits and 1,000 partial-random fits when selected
 interactions exist. It is **not held-out predictive performance**. The shared
 `summary_table.csv` names this value `Control_Performance`; final CV is separate.
+
+Both optimizers report candidates in grid order without choosing or ranking a
+winner by default, matching R. Set `auto_select: true` to choose the highest
+finite `sampleCV_Performance` (first-grid tie break). Python writes the manual
+or automatic state in `selected_candidate.json`; Rust writes this file only for
+opt-in auto-selection and refuses to overwrite prior result directories.
+An unscorable grid has no automatic winner.
+Single-candidate runs remain directly usable. Multi-candidate final CV requires
+opt-in selection or a manual choice of saved factors.
+
+SampleCV screens the fixed raw selected marginals and products with unweighted
+intercept OLS on repeated uniform holdouts. It pools held-out AUC (fixed
+orientation) or Spearman correlation, without rerunning selection. Summary
+columns add `sampleCV_Performance`, `sampleCV_Provenance`, `sampleCV_Status` and
+`f_size`; missing metrics stay missing. Per candidate, `sampleCV_predictions.csv`
+retains pooled predictions and sample IDs. `sampleCV_model.json` retains the LAST
+holdout model and its training IDs, ordered terms and aliased coefficients,
+not a full-data predictor. Model terms match the native zero-based
+`z_matrix.csv` headers (`Z0`, `Z1`, and products such as `Z0.Z1`). SampleCV is
+screening, not rigorous SLIDEcv.
+
+Legacy Rust checkpoints without screening results cannot resume optimization;
+use a fresh checkpoint. Their control scores are not sampleCV metrics.
 If no marginal factors pass selection, both backends write empty selection
 files and omit the control plot.
 

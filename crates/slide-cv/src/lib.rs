@@ -1,6 +1,12 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod sample_cv;
+pub use sample_cv::{
+    optimizer_sample_cv_config, run_sample_cv, run_sample_cv_with_splits, SampleCvCondition,
+    SampleCvConfig, SampleCvError, SampleCvModel, SampleCvPrediction, SampleCvResult, SampleCvStatus,
+};
+
 use ndarray::{Array1, Array2, Axis};
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 use rayon::prelude::*;
@@ -357,6 +363,7 @@ pub fn fit_full_data(
 ) -> Result<Method4Design, CvError> {
     let mut config = FinalCvConfig {
         include_interactions,
+        response_type: ResponseType::Continuous,
         repeats: 1,
         folds: 2,
         base_seed: config.base_seed,
@@ -364,7 +371,7 @@ pub fn fit_full_data(
         ..FinalCvConfig::default()
     };
     validate_cv_inputs(z, y, &config)?;
-    config.knockoff = method4_knockoff_config(&config.knockoff, 20.min(z.ncols()));
+    config.knockoff = method4_knockoff_config(&config.knockoff, calc_default_fsize(z.nrows(), z.ncols()));
     let mut rng = StdRng::seed_from_u64(config.base_seed);
     method4_design(z, y, z, &config, &mut rng, false)
 }
@@ -959,6 +966,28 @@ mod tests {
             knockoff_method: KnockoffMethod::Equi,
             family,
             ..KnockoffConfig::default()
+        }
+    }
+
+    #[test]
+    fn full_fit_gaussian_selection_accepts_continuous_and_nonzero_one_binary_labels() {
+        let z = Matrix::from_ndarray(ndarray::arr2(&[
+            [0.0, 1.0], [0.5, 0.2], [1.0, 0.8], [1.5, 0.1],
+            [2.0, 0.9], [2.5, 0.3], [3.0, 0.6], [3.5, 0.0],
+        ]));
+        let config = KnockoffConfig {
+            niter: 1, knockoff_method: KnockoffMethod::Equi,
+            ..KnockoffConfig::default()
+        };
+        for response in [
+            vec![1.2, 0.1, 0.4, 2.5, 1.3, 0.9, 2.1, 0.6],
+            vec![2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0],
+        ] {
+            let y = Vector::from_ndarray(ndarray::Array1::from_vec(response));
+            let design = super::fit_full_data(&z, &y, &config, false)
+                .unwrap_or_else(|error| panic!("Gaussian full-data selection failed: {error}"));
+            assert_eq!(design.train.nrows(), z.nrows());
+            assert_eq!(design.valid.nrows(), z.nrows());
         }
     }
 

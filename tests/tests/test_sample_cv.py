@@ -18,7 +18,7 @@ def test_explicit_ols_products_and_last_model():
     assert result['metric'] == pytest.approx(1)
     assert result['last_coefficients'] == pytest.approx([2, 1, 3])
     assert result['last_train_indices'] == train[-1]
-    assert result['term_order'] == ['(Intercept)', 'Z1', 'Z1.Z2']
+    assert result['term_order'] == ['(Intercept)', 'Z0', 'Z0.Z1']
     assert [p['row_index'] for p in result['predictions']] == [9, 10, 11, 0, 1, 2]
     np.testing.assert_array_equal(z, original)
 
@@ -109,6 +109,19 @@ def test_export_and_summary_preserve_candidate_order(tmp_path):
     assert model['last_train_ids'] == [f's{i}' for i in range(6)]
     assert model['settings']['model'] == 'last_split_ols'
     assert pd.read_csv(dirs[0] / 'sampleCV_predictions.csv').sample_id.tolist() == ['s6', 's7']
+
+
+def test_exported_terms_reconstruct_predictions_from_z_matrix(tmp_path):
+    z = pd.DataFrame(np.arange(24.).reshape(8, 3), columns=['Z0', 'Z1', 'Z2'])
+    z.to_csv(tmp_path / 'z_matrix.csv')
+    result = sample_cv(z, 1 + z.Z0 + 2*z.Z0*z.Z2, [0], [[0], [2]], iterations=1,
+                      train_splits=[list(range(6))])
+    assert result['term_order'] == ['(Intercept)', 'Z0', 'Z0.Z2']
+    headers = pd.read_csv(tmp_path / 'z_matrix.csv', index_col=0).columns
+    features = np.column_stack((np.ones(len(z)), z[headers[0]], z[headers[0]] * z[headers[2]]))
+    test_rows = np.setdiff1d(np.arange(len(z)), result['last_train_indices'])
+    reconstructed = features[test_rows] @ result['last_coefficients']
+    assert reconstructed == pytest.approx([p['y_pred'] for p in result['predictions']])
 
 
 @pytest.mark.parametrize('auto_select', [False, True])

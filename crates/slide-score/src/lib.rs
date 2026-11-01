@@ -34,6 +34,8 @@ pub enum ScoreError {
         "weighted binomial fit failed rank, convergence, boundary or finite-coefficient checks"
     )]
     InvalidWeightedFit,
+    #[error("OLS requires nonempty, finite training data and aligned response and prediction columns")]
+    InvalidOlsData,
     #[error("control scoring requires finite inputs, features, predictions, and scores")]
     NonFiniteControlScore,
     #[error("control scoring requires at least one marginal latent factor")]
@@ -160,6 +162,71 @@ pub fn fit_linear_predict(
         .as_ndarray()
         .dot(y_train.as_ndarray());
     Ok(Vector::from_ndarray(valid_design.dot(&coefficients)))
+}
+
+/// Ordered, aliased-column OLS for R `lm` screening, separate from final CV.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OlsModel {
+    /// Intercept first. Aliased terms have no coefficient and do not contribute to prediction.
+    pub coefficients: Vec<Option<Scalar>>,
+    pub rank: usize,
+}
+
+pub fn fit_r_ols(features: &Matrix, y: &Vector) -> Result<OlsModel, ScoreError> {
+    if features.nrows() == 0 || features.nrows() != y.len()
+        || !features.as_ndarray().iter().chain(y.as_ndarray().iter()).all(|v| v.is_finite())
+    {
+        return Err(ScoreError::InvalidOlsData);
+    }
+    let design = add_intercept(features.as_ndarray());
+    let mut q: Vec<Array1<Scalar>> = Vec::new();
+    let mut retained = Vec::new();
+    for column in 0..design.ncols() {
+        let original = design.column(column);
+        let original_norm = original.dot(&original).sqrt();
+        let mut residual = original.to_owned();
+        // Reorthogonalization keeps the ordered R alias decision stable for nearly dependent terms.
+        for _ in 0..2 {
+            for basis in &q {
+                residual -= &(basis * basis.dot(&residual));
+            }
+        }
+        let norm = residual.dot(&residual).sqrt();
+        // R lm.fit uses tol=1e-7 and moves dependent columns behind retained terms.
+        if q.len() == design.nrows() || norm == 0.0 || norm < 1.0e-7 * original_norm {
+            continue;
+        }
+        q.push(residual / norm);
+        retained.push(column);
+    }
+    let mut coefficients = vec![None; design.ncols()];
+    for row in (0..retained.len()).rev() {
+        let mut rhs = q[row].dot(y.as_ndarray());
+        for &column in &retained[row + 1..] {
+            rhs -= q[row].dot(&design.column(column)) * coefficients[column].unwrap_or(0.0);
+        }
+        coefficients[retained[row]] = Some(rhs / q[row].dot(&design.column(retained[row])));
+    }
+    if coefficients.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(ScoreError::InvalidOlsData);
+    }
+    Ok(OlsModel { coefficients, rank: retained.len() })
+}
+
+impl OlsModel {
+    pub fn predict(&self, features: &Matrix) -> Result<Vector, ScoreError> {
+        if self.coefficients.len() != features.ncols() + 1
+            || features.as_ndarray().iter().any(|v| !v.is_finite())
+        {
+            return Err(ScoreError::InvalidOlsData);
+        }
+        let coefficients = Array1::from_iter(self.coefficients.iter().map(|v| v.unwrap_or(0.0)));
+        let predicted = add_intercept(features.as_ndarray()).dot(&coefficients);
+        if predicted.iter().any(|v| !v.is_finite()) {
+            return Err(ScoreError::InvalidOlsData);
+        }
+        Ok(Vector::from_ndarray(predicted))
+    }
 }
 
 pub fn fit_logistic_predict(
@@ -429,6 +496,20 @@ mod tests {
     };
     use ndarray::{arr1, arr2};
     use slide_types::{Matrix, Vector};
+
+    #[test]
+    fn r_ols_drops_ordered_aliases_but_predicts_nonestimable_rows() {
+        let train = Matrix::from_ndarray(arr2(&[[0.0,0.0,0.0], [1.0,1.0,1.0+1e-10], [2.0,2.0,2.0]]));
+        let y = Vector::from_ndarray(arr1(&[1.0,3.0,5.0]));
+        let model = super::fit_r_ols(&train, &y).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(model.rank, 2);
+        assert_eq!(model.coefficients[2..], [None, None]);
+        let predicted = model.predict(&Matrix::from_ndarray(arr2(&[[3.0,99.0,-10.0]])))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!((predicted.as_ndarray()[0] - 7.0).abs() < 1e-12);
+        let overflow = super::OlsModel { coefficients: vec![Some(0.0), Some(f64::MAX)], rank: 2 };
+        assert_eq!(overflow.predict(&Matrix::from_ndarray(arr2(&[[2.0]]))), Err(super::ScoreError::InvalidOlsData));
+    }
 
     #[test]
     fn strict_weighted_logistic_checks_weights_rank_and_separation() {

@@ -122,7 +122,10 @@ fn optimize_slide_matches_committed_r_hiv_fixture() {
             slide_selection: false,
             interaction_size_cap: true,
             family: GlmnetFamily::Binomial,
+            r_compatible: false,
         },
+        sample_cv: slide_cv::SampleCvConfig::default(),
+        auto_select: false,
         final_cv: None,
         env_overrides: Default::default(),
     };
@@ -136,16 +139,17 @@ fn optimize_slide_matches_committed_r_hiv_fixture() {
     )
     .unwrap_or_else(|error| panic!("optimize_slide failed on HIV fixture: {error}"));
 
-    let actual_sig_lfs = &result.best.marginal.sig_lfs;
+    let best = result.best.as_ref().unwrap_or_else(|| panic!("missing single candidate"));
+    let actual_sig_lfs = &best.marginal.sig_lfs;
     let marginal_jaccard = jaccard(actual_sig_lfs, &expected_sig_lfs);
 
     assert_eq!(result.evaluations.len(), 1);
-    assert_eq!(result.best.love.k, expected_k);
-    assert_eq!(result.best.z.nrows(), x.nrows());
-    assert_eq!(result.best.z.ncols(), expected_k);
-    assert!(result.best.score.is_finite(), "score should be finite");
+    assert_eq!(best.love.k, expected_k);
+    assert_eq!(best.z.nrows(), x.nrows());
+    assert_eq!(best.z.ncols(), expected_k);
+    assert!(best.score.is_some_and(f64::is_finite), "score should be finite");
     assert_eq!(
-        result.best.marginal.voting.stage_one_union,
+        best.marginal.voting.stage_one_union,
         Some(actual_sig_lfs.clone()),
         "n > K should skip stage-one chunking"
     );

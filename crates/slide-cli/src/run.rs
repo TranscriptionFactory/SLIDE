@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::Deserialize;
 use slide_core::{
     optimize_slide_with_checkpoint_progress, KnockoffBackend, OptimizeResponseType,
@@ -67,14 +67,23 @@ pub struct CvArgs {
     pub voting_workers: Option<usize>,
 }
 
-/// Fixed full-data method-4 fitting; does not search or rescore a candidate grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Predictor {
+    Ols,
+    WeightedBinomial,
+}
+
+/// Fixed full-data method-4 fitting; does not search a candidate grid.
 #[derive(Debug, Parser, Clone)]
 pub struct FitArgs {
     #[arg(long)]
     pub config: PathBuf,
     /// Positive prior weights, one numeric column with the same ordered sample IDs as X/y.
     #[arg(long)]
-    pub weights: PathBuf,
+    pub weights: Option<PathBuf>,
+    /// Full-data predictor; sampleCV always uses unweighted OLS on raw selected terms.
+    #[arg(long, value_enum, default_value = "ols")]
+    pub predictor: Predictor,
     #[arg(long)]
     pub out: PathBuf,
     #[arg(long, default_value_t = 42)]
@@ -91,6 +100,10 @@ struct NativeFitInput {
     delta: Scalar,
     lambda: Scalar,
     thresh_fdr: Scalar,
+    #[serde(default = "optimizer_sample_iterations", alias = "sampleCV_iter")]
+    sample_cv_iterations: usize,
+    #[serde(default = "sample_k", alias = "sampleCV_K")]
+    sample_cv_k: usize,
 }
 
 pub fn run_fit(args: FitArgs) -> Result<()> {
@@ -98,7 +111,7 @@ pub fn run_fit(args: FitArgs) -> Result<()> {
     use slide_data_io::standardize;
     use slide_knockoff::KnockoffConfig;
     use slide_love::{compute_z_map, love, LoveConfig};
-    use slide_score::fit_weighted_logistic_predict;
+    use slide_score::{fit_r_ols, fit_weighted_logistic_predict};
     use slide_types::{Matrix, Vector};
     ensure!(
         !args.out.exists(),
@@ -108,8 +121,8 @@ pub fn run_fit(args: FitArgs) -> Result<()> {
     let yaml = std::fs::read_to_string(&args.config)?;
     let input: NativeFitInput = serde_yaml::from_str(&yaml)?;
     ensure!(
-        input.cv.eval_type == "auc" && input.cv.y_levels.as_ref().is_none_or(|v| v == &[0., 1.]),
-        "fixed full fitting requires binary 0/1 responses and eval_type: auc"
+        matches!(input.cv.eval_type.as_str(), "auc" | "corr"),
+        "fixed full fitting requires eval_type: auc or corr"
     );
     ensure!(
         input.delta.is_finite()
@@ -131,20 +144,34 @@ pub fn run_fit(args: FitArgs) -> Result<()> {
     );
     let x = read_feature_matrix(&input.x_path, &MatrixReadOptions::default())?;
     let y = aligned_column(&input.cv.y_path, &x)?;
-    let weights = aligned_column(&args.weights, &x)?;
-    ensure!(
-        y.as_ndarray().iter().all(|v| *v == 0. || *v == 1.)
-            && y.as_ndarray().iter().any(|v| *v == 0.)
-            && y.as_ndarray().iter().any(|v| *v == 1.),
-        "y must contain both classes, 0 and 1"
-    );
-    ensure!(
-        weights
-            .as_ndarray()
-            .iter()
-            .all(|v| v.is_finite() && *v > 0.),
-        "weights must be finite and positive"
-    );
+    ensure!(y.as_ndarray().iter().all(|v| v.is_finite()), "y must be finite");
+    let weights = match args.predictor {
+        Predictor::Ols => {
+            ensure!(args.weights.is_none(), "--weights is only used with --predictor weighted-binomial");
+            None
+        }
+        Predictor::WeightedBinomial => {
+            ensure!(input.cv.eval_type == "auc"
+                && input.cv.y_levels.as_ref().is_none_or(|v| v == &[0., 1.])
+                && y.as_ndarray().iter().all(|v| *v == 0. || *v == 1.)
+                && y.as_ndarray().iter().any(|v| *v == 0.)
+                && y.as_ndarray().iter().any(|v| *v == 1.),
+                "weighted-binomial requires eval_type: auc and both response classes 0 and 1");
+            let path = args.weights.as_ref().context("--predictor weighted-binomial requires --weights")?;
+            let weights = aligned_column(path, &x)?;
+            ensure!(weights.as_ndarray().iter().all(|v| v.is_finite() && *v > 0.), "weights must be finite and positive");
+            Some(weights)
+        }
+    };
+    if input.cv.eval_type == "auc" {
+        let mut levels = y.as_ndarray().to_vec();
+        levels.sort_by(f64::total_cmp);
+        levels.dedup();
+        ensure!(levels.len() == 2, "eval_type: auc requires exactly two response levels");
+    }
+    let screening_config = sample_config(&input.cv.eval_type, input.sample_cv_k, input.sample_cv_iterations, args.seed, x.matrix.nrows())?;
+    ensure!(screening_config.iterations > 0 && (2..=x.matrix.nrows()).contains(&screening_config.k),
+        "sampleCV requires positive iterations and 2 <= K <= n");
     ensure!(
         x.matrix.nrows() > 1
             && x.matrix.ncols() > 0
@@ -198,14 +225,16 @@ pub fn run_fit(args: FitArgs) -> Result<()> {
             base_seed: args.seed,
             ..KnockoffConfig::default()
         },
-        20.min(z.ncols()),
+        slide_knockoff::calc_default_fsize(z.nrows(), z.ncols()),
     );
     std::fs::write(
         args.out.join("effective-config.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "love": config, "knockoff": ko, "seed": args.seed,
             "weights_path": args.weights, "do_interacts": input.cv.do_interacts.unwrap_or(true),
-            "predictor": "weighted binomial GLM; maxit=25, deviance epsilon=1e-8; strict rank/convergence/boundary checks",
+            "predictor": match args.predictor { Predictor::Ols => "full-data unweighted OLS on raw selected marginal/product terms", Predictor::WeightedBinomial => "full-data weighted binomial GLM on method-4 upsilon design; maxit=25, deviance epsilon=1e-8; strict rank/convergence/boundary checks" },
+            "sample_cv": screening_config,
+            "sample_cv_provenance": "repeated uniform holdout screening; last holdout model, not full-data predictor",
             "cv_eligibility": "valid factors, independent of full-data predictor status"
         }))?,
     )?;
@@ -222,13 +251,33 @@ pub fn run_fit(args: FitArgs) -> Result<()> {
                     "upsilon_lfs_zero_based":design.upsilon_lfs, "random_fallback":design.used_random_fallback
                 }))?,
             )?;
-            crate::output::labelled_matrix(&args.out.join("design.csv"), &design.train, &labels)?;
             status["selection"] = "complete".into();
-            if design.train.ncols() == 0 {
+            let screening = slide_cv::run_sample_cv(&z, &y, &design.marginals, &design.interactions,
+                &screening_config)?;
+            crate::output::export_sample_cv(&args.out, &screening, &labels)?;
+            status["sample_cv"] = serde_json::to_value(screening.status)?;
+            let predictors = full_data_predictor_design(&z, &design, args.predictor)?;
+            crate::output::labelled_matrix(&args.out.join("design.csv"), &predictors, &labels)?;
+            if predictors.ncols() == 0 {
                 status["predictor"] = "no_features_selected".into();
             } else {
-                match fit_weighted_logistic_predict(&design.train, &y, &design.train, &weights) {
-                    Ok(predictions) => {
+                let prediction = match args.predictor {
+                    Predictor::Ols => fit_r_ols(&predictors, &y).and_then(|model| {
+                        Ok((model.predict(&predictors)?, Some(model)))
+                    }),
+                    Predictor::WeightedBinomial => fit_weighted_logistic_predict(
+                        &predictors, &y, &predictors, weights.as_ref().unwrap(),
+                    ).map(|predicted| (predicted, None)),
+                };
+                match prediction {
+                    Ok((predictions, model)) => {
+                        if let Some(model) = model {
+                            let mut terms = vec!["(Intercept)".to_owned()];
+                            terms.extend(design.marginals.iter().map(|i| format!("Z{i}")));
+                            terms.extend(design.interactions.iter().map(|(a, b)| format!("Z{a}.Z{b}")));
+                            crate::output::export_ols_model(&args.out, "full-data-model", &model.coefficients, &terms,
+                                serde_json::json!({"provenance":"full-data unweighted OLS; not held-out evaluation", "rank":model.rank, "training_sample_ids":labels}))?;
+                        }
                         crate::output::labelled_matrix(
                             &args.out.join("predictions.csv"),
                             &Matrix::from_ndarray(
@@ -255,6 +304,18 @@ pub fn run_fit(args: FitArgs) -> Result<()> {
     )?;
     eprintln!("Full fit status: {status}; valid factors are available for separate CV");
     Ok(())
+}
+
+fn full_data_predictor_design(
+    z: &slide_types::Matrix,
+    design: &slide_cv::Method4Design,
+    predictor: Predictor,
+) -> Result<slide_types::Matrix, slide_score::ScoreError> {
+    if predictor == Predictor::Ols && !(design.marginals.is_empty() && design.interactions.is_empty()) {
+        slide_score::build_selected_feature_matrix(z, &design.marginals, &design.interactions)
+    } else {
+        Ok(design.train.clone())
+    }
 }
 
 fn aligned_column(
@@ -288,13 +349,30 @@ struct NativeCvInput {
     y_path: PathBuf,
     out_path: PathBuf,
     eval_type: String,
-    #[serde(rename = "SLIDE_iter")]
+    #[serde(default = "default_iterations", rename = "SLIDE_iter", alias = "niter")]
     slide_iter: usize,
+    #[serde(default = "default_spec")]
     spec: Scalar,
     fdr: Option<Scalar>,
     #[serde(default, deserialize_with = "r_yaml_bool")]
     do_interacts: Option<bool>,
     y_levels: Option<Vec<Scalar>>,
+}
+
+fn default_spec() -> Scalar { 0.1 }
+fn default_iterations() -> usize { 1000 }
+fn optimizer_sample_iterations() -> usize { 500 }
+fn sample_k() -> usize { 4 }
+
+fn sample_config(condition: &str, k: usize, iterations: usize, seed: u64, n: usize) -> Result<slide_cv::SampleCvConfig> {
+    let condition = match condition {
+        "auc" => slide_cv::SampleCvCondition::Auc,
+        "corr" => slide_cv::SampleCvCondition::Corr,
+        other => anyhow::bail!("unsupported eval_type: {other}; use auc or corr"),
+    };
+    Ok(slide_cv::optimizer_sample_cv_config(&slide_cv::SampleCvConfig {
+        condition: Some(condition), k, iterations, seed,
+    }, n))
 }
 
 fn r_yaml_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
@@ -674,8 +752,16 @@ pub struct RunConfig {
     #[serde(default)]
     pub fdr: Option<Scalar>,
 
-    #[serde(default, rename = "SLIDE_iter")]
+    #[serde(default, rename = "SLIDE_iter", alias = "niter")]
     pub slide_iter: Option<usize>,
+    #[serde(default, alias = "sampleCV_iter")]
+    pub sample_cv_iterations: Option<usize>,
+    #[serde(default, alias = "sampleCV_K")]
+    pub sample_cv_k: Option<usize>,
+    #[serde(default)]
+    pub eval_type: Option<String>,
+    #[serde(default)]
+    pub auto_select: bool,
 
     #[serde(default)]
     pub slide_selection: Option<bool>,
@@ -788,16 +874,14 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
 
     let _ = std::fs::remove_file(&progress_path);
 
-    let best = &result.best;
     eprintln!("=== SLIDE Optimization Complete ===");
-    eprintln!("Best score:  {:.6}", best.score);
-    eprintln!("Best delta:  {}", best.delta);
-    eprintln!("Best lambda: {}", best.lambda);
-    eprintln!(
-        "Selected LFs: {} marginal, {} interactions",
-        best.marginal.sig_lfs.len(),
-        best.interactions.sig_interacts.len(),
-    );
+    eprintln!("Candidate selection: {:?}", result.selection_status);
+    if let Some(selected) = &result.best {
+        eprintln!("Selected delta: {}; lambda: {}; sampleCV: {:?}", selected.delta, selected.lambda,
+            selected.sample_cv.as_ref().and_then(|cv| cv.metric));
+    } else {
+        eprintln!("No candidate selected; inspect candidate summaries in grid order.");
+    }
     eprintln!("Checkpoint written to: {}", checkpoint.display());
     if let Some(out_path) = &cfg.out_path {
         crate::output::export_results(out_path, &loaded, &y, &result, &opt_config).with_context(
@@ -816,6 +900,17 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
 
 fn optimize_config_from_run_config(cfg: &RunConfig) -> Result<OptimizeSlideConfig> {
     let mut opt_config = OptimizeSlideConfig::default();
+    opt_config.auto_select = cfg.auto_select;
+    if let Some(v) = cfg.sample_cv_iterations { opt_config.sample_cv.iterations = v; }
+    if let Some(v) = cfg.sample_cv_k { opt_config.sample_cv.k = v; }
+    if let Some(v) = cfg.base_seed { opt_config.sample_cv.seed = v; }
+    opt_config.sample_cv.condition = match cfg.eval_type.as_deref() {
+        Some("auc") => Some(slide_cv::SampleCvCondition::Auc),
+        Some("corr") => Some(slide_cv::SampleCvCondition::Corr),
+        Some(other) => anyhow::bail!("unsupported eval_type: {other}; use auc or corr"),
+        None => None,
+    };
+    if cfg.eval_type.as_deref() == Some("auc") { opt_config.response_type = OptimizeResponseType::Binary; }
 
     if let Some(v) = cfg.do_interacts {
         opt_config.do_interacts = v;
@@ -906,6 +1001,55 @@ mod tests {
 
     fn parse_config(yaml: &str) -> RunConfig {
         serde_yaml::from_str(yaml).unwrap_or_else(|error| panic!("config should parse: {error}"))
+    }
+
+    #[test]
+    fn empty_full_data_selection_stays_empty_for_default_ols() {
+        let z = slide_types::Matrix::from_rows(vec![vec![1.0], vec![2.0]]).unwrap();
+        let empty = slide_types::Matrix::from_ndarray(ndarray::Array2::zeros((2, 0)));
+        let design = slide_cv::Method4Design {
+            train: empty.clone(), valid: empty, marginals: vec![], interactions: vec![],
+            upsilon_lfs: vec![], used_random_fallback: false,
+        };
+        for predictor in [super::Predictor::Ols, super::Predictor::WeightedBinomial] {
+            let predictors = super::full_data_predictor_design(&z, &design, predictor).unwrap();
+            assert_eq!(predictors.shape(), (2, 0));
+        }
+    }
+
+    #[test]
+    fn sample_cv_aliases_defaults_and_predictor_are_explicit() {
+        use clap::Parser;
+        let base = "x_path: x.csv\ny_path: y.csv\ndelta: [0.1]\nlambda: [0.2]\n";
+        let defaults = optimize_config_from_run_config(&parse_config(base)).unwrap();
+        assert!(!defaults.auto_select);
+        assert_eq!(defaults.sample_cv.iterations, 500);
+        assert_eq!(defaults.knockoff.niter, 1000);
+        assert_eq!(defaults.knockoff.spec, 0.1);
+        for aliases in [
+            "niter: 7\nsampleCV_iter: 9\nsampleCV_K: 3\n",
+            "SLIDE_iter: 7\nsample_cv_iterations: 9\nsample_cv_k: 3\n",
+        ] {
+            let cfg = parse_config(&format!("{base}{aliases}eval_type: corr\nauto_select: true\n"));
+            let opt = optimize_config_from_run_config(&cfg).unwrap();
+            assert!(opt.auto_select);
+            assert_eq!(opt.sample_cv.iterations, 9);
+            assert_eq!(opt.sample_cv.k, 3);
+            assert_eq!(opt.knockoff.niter, 7);
+            assert_eq!(opt.sample_cv.condition, Some(slide_cv::SampleCvCondition::Corr));
+        }
+        for conflicting in [
+            "sampleCV_iter: 7\nsample_cv_iterations: 9\n",
+            "sampleCV_K: 4\nsample_cv_k: 3\n",
+            "SLIDE_iter: 7\nniter: 9\n",
+        ] {
+            assert!(serde_yaml::from_str::<RunConfig>(&format!("{base}{conflicting}")).is_err());
+        }
+        let args = super::FitArgs::try_parse_from(["fit", "--config", "input.yaml", "--out", "out"]).unwrap();
+        assert_eq!(args.predictor, super::Predictor::Ols);
+        assert!(args.weights.is_none());
+        let cfg = super::sample_config("corr", 4, 500, 42, 3).unwrap();
+        assert_eq!(cfg.k, 3);
     }
 
     #[test]
