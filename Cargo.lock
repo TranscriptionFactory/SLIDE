@@ -2245,6 +2245,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slide-dsdp"
+version = "1.0.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "slide-glmnet"
 version = "1.0.0"
 dependencies = [
@@ -2335,7 +2342,7 @@ dependencies = [
  "lapack-src 0.11.0",
  "nalgebra",
  "ndarray",
- "rayon",
+ "slide-dsdp",
  "slide-types",
  "thiserror 2.0.18",
 ]

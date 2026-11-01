@@ -21,6 +21,7 @@ clarabel = { version = "0.11.1", features = ["sdp", "blas-src", "lapack-src", "f
 lapack-src = { version = "0.11.0", features = ["openblas"] }
 nalgebra.workspace = true
 ndarray.workspace = true
-rayon.workspace = true
 thiserror.workspace = true
 slide-types = { version = "1.0.0", path = "../slide-types" }
+
+slide-dsdp = { path = "../slide-dsdp" }

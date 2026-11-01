@@ -9,7 +9,6 @@ use clarabel::{
     },
 };
 use ndarray::Array1;
-use rayon::prelude::*;
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use thiserror::Error;
 
@@ -67,6 +66,8 @@ pub enum SdpError {
     NonPositiveDiagonal { index: usize, value: Scalar },
     #[error("max block size must be positive")]
     InvalidMaxBlockSize,
+    #[error("SDP dimension {dimension} exceeds the bounded native workspace limit (4096); use a larger-memory solver implementation, not smaller scientific blocks")]
+    UnsafeWorkspace { dimension: usize },
     #[error("failed to initialize Clarabel solver: {message}")]
     SolverInitialization { message: String },
     #[error("SDP solver failed with status {status}; consider falling back to equi-correlated")]
@@ -131,7 +132,7 @@ pub fn create_solve_asdp_with_settings(
     let correlation_array = normalized.correlation.as_ndarray();
 
     let block_results: Vec<(Vec<usize>, Vec<Scalar>)> = clusters
-        .into_par_iter()
+        .into_iter()
         .map(|cluster| {
             let block = submatrix(correlation_array, &cluster);
             let block_matrix = Matrix::from_ndarray(block);
@@ -182,6 +183,10 @@ fn solve_correlation_sdp_effective(
     settings: DefaultSettings<Scalar>,
 ) -> Result<DefaultSolution<Scalar>, SdpError> {
     let dimension = correlation.nrows();
+    check_workspace_dimension(dimension)?;
+    if dimension > 64 {
+        return solve_correlation_sdp_native(correlation, &settings);
+    }
     let objective = vec![-1.0; dimension];
     let quadratic = CscMatrix::<Scalar>::zeros((dimension, dimension));
     let constraint_matrix = build_sdp_constraint_matrix(dimension);
@@ -203,6 +208,63 @@ fn solve_correlation_sdp_effective(
     solver.solve();
 
     Ok(solver.solution)
+}
+
+// DSDP forms the n-variable Schur system, not Clarabel's quartic cone workspace.
+fn solve_correlation_sdp_native(
+    correlation: &Matrix,
+    settings: &DefaultSettings<Scalar>,
+) -> Result<DefaultSolution<Scalar>, SdpError> {
+    let n = correlation.nrows();
+    let started = std::time::Instant::now();
+    let packed = (0..n)
+        .flat_map(|i| (0..=i).map(move |j| 2.0 * correlation.as_ndarray()[(i, j)]))
+        .collect();
+    // DSDP normalizes the gap by 1+|primal|+|dual|; also check our original
+    // absolute/relative objective criterion below, without relaxing tolerances.
+    let solved = slide_dsdp::solve(
+        n,
+        packed,
+        settings.max_iter,
+        0.25 * settings.tol_gap_abs.min(settings.tol_gap_rel),
+        settings.tol_feas,
+    )
+    .map_err(|status| SdpError::SolverFailed { status })?;
+    let primal: Scalar = solved.x.iter().sum();
+    let dual = solved.objectives[1];
+    let tolerance = settings
+        .tol_gap_abs
+        .max(settings.tol_gap_rel * primal.abs());
+    if solved.status[0] != 1
+        || solved.status[1] != 1
+        || solved
+            .x
+            .iter()
+            .chain(solved.objectives.iter())
+            .chain(solved.errors.iter())
+            .any(|x| !x.is_finite())
+        || (dual - primal).abs() > tolerance
+    {
+        return Err(SdpError::SolverFailed {
+            status: format!(
+                "DSDP reason={}, type={}, objective gap={:e} (limit {:e})",
+                solved.status[0],
+                solved.status[1],
+                (dual - primal).abs(),
+                tolerance
+            ),
+        });
+    }
+    let mut result = DefaultSolution::new(n, 0);
+    result.x = solved.x;
+    result.status = SolverStatus::Solved;
+    result.obj_val = -primal;
+    result.obj_val_dual = -dual;
+    result.r_prim = solved.errors[0];
+    result.r_dual = solved.errors[2];
+    result.iterations = solved.status[2] as u32;
+    result.solve_time = started.elapsed().as_secs_f64();
+    Ok(result)
 }
 
 fn clarabel_settings(settings: &SdpSettings) -> DefaultSettings<Scalar> {
@@ -269,7 +331,15 @@ fn build_sdp_rhs(correlation: &ndarray::Array2<Scalar>) -> Vec<Scalar> {
     rhs
 }
 
+fn check_workspace_dimension(dimension: usize) -> Result<(), SdpError> {
+    if dimension > slide_dsdp::MAX_DIMENSION {
+        return Err(SdpError::UnsafeWorkspace { dimension });
+    }
+    Ok(())
+}
+
 fn normalize_covariance(sigma: &Matrix) -> Result<NormalizedCovariance, SdpError> {
+    check_workspace_dimension(sigma.nrows())?;
     validate_square_and_symmetric(sigma, "sdp solve")?;
 
     let dimension = sigma.nrows();
@@ -562,6 +632,80 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn resource_guard_precedes_dense_workspace_allocation() {
+        assert!(super::check_workspace_dimension(425).is_ok());
+        assert!(super::check_workspace_dimension(4096).is_ok());
+        for dimension in [4097, usize::MAX] {
+            assert_eq!(super::check_workspace_dimension(dimension),
+                Err(super::SdpError::UnsafeWorkspace { dimension }));
+        }
+    }
+
+    #[test]
+    fn native_solver_matches_existing_sdp_and_r_objectives() {
+        for name in ["corr3", "block4", "cov4"] {
+            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/sdp")
+                .join(name);
+            let text = std::fs::read_to_string(directory.join("input_sigma.csv")).unwrap();
+            let rows: Vec<Vec<f64>> = text
+                .lines()
+                .map(|line| line.split(',').map(|x| x.parse().unwrap()).collect())
+                .collect();
+            let n = rows.len();
+            let sigma = Matrix::from_ndarray(
+                ndarray::Array2::from_shape_vec((n, n), rows.into_iter().flatten().collect()).unwrap(),
+            );
+            let normalized = super::normalize_covariance(&sigma).unwrap();
+            let settings = super::clarabel_settings(&super::default_solver_settings());
+            let native =
+                super::solve_correlation_sdp_native(&normalized.correlation, &settings).unwrap();
+            let reference =
+                super::solve_correlation_sdp_effective(&normalized.correlation, settings).unwrap();
+            assert!((native.obj_val - reference.obj_val).abs() < 1e-5, "{name}");
+            assert!(native.obj_val - native.obj_val_dual <= 1e-6 * native.obj_val.abs().max(1.0));
+            let expected: Vec<f64> = std::fs::read_to_string(directory.join("expected_sdp.csv"))
+                .unwrap()
+                .split_whitespace()
+                .map(|x| x.parse().unwrap())
+                .collect();
+            let mut result = native.x;
+            super::enforce_correlation_feasibility(&normalized.correlation, &mut result).unwrap();
+            let mut result = super::rescale_solution(&result, &normalized.diagonal);
+            super::enforce_covariance_feasibility(&sigma, &mut result).unwrap();
+            for (a, b) in result.iter().zip(expected.iter()) {
+                assert!((a - b).abs() < 1e-3, "{name}: {a} vs {b}");
+            }
+            assert!(super::minimum_eigenvalue_of_shifted_matrix(&sigma, &result) >= -1e-8);
+        }
+    }
+
+    #[test]
+    fn native_dense_425_has_certified_optimum() {
+        let sigma = Matrix::from_ndarray(ndarray::Array2::from_shape_fn((425, 425), |(i, j)| {
+            if i == j {
+                1.0
+            } else {
+                0.5
+            }
+        }));
+        let solution = create_solve_sdp(&sigma).unwrap();
+        assert!((425.0 - solution.as_ndarray().sum()).abs() <= 425.0e-6);
+        assert!(
+            super::minimum_eigenvalue_of_shifted_matrix(&sigma, &solution.as_ndarray().to_vec())
+                >= -1e-8
+        );
+    }
+
+    #[test]
+    fn native_solver_does_not_accept_uncertified_iterates() {
+        let sigma = Matrix::from_ndarray(arr2(&[[1.0, 0.5], [0.5, 1.0]]));
+        let mut settings = super::clarabel_settings(&super::default_solver_settings());
+        settings.max_iter = 1;
+        assert!(super::solve_correlation_sdp_native(&sigma, &settings).is_err());
+    }
+
     fn diagnostic_settings(tighten_feasibility: bool) -> super::DefaultSettings<f64> {
         let mut settings = super::clarabel_settings(&super::default_solver_settings());
         if tighten_feasibility {
@@ -686,7 +830,8 @@ mod tests {
         };
         let status = result.status;
         let raw = result.x;
-        write(&directory.join("clarabel_raw.csv"), raw.iter().copied())?;
+        let raw_name = if normalized.dimension > 64 { "native_raw.csv" } else { "clarabel_raw.csv" };
+        write(&directory.join(raw_name), raw.iter().copied())?;
         write(
             &directory.join("objective.csv"),
             vec![-1.0; normalized.dimension],

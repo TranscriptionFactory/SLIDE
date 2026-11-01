@@ -325,6 +325,7 @@ fn prepare_knockoff_cache_with_policy(
     };
     let diag_s = match solve_diag_s(&sigma, method) {
         Ok(value) => value,
+        Err(error @ KnockoffError::Sdp(SdpError::UnsafeWorkspace { .. })) => return Err(error),
         Err(_) if r_compatible && matches!(method, KnockoffMethod::Asdp { .. }) => {
             solve_diag_s(&sigma, &KnockoffMethod::Equi)?
         }

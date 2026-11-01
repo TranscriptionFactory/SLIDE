@@ -56,6 +56,9 @@ pub struct CvArgs {
     pub seed: u64,
     #[arg(long)]
     pub threads: Option<usize>,
+    /// Bound simultaneous folds independently of --threads (1 minimizes memory).
+    #[arg(long, default_value_t = 1)]
+    pub max_active_folds: usize,
 }
 
 /// Fixed full-data method-4 fitting; does not search or rescore a candidate grid.
@@ -311,6 +314,10 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
         "CV output directory already exists: {}",
         args.out.display()
     );
+    for variable in ["OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"] {
+        ensure!(std::env::var(variable).as_deref() == Ok("1"),
+            "set {variable}=1 before starting CV to prevent nested BLAS parallelism");
+    }
     let yaml = std::fs::read_to_string(&args.config)?;
     let input: NativeCvInput = serde_yaml::from_str(&yaml).context("invalid SLIDEcv input YAML")?;
     let z_path = args
@@ -352,6 +359,7 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
     let y = Vector::from_ndarray(loaded_y.matrix.as_ndarray().column(0).to_owned());
     let config = FinalCvConfig {
         repeats: args.nrep,
+        max_active_folds: args.max_active_folds,
         folds: args.k,
         base_seed: args.seed,
         response_type,
@@ -931,6 +939,7 @@ cv:
             k: 3,
             seed: 17,
             threads: Some(1),
+            max_active_folds: 1,
         };
         super::run_cv(args.clone())?;
         let result: slide_cv::FinalCvResult =

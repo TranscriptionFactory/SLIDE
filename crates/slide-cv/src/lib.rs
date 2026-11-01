@@ -20,6 +20,9 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FinalCvConfig {
     pub repeats: usize,
+    /// Maximum simultaneously active folds, independent of the Rayon thread budget.
+    #[serde(default = "default_max_active_folds")]
+    pub max_active_folds: usize,
     pub folds: usize,
     pub base_seed: u64,
     pub response_type: ResponseType,
@@ -27,10 +30,15 @@ pub struct FinalCvConfig {
     pub knockoff: KnockoffConfig,
 }
 
+fn default_max_active_folds() -> usize {
+    1
+}
+
 impl Default for FinalCvConfig {
     fn default() -> Self {
         Self {
             repeats: 20,
+            max_active_folds: default_max_active_folds(),
             folds: 10,
             base_seed: 42,
             response_type: ResponseType::Binary,
@@ -113,6 +121,8 @@ pub struct FoldSplit {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum CvError {
+    #[error("max_active_folds must be positive; use 1 for minimum fold memory")]
+    InvalidActiveFoldCount,
     #[error("CV requires at least one repeat")]
     InvalidRepeatCount,
     #[error("CV requires at least two folds")]
@@ -147,6 +157,9 @@ pub fn run_final_slide_cv(
     y: &Vector,
     config: &FinalCvConfig,
 ) -> Result<FinalCvResult, CvError> {
+    if config.max_active_folds == 0 {
+        return Err(CvError::InvalidActiveFoldCount);
+    }
     validate_cv_inputs(z, y, config)?;
     let z = standardize(z)?;
     let splits = repeated_kfold_splits(y, config)?;
@@ -154,49 +167,60 @@ pub fn run_final_slide_cv(
     config.knockoff =
         method4_knockoff_config(&config.knockoff, calc_default_fsize(z.nrows(), z.ncols()));
     config.knockoff.parallel = false; // Folds share one Rayon pool, not per-fit process clusters.
-    let outputs = splits
-        .par_iter()
-        .map(|split| {
-            let seed = config
-                .base_seed
-                .wrapping_add((split.repeat * config.folds + split.fold) as u64);
-            let mut rng = StdRng::seed_from_u64(seed);
-            let train = select_rows(&z, &split.train_indices);
-            let valid = select_rows(&z, &split.valid_indices);
-            let train_y = y.as_ndarray().select(Axis(0), &split.train_indices);
-            let valid_y = y.as_ndarray().select(Axis(0), &split.valid_indices);
-            let (train_y, valid_y) = if config.response_type == ResponseType::Continuous {
-                let center = train_y.sum() / train_y.len() as Scalar;
-                let sd = sample_sd(&train_y);
-                ((train_y - center) / sd, (valid_y - center) / sd)
-            } else {
-                (train_y, valid_y)
-            };
-            let mut permuted = train_y.to_vec();
-            permuted.shuffle(&mut rng);
-            let observed = evaluate_fold(
-                &train,
-                &Vector::from_ndarray(train_y),
-                &valid,
-                &valid_y,
-                &config,
-                split,
-                FinalCvMethod::Slide,
-                &mut rng,
-            )?;
-            let null = evaluate_fold(
-                &train,
-                &Vector::from_ndarray(Array1::from_vec(permuted)),
-                &valid,
-                &valid_y,
-                &config,
-                split,
-                FinalCvMethod::SlideY,
-                &mut rng,
-            )?;
-            Ok((observed, null))
-        })
-        .collect::<Result<Vec<_>, CvError>>()?;
+    let mut outputs = Vec::with_capacity(splits.len());
+    #[cfg(test)]
+    let active = std::sync::atomic::AtomicUsize::new(0);
+    // Finish each batch before admitting another fold, including nested Rayon work.
+    for batch in splits.chunks(config.max_active_folds) {
+        let batch_outputs = batch
+            .par_iter()
+            .map(|split| {
+                #[cfg(test)]
+                assert!(active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < config.max_active_folds);
+                let seed = config
+                    .base_seed
+                    .wrapping_add((split.repeat * config.folds + split.fold) as u64);
+                let mut rng = StdRng::seed_from_u64(seed);
+                let train = select_rows(&z, &split.train_indices);
+                let valid = select_rows(&z, &split.valid_indices);
+                let train_y = y.as_ndarray().select(Axis(0), &split.train_indices);
+                let valid_y = y.as_ndarray().select(Axis(0), &split.valid_indices);
+                let (train_y, valid_y) = if config.response_type == ResponseType::Continuous {
+                    let center = train_y.sum() / train_y.len() as Scalar;
+                    let sd = sample_sd(&train_y);
+                    ((train_y - center) / sd, (valid_y - center) / sd)
+                } else {
+                    (train_y, valid_y)
+                };
+                let mut permuted = train_y.to_vec();
+                permuted.shuffle(&mut rng);
+                let observed = evaluate_fold(
+                    &train,
+                    &Vector::from_ndarray(train_y),
+                    &valid,
+                    &valid_y,
+                    &config,
+                    split,
+                    FinalCvMethod::Slide,
+                    &mut rng,
+                )?;
+                let null = evaluate_fold(
+                    &train,
+                    &Vector::from_ndarray(Array1::from_vec(permuted)),
+                    &valid,
+                    &valid_y,
+                    &config,
+                    split,
+                    FinalCvMethod::SlideY,
+                    &mut rng,
+                )?;
+                #[cfg(test)]
+                active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                Ok((observed, null))
+            })
+            .collect::<Result<Vec<_>, CvError>>()?;
+        outputs.extend(batch_outputs);
+    }
     let mut result = FinalCvResult {
         metric: metric_for_response(config.response_type),
         mean: None,
@@ -857,6 +881,7 @@ mod tests {
             response_type: ResponseType::Binary,
             include_interactions: false,
             knockoff: fast_knockoff(GlmnetFamily::Binomial),
+            ..FinalCvConfig::default()
         };
 
         let first = repeated_kfold_splits(&y, &config)
@@ -896,6 +921,7 @@ mod tests {
             response_type: ResponseType::Binary,
             include_interactions: false,
             knockoff: fast_knockoff(GlmnetFamily::Binomial),
+            ..FinalCvConfig::default()
         };
 
         let result = run_final_slide_cv(&z, &y, &config)
@@ -925,6 +951,7 @@ mod tests {
             response_type: ResponseType::Continuous,
             include_interactions: false,
             knockoff: fast_knockoff(GlmnetFamily::Gaussian),
+            ..FinalCvConfig::default()
         };
 
         let result = run_final_slide_cv(&z, &y, &config)
@@ -1074,8 +1101,18 @@ mod tests {
             ..FinalCvConfig::default()
         };
         let result = run_final_slide_cv(&z, &y, &config).unwrap();
-        let again = run_final_slide_cv(&z, &y, &config).unwrap();
-        assert_eq!(result, again);
+        for threads in [1, 4] {
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+            for max_active_folds in [1, 2, 3] {
+                let mut bounded = config.clone();
+                bounded.max_active_folds = max_active_folds;
+                let again = pool.install(|| run_final_slide_cv(&z, &y, &bounded)).unwrap();
+                assert_eq!(result, again);
+            }
+        }
+        let mut invalid = config.clone();
+        invalid.max_active_folds = 0;
+        assert_eq!(run_final_slide_cv(&z, &y, &invalid), Err(super::CvError::InvalidActiveFoldCount));
         assert_eq!(result.predictions.len(), 36);
         assert_eq!(result.permuted_predictions.len(), 36);
         assert_eq!(result.folds.len(), 6);

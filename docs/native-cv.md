@@ -8,11 +8,12 @@ solvers; equal seeds do not reproduce R's selected factors or predictions.
 ## Run one saved candidate
 
 ```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 pixi run --locked -e rust ./target/release/slide cv \
   --config path/to/input.yaml \
   --z path/to/z_matrix.csv \
   --out results/2026-10-27_native-cv \
-  --nrep 15 --k 5 --seed 20261002 --threads 20
+  --nrep 15 --k 5 --seed 20261002 --threads 20 --max-active-folds 1
 ```
 
 Use an existing parent directory and a new output directory. The command refuses
@@ -103,3 +104,34 @@ seeding, input alignment, and output protection. The R reference test fixes
 selected interactions and compares submodel/final predictions; it does not
 assert cross-language equality of random knockoff selections. These checks do
 not establish a speedup or scientific acceptance on a production dataset.
+
+## Memory and numerical solver
+
+`--max-active-folds` (default 1) limits active folds independently of `--threads`.
+Increasing the thread count does not increase fold concurrency. Batches retain
+split order, per-fold seeds and observed/permuted pairing. Each fold disables
+parallel knockoff voting; ASDP blocks run sequentially. Library callers must
+also set BLAS/OpenMP thread counts to 1 before starting worker threads. The CV
+CLI rejects unset or non-1 `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS` and
+`MKL_NUM_THREADS` rather than oversubscribing nested native threads.
+
+SDP blocks up to 64 variables retain Clarabel. Larger blocks use the existing
+vendored DSDP C implementation through `slide-dsdp`, without Python or R at
+runtime. The formulation is unchanged: maximize sum(s), with 0 ≤ s ≤ 1 and
+2·correlation − diag(s) positive semidefinite. DSDP uses a quadratic-size Schur
+system instead of Clarabel's quartic-size PSD scaling workspace. Calls are
+serialized because vendored DSDP has process-global logging state. No feature
+count, ASDP block limit, selection iteration count or CV split count changes.
+
+The binding requires convergence, primal/dual feasibility status, finite output,
+and the existing absolute/relative objective-gap tolerance. Existing correlation
+and covariance feasibility repairs still run afterward. Numerical failures keep
+the existing fallback semantics. A resource-limit error does not trigger an
+equicorrelated fallback: dimensions above 4096 fail before solver allocation.
+This is a conservative resource limit, not a promise that every configuration
+below it fits every allocation. Keep the default fold limit until the intended
+workload has been measured.
+
+See `sdp-memory-status.md` for measured memory, numerical comparisons and limits
+of the validation. R's public feasibility shrinkage differs from Rust's existing
+repair, so raw SDP agreement does not imply identical knockoff samples or AUCs.
