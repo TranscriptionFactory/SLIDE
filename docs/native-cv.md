@@ -19,6 +19,26 @@ Use an existing parent directory and a new output directory. The command refuses
 to overwrite a directory. It does not submit a scheduler job. On an HPC system,
 run production CV inside an allocation rather than on a login node.
 
+## Progress logs
+
+`slide cv` writes progress to stderr by default; `--verbose` is not required.
+Logs include input dimensions, worker count, repeat/fold starts and completions,
+observed (`Slide`) versus permuted (`SlideY`) fits, selection stages, and elapsed
+seconds. Repeat and fold numbers in logs are one-based. Completed fold pairs
+count both fits; parallel workers can finish folds out of order.
+
+Each knockoff voting call reports successful draws every 100 draws and at its
+last draw. Use the thread ID to follow a fold's selection stages, and the voting
+seed to distinguish voting calls. The draw counter is local to that call, not
+the whole CV run. It is not a wall-clock heartbeat: one slow draw or covariance
+setup can still leave a gap between messages. These logs do not provide an ETA.
+Result files still appear only after the full CV computation finishes.
+
+For example, append `2>cv.log` to capture progress. Already running processes
+keep their old logging behavior after a rebuild; no restart occurs automatically.
+
+## Inputs
+
 The input is the R single-run YAML: `y_path`, `out_path`, `eval_type` (`auc` or
 `corr`), `SLIDE_iter`, `spec`, optional `fdr` (default 0.1), and optional
 `do_interacts` (default true). Other R fields do not affect saved-factor CV.

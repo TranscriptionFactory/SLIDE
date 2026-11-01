@@ -5,7 +5,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        OnceLock,
+    },
 };
 
 use ndarray::{Array1, Array2, Axis};
@@ -339,6 +342,23 @@ pub fn knockoff_filter_voting(
     config: &KnockoffConfig,
 ) -> Result<VotingResult, KnockoffError> {
     validate_voting_inputs(x, y, config)?;
+    let started = std::time::Instant::now();
+    let completed = AtomicUsize::new(0);
+    log::info!(
+        "Knockoff voting started: rows={} factors={} draws={} seed={}",
+        x.nrows(), x.ncols(), config.niter, config.base_seed
+    );
+    let report_completed = || {
+        if log::log_enabled!(log::Level::Info) {
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if done % 100 == 0 || done == config.niter {
+                log::info!(
+                    "Knockoff voting completed draws={}/{} seed={} elapsed_s={:.1}",
+                    done, config.niter, config.base_seed, started.elapsed().as_secs_f64()
+                );
+            }
+        }
+    };
     let (cache, r_samples) = match &config.knockoff_backend {
         KnockoffBackend::Rust => (
             Some(prepare_knockoff_cache_with_policy(
@@ -439,6 +459,9 @@ pub fn knockoff_filter_voting(
             config.knockoff_offset,
         );
         log_profile_stage("threshold", iteration, stage_started);
+        if selected.is_ok() {
+            report_completed();
+        }
         selected
     };
 
@@ -515,6 +538,9 @@ pub fn knockoff_filter_voting(
             config.knockoff_offset,
         );
         log_profile_stage("threshold", iteration, stage_started);
+        if selected.is_ok() {
+            report_completed();
+        }
         selected
     };
 

@@ -91,7 +91,7 @@ impl log::Log for StderrLogger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            eprintln!("{}", record.args());
+            eprintln!("[{:?}] {}", std::thread::current().id(), record.args());
         }
     }
 
@@ -103,7 +103,7 @@ static LOGGER: StderrLogger = StderrLogger;
 fn main() -> Result<()> {
     let cli = Cli::parse();
     log::set_logger(&LOGGER).map_err(|error| anyhow!("failed to install logger: {error}"))?;
-    log::set_max_level(if cli.verbose {
+    log::set_max_level(if cli.verbose || matches!(&cli.command, Command::Cv(_)) {
         log::LevelFilter::Info
     } else {
         log::LevelFilter::Warn
