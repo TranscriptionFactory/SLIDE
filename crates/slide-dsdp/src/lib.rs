@@ -48,7 +48,10 @@ pub fn solve(
     {
         return Err("invalid DSDP dimensions, finite matrix, iteration limit or tolerances".into());
     }
+    let waiting = std::time::Instant::now();
     let _lock = SOLVER_LOCK.lock().map_err(|_| "DSDP lock poisoned")?;
+    let wait_seconds = waiting.elapsed().as_secs_f64();
+    let solving = std::time::Instant::now();
     let mut x = vec![0.0; n];
     let mut stats = [0.0; 8];
     let mut status = [0; 3];
@@ -66,6 +69,11 @@ pub fn solve(
             status.as_mut_ptr(),
         )
     };
+    let solve_seconds = solving.elapsed().as_secs_f64();
+    drop(_lock);
+    if std::env::var_os("SLIDE_KNOCKOFF_PROFILE").is_some_and(|v| !v.is_empty()) {
+        eprintln!("{{\"event\":\"dsdp\",\"wait_seconds\":{wait_seconds},\"solve_seconds\":{solve_seconds}}}");
+    }
     if rc != 0 {
         return Err(format!("DSDP native error {rc}"));
     }

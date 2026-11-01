@@ -151,6 +151,38 @@ pub enum CvError {
     Score(#[from] ScoreError),
 }
 
+// Each loop owns at most one fold, even when nested Rayon work steals another loop.
+fn indexed_work_queue<T: Send, E: Send>(
+    count: usize, workers: usize, work: impl Fn(usize) -> Result<T, E> + Sync,
+) -> Result<Vec<T>, E> {
+    let state = std::sync::Mutex::new((0, None));
+    let outputs: Vec<_> = (0..workers.min(count)).into_par_iter().map(|_| {
+        let mut outputs = Vec::new();
+        loop {
+            let index = {
+                let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.1.is_some() || state.0 == count { break; }
+                let index = state.0;
+                state.0 += 1;
+                index
+            };
+            match work(index) {
+                Ok(output) => outputs.push((index, output)),
+                Err(error) => {
+                    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.1.is_none() { state.1 = Some(error); }
+                    break;
+                }
+            }
+        }
+        outputs
+    }).collect();
+    if let Some(error) = state.into_inner().unwrap_or_else(|e| e.into_inner()).1 { return Err(error); }
+    let mut outputs: Vec<_> = outputs.into_iter().flatten().collect();
+    outputs.sort_unstable_by_key(|(index, _)| *index);
+    Ok(outputs.into_iter().map(|(_, output)| output).collect())
+}
+
 /// Native method-4 SLIDEcv on saved factors, not a refit of LOVE inside CV.
 /// The R procedure scales Z globally, pools held-out predictions per repeat,
 /// and uses Gaussian predictors for both response types. RNG streams differ.
@@ -168,7 +200,11 @@ pub fn run_final_slide_cv(
     let mut config = config.clone();
     config.knockoff =
         method4_knockoff_config(&config.knockoff, calc_default_fsize(z.nrows(), z.ncols()));
-    config.knockoff.parallel = false; // Folds share one Rayon pool, not per-fit process clusters.
+    let outer_workers = config.max_active_folds.min(rayon::current_num_threads()).min(splits.len());
+    let voting_workers = config.knockoff.max_voting_workers.unwrap_or(1);
+    if voting_workers == 0 { return Err(KnockoffError::InvalidVotingWorkerCount.into()); }
+    config.knockoff.max_voting_workers = Some(voting_workers.min(rayon::current_num_threads() / outer_workers));
+    config.knockoff.parallel = config.knockoff.max_voting_workers != Some(1);
     let started = Instant::now();
     let completed = AtomicUsize::new(0);
     log::info!(
@@ -176,66 +212,53 @@ pub fn run_final_slide_cv(
         z.nrows(), z.ncols(), config.repeats, config.folds,
         rayon::current_num_threads(), config.knockoff.niter, config.include_interactions
     );
-    let mut outputs = Vec::with_capacity(splits.len());
-    #[cfg(test)]
-    let active = std::sync::atomic::AtomicUsize::new(0);
-    // Finish each batch before admitting another fold, including nested Rayon work.
-    for batch in splits.chunks(config.max_active_folds) {
-        let batch_outputs = batch
-            .par_iter()
-            .map(|split| {
-                #[cfg(test)]
-                assert!(active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < config.max_active_folds);
-                let seed = config
-                    .base_seed
-                    .wrapping_add((split.repeat * config.folds + split.fold) as u64);
-                let mut rng = StdRng::seed_from_u64(seed);
-                let train = select_rows(&z, &split.train_indices);
-                let valid = select_rows(&z, &split.valid_indices);
-                let train_y = y.as_ndarray().select(Axis(0), &split.train_indices);
-                let valid_y = y.as_ndarray().select(Axis(0), &split.valid_indices);
-                let (train_y, valid_y) = if config.response_type == ResponseType::Continuous {
-                    let center = train_y.sum() / train_y.len() as Scalar;
-                    let sd = sample_sd(&train_y);
-                    ((train_y - center) / sd, (valid_y - center) / sd)
-                } else {
-                    (train_y, valid_y)
-                };
-                let mut permuted = train_y.to_vec();
-                permuted.shuffle(&mut rng);
-                let observed = evaluate_fold(
-                    &train,
-                    &Vector::from_ndarray(train_y),
-                    &valid,
-                    &valid_y,
-                    &config,
-                    split,
-                    FinalCvMethod::Slide,
-                    &mut rng,
-                )?;
-                let null = evaluate_fold(
-                    &train,
-                    &Vector::from_ndarray(Array1::from_vec(permuted)),
-                    &valid,
-                    &valid_y,
-                    &config,
-                    split,
-                    FinalCvMethod::SlideY,
-                    &mut rng,
-                )?;
-                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                log::info!(
-                    "CV completed fold pairs={}/{} repeat={} fold={} elapsed_s={:.1}",
-                    done, splits.len(), split.repeat + 1, split.fold + 1,
-                    started.elapsed().as_secs_f64()
-                );
-                #[cfg(test)]
-                active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                Ok((observed, null))
-            })
-            .collect::<Result<Vec<_>, CvError>>()?;
-        outputs.extend(batch_outputs);
-    }
+    let outputs = indexed_work_queue(splits.len(), outer_workers, |index| {
+        let split = &splits[index];
+        let seed = config
+            .base_seed
+            .wrapping_add((split.repeat * config.folds + split.fold) as u64);
+        let mut rng = StdRng::seed_from_u64(seed);
+        let train = select_rows(&z, &split.train_indices);
+        let valid = select_rows(&z, &split.valid_indices);
+        let train_y = y.as_ndarray().select(Axis(0), &split.train_indices);
+        let valid_y = y.as_ndarray().select(Axis(0), &split.valid_indices);
+        let (train_y, valid_y) = if config.response_type == ResponseType::Continuous {
+            let center = train_y.sum() / train_y.len() as Scalar;
+            let sd = sample_sd(&train_y);
+            ((train_y - center) / sd, (valid_y - center) / sd)
+        } else {
+            (train_y, valid_y)
+        };
+        let mut permuted = train_y.to_vec();
+        permuted.shuffle(&mut rng);
+        let observed = evaluate_fold(
+            &train,
+            &Vector::from_ndarray(train_y),
+            &valid,
+            &valid_y,
+            &config,
+            split,
+            FinalCvMethod::Slide,
+            &mut rng,
+        )?;
+        let null = evaluate_fold(
+            &train,
+            &Vector::from_ndarray(Array1::from_vec(permuted)),
+            &valid,
+            &valid_y,
+            &config,
+            split,
+            FinalCvMethod::SlideY,
+            &mut rng,
+        )?;
+        let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+        log::info!(
+            "CV completed fold pairs={}/{} repeat={} fold={} elapsed_s={:.1}",
+            done, splits.len(), split.repeat + 1, split.fold + 1,
+            started.elapsed().as_secs_f64()
+        );
+        Ok::<_, CvError>((observed, null))
+    })?;
     let mut result = FinalCvResult {
         metric: metric_for_response(config.response_type),
         mean: None,
@@ -878,6 +901,55 @@ mod tests {
     use slide_score::{ResponseType, ScoreMetric};
     use slide_types::{Matrix, Vector};
 
+    #[test]
+    fn queue_bounds_workspaces_and_has_no_batch_barrier() {
+        use std::sync::{Mutex, Condvar, atomic::{AtomicUsize, Ordering}};
+        use std::time::Duration;
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let reached_third = (Mutex::new(false), Condvar::new());
+        let results = pool.install(|| super::indexed_work_queue(8, 2, |index| {
+            let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(count, Ordering::SeqCst);
+            if index == 0 {
+                let (flag, timeout) = reached_third.1.wait_timeout_while(
+                    reached_third.0.lock().unwrap(), Duration::from_secs(5), |done| !*done,
+                ).unwrap();
+                assert!(*flag && !timeout.timed_out(), "third fold waited for first fold: batch barrier");
+            }
+            if index == 2 {
+                *reached_third.0.lock().unwrap() = true;
+                reached_third.1.notify_one();
+            }
+            // Nested work must not admit additional fold workspaces.
+            rayon::join(|| std::thread::yield_now(), || std::thread::yield_now());
+            active.fetch_sub(1, Ordering::SeqCst);
+            Ok::<_, ()>(index)
+        })).unwrap();
+        assert_eq!(results, (0..8).collect::<Vec<_>>());
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn queue_stops_admission_on_error_and_drains_running_work() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let started = AtomicUsize::new(0);
+        let finished = AtomicUsize::new(0);
+        let result = pool.install(|| super::indexed_work_queue(20, 2, |index| {
+            started.fetch_add(1, Ordering::SeqCst);
+            if index == 0 { return Err("fold failed"); }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            finished.fetch_add(1, Ordering::SeqCst);
+            Ok(index)
+        }));
+        assert_eq!(result, Err("fold failed"));
+        assert!(started.load(Ordering::SeqCst) <= 2);
+        assert_eq!(finished.load(Ordering::SeqCst) + 1, started.load(Ordering::SeqCst));
+    }
+
     fn fast_knockoff(family: GlmnetFamily) -> KnockoffConfig {
         KnockoffConfig {
             f_size: Some(1),
@@ -1140,8 +1212,11 @@ mod tests {
             for max_active_folds in [1, 2, 3] {
                 let mut bounded = config.clone();
                 bounded.max_active_folds = max_active_folds;
-                let again = pool.install(|| run_final_slide_cv(&z, &y, &bounded)).unwrap();
-                assert_eq!(result, again);
+                for voting_workers in [1, 2, 4] {
+                    bounded.knockoff.max_voting_workers = Some(voting_workers);
+                    let again = pool.install(|| run_final_slide_cv(&z, &y, &bounded)).unwrap();
+                    assert_eq!(result, again);
+                }
             }
         }
         let mut invalid = config.clone();

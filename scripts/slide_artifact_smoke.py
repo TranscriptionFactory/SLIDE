@@ -8,6 +8,8 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import statistics
+import sys
 import subprocess
 import time
 
@@ -206,6 +208,210 @@ def full_fit_smoke(binary, workdir, x_path, y_path, rscript):
     logging.info("Full-fit smoke passed: %s", status)
 
 
+def timed_cv(command, log_path, env, timeout, profile=False):
+    """Measure each child separately; wait4 supplies peak RSS and final CPU usage."""
+    started = time.monotonic()
+    with log_path.open("w") as log:
+        process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
+        try:
+            if profile:
+                if not hasattr(os, "wait4"):
+                    raise RuntimeError("Per-process profiling requires POSIX wait4")
+                while True:
+                    pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+                    if pid:
+                        process.returncode = os.waitstatus_to_exitcode(status)
+                        break
+                    if time.monotonic() - started > timeout:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    time.sleep(0.01)
+            else:
+                process.wait(timeout=timeout)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                process.wait()
+    elapsed = time.monotonic() - started
+    if process.returncode:
+        raise RuntimeError(f"CV failed ({process.returncode}); see {log_path}")
+    metrics = {"elapsed_s": elapsed}
+    if profile:
+        metrics.update(cpu_s=usage.ru_utime + usage.ru_stime,
+                       peak_bytes=usage.ru_maxrss * (1 if sys.platform == "darwin" else 1024),
+                       dsdp_wait_s=0.0, dsdp_solve_s=0.0, dsdp_calls=0)
+        for line in log_path.read_text().splitlines():
+            if line.startswith('{"event":"dsdp"'):
+                event = json.loads(line)
+                metrics["dsdp_wait_s"] += event["wait_seconds"]
+                metrics["dsdp_solve_s"] += event["solve_seconds"]
+                metrics["dsdp_calls"] += 1
+    return metrics
+
+
+def cv_concurrency_smoke(binary, workdir, args):
+    """One acceptance entrypoint; no fitting, production jobs or historical sweep."""
+    workdir.mkdir(parents=True, exist_ok=False)
+    (workdir / "README.md").write_text(
+        "# Resource-aware CV acceptance\n\n"
+        "Reuses saved factors; no LOVE fitting or production jobs. This run tests automatic resource "
+        "ceilings, a bounded queue and optional paired inner-voting profiles.\n\n"
+        f"Command: {sys.argv!r}\n")
+    env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
+    for key in list(env):
+        if key.startswith("SLIDE_KNOCKOFF_"):
+            env.pop(key)
+    # The existing CLI test fixture can be supplied locally; CI uses committed HIV factors.
+    if args.cv_fixture:
+        z = args.cv_fixture.resolve() / "z_matrix.csv"
+        y = args.cv_fixture.resolve() / "y.csv"
+        spec = 0.25
+    else:
+        z = ROOT / "examples/out/2026-10-17_rust-example/0.1_0.1_out/z_matrix.csv"
+        y = workdir / "y.csv"
+        with (ROOT / "examples/HIV+cytokines_y.csv").open(newline="") as handle:
+            rows = list(csv.reader(handle))
+        levels = sorted({float(row[1]) for row in rows[1:]})
+        assert len(levels) == 2
+        for row in rows[1:]:
+            row[1] = str(int(float(row[1]) == levels[1]))
+        with y.open("w", newline="") as handle:
+            csv.writer(handle).writerows(rows)
+        spec = 0.1
+    config = workdir / "input.yaml"
+    def write_config(iterations):
+        config.write_text(f"y_path: {json.dumps(str(y))}\nout_path: {json.dumps(str(z.parent))}\n"
+                          f"eval_type: auc\nSLIDE_iter: {iterations}\nspec: {spec}\ndo_interacts: no\n")
+    write_config(101)
+    base = [str(binary), "cv", "--config", str(config), "--z", str(z),
+            "--nrep", "1", "--k", "3", "--seed", "17", "--threads", "4", "--memory-budget-mib", "2048"]
+    filenames = ["cv-result.json", "predictions.csv", "SLIDECV_boxplot_data.csv"]
+    def same(left, right):
+        for name in filenames:
+            assert (left / name).read_bytes() == (right / name).read_bytes(), (name, left, right)
+    def run(name, flags=(), run_env=None, profile=False, command=None):
+        out = workdir / name
+        metrics = timed_cv((command or base) + ["--out", str(out), *flags],
+                           workdir / f"{name}.log", run_env or env, args.cv_timeout, profile)
+        record = json.loads((out / "requested-config.json").read_text())
+        folds = record["config"]["max_active_folds"]
+        voting = record["config"]["knockoff"]["max_voting_workers"]
+        cpu = record["resources"]["cpu_budget"]
+        assert 1 <= folds * voting <= cpu <= 4
+        headroom = record["resources"]["headroom"]
+        if headroom is not None:
+            estimate = (record["estimated_retained_bytes"] + folds * record["estimated_fold_bytes"]
+                        + folds * (voting - 1) * record["estimated_additional_voting_worker_bytes"])
+            assert estimate <= headroom // 4 * 3
+        metrics.update(cpu_budget=cpu, active_folds=folds, voting_workers=voting)
+        if profile:
+            metrics["budget_utilization"] = metrics["cpu_s"] / metrics["elapsed_s"] / cpu
+            assert metrics["peak_bytes"] <= 2048 * 1024**2
+            assert metrics["budget_utilization"] <= 1.05
+        return out, metrics
+    # Existing Rust suites cover policy edge cases, queue admission/failure and exact numerics.
+    for executable in args.test_binary:
+        command = [str(executable.resolve()), "--test-threads=1"]
+        if executable.name.startswith("slide-"):
+            command.append("run::tests::")
+        with (workdir / f"{executable.name}.log").open("w") as log:
+            subprocess.run(command, env=env, stdout=log, stderr=log, check=True, timeout=args.cv_timeout)
+    serial, _ = run("serial", ["--max-active-folds", "1", "--voting-workers", "1"])
+    automatic, decision = run("automatic")
+    ceiling, _ = run("ceiling", ["--max-active-folds", "999"])
+    same(serial, automatic)
+    same(serial, ceiling)
+    spare, spare_decision = run("spare-capacity", ["--max-active-folds", "1"])
+    same(serial, spare)
+    record = json.loads((spare / "requested-config.json").read_text())
+    headroom = record["resources"]["headroom"]
+    capacity = ((headroom // 4 * 3 - record["estimated_retained_bytes"]) // record["estimated_fold_bytes"]
+                if headroom is not None else 1)
+    assert spare_decision["voting_workers"] == min(spare_decision["cpu_budget"], capacity)
+    if args.cv_reference:
+        same(serial, args.cv_reference)
+    text = (workdir / "automatic.log").read_text()
+    for expected in ["CV resources:", "CV completed fold pairs=3/3", "Knockoff voting completed draws=100/101",
+                     "Knockoff voting completed draws=101/101"]:
+        assert expected in text, expected
+    data = json.loads((automatic / "cv-result.json").read_text())
+    with y.open(newline="") as handle:
+        n = len(list(csv.reader(handle))) - 1
+    assert len(data["predictions"]) == len(data["permuted_predictions"]) == n
+    assert len(data["folds"]) == len(data["permuted_folds"]) == 3
+    assert len(data["repeat_scores"]) == 2
+    limited_env = dict(env, SLURM_CPUS_PER_TASK="1", SLURM_MEM_PER_NODE="1024")
+    inherited, limited = run("scheduler", run_env=limited_env)
+    assert limited["cpu_budget"] == limited["active_folds"] == limited["voting_workers"] == 1
+    same(serial, inherited)
+    for flag, value in [("--threads", "0"), ("--max-active-folds", "0"), ("--memory-budget-mib", "0"),
+                        ("--memory-budget-mib", "1"), ("--memory-budget-mib", str(2**64-1)), ("--voting-workers", "0")]:
+        out = workdir / f"rejected-{flag[2:]}-{value}"
+        # Replace rather than duplicate clap arguments.
+        command = base[:]
+        if flag in command:
+            index = command.index(flag)
+            command[index + 1] = value
+        else:
+            command += [flag, value]
+        if flag == "--memory-budget-mib" and value == "1":
+            command += ["--max-active-folds", "999"]
+        rejected = subprocess.run(command + ["--out", str(out)], env=env, capture_output=True,
+                                  text=True, timeout=args.cv_timeout)
+        assert rejected.returncode and not out.exists(), (flag, value)
+        assert "CV started:" not in rejected.stderr
+    if sys.platform.startswith("linux"):
+        import resource
+        def limit_address_space():
+            resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
+        out = workdir / "inherited-process-limit"
+        with (workdir / "inherited-process-limit.log").open("w") as log:
+            subprocess.run(base + ["--out", str(out)], env=env, stdout=log, stderr=log,
+                           preexec_fn=limit_address_space, check=True, timeout=args.cv_timeout)
+        record = json.loads((out / "requested-config.json").read_text())
+        assert any(s.startswith("Max address space:") for s in record["resources"]["sources"])
+        assert record["resources"]["headroom"] < 1024**3
+        same(serial, out)
+    if args.saved_config:
+        command = [str(binary), "cv", "--config", str(args.saved_config.resolve()), "--z", str(args.saved_z.resolve()),
+                   "--nrep", "1", "--k", "5", "--seed", "20261602", "--threads", "4", "--memory-budget-mib", "2048"]
+        saved, _ = run("saved-factor-automatic", command=command)
+        same(saved, args.saved_reference.resolve())
+        saved_data = json.loads((saved / "cv-result.json").read_text())
+        assert len(saved_data["predictions"]) == len(saved_data["permuted_predictions"]) == 778
+    profile_result = {"gate_passed": None, "reason": "not requested", "pairs": []}
+    if args.profile_voting:
+        write_config(1000)
+        profile_env = dict(env, SLIDE_KNOCKOFF_PROFILE="1")
+        profile_result.update(gate_passed=False, reason="gate failed")
+        try:
+            for pair in range(3):
+                results = {}
+                outputs = {}
+                # Alternate order to reduce warm-cache/order bias across pairs.
+                for label in (["serial", "parallel"] if pair % 2 == 0 else ["parallel", "serial"]):
+                    outputs[label], results[label] = run(f"profile-{pair + 1}-{label}",
+                        ["--max-active-folds", "1", "--voting-workers", "1" if label == "serial" else "4"],
+                        run_env=profile_env, profile=True)
+                same(outputs["serial"], outputs["parallel"])
+                profile_result["pairs"].append(results)
+            pairs = profile_result["pairs"]
+            ratios = [p["parallel"]["elapsed_s"] / p["serial"]["elapsed_s"] for p in pairs]
+            passed = (all(p["serial"]["budget_utilization"] < 0.8 for p in pairs)
+                      and all(p["parallel"]["voting_workers"] > 1 for p in pairs)
+                      and all(r < 1 for r in ratios) and statistics.median(ratios) <= 0.9)
+            profile_result.update(gate_passed=passed, reason="gate passed" if passed else "gate failed",
+                                  median_speedup_fraction=1-statistics.median(ratios))
+        except subprocess.TimeoutExpired:
+            profile_result["reason"] = "profile timed out; gate does not authorize enabling inner voting"
+        except RuntimeError as error:
+            profile_result["reason"] = f"profile unavailable or failed: {error}"
+    summary = {"resource_queue_numerics": "passed", "automatic": decision,
+               "saved_factor": "passed" if args.saved_config else "not supplied",
+               "inner_voting": profile_result, "platform": sys.platform}
+    (workdir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    logging.info("Combined CV acceptance: %s", summary)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path, help="Executable; on Windows use bin/slide.exe and set FONTCONFIG_FILE")
@@ -215,7 +421,21 @@ if __name__ == "__main__":
     parser.add_argument("--tui-pty", action="store_true", help="Require real Unix terminal startup/render/quit")
     parser.add_argument("--full-fit", action="store_true", help="Test the fixed R-compatible fit and CV handoff")
     parser.add_argument("--rscript", type=Path, help="Check full-fit factors and weighted predictions against R")
+    parser.add_argument("--cv-concurrency", action="store_true", help="Run combined saved-factor concurrency acceptance instead of fitting")
+    parser.add_argument("--cv-fixture", type=Path, help="Existing small CLI fixture directory containing z_matrix.csv and y.csv")
+    parser.add_argument("--cv-reference", type=Path, help="Accepted small-fixture outputs (101 draws, seed 17, three folds)")
+    parser.add_argument("--saved-config", type=Path, help="Existing 778-cell diagnostic YAML (two draws, interactions)")
+    parser.add_argument("--saved-z", type=Path)
+    parser.add_argument("--saved-reference", type=Path)
+    parser.add_argument("--profile-voting", action="store_true", help="Three bounded serial/parallel pairs at 1000 draws; POSIX only")
+    parser.add_argument("--cv-timeout", type=float, default=600)
+    parser.add_argument("--test-binary", type=Path, action="append", default=[], help="Prebuilt Rust test executable; repeat for selected suites")
     args = parser.parse_args()
+    if any([args.saved_config, args.saved_z, args.saved_reference]) and not all([args.saved_config, args.saved_z, args.saved_reference]):
+        parser.error("--saved-config, --saved-z and --saved-reference must be provided together")
     logging.basicConfig(level=logging.INFO)
-    smoke(args.binary.resolve(), args.workdir.resolve(), args.out_path.resolve() if args.out_path else None,
-          args.reuse, args.tui_pty, args.full_fit, args.rscript)
+    if args.cv_concurrency:
+        cv_concurrency_smoke(args.binary.resolve(), args.workdir.resolve(), args)
+    else:
+        smoke(args.binary.resolve(), args.workdir.resolve(), args.out_path.resolve() if args.out_path else None,
+              args.reuse, args.tui_pty, args.full_fit, args.rscript)

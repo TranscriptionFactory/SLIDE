@@ -56,9 +56,15 @@ pub struct CvArgs {
     pub seed: u64,
     #[arg(long)]
     pub threads: Option<usize>,
-    /// Override automatic CPU/memory-based fold concurrency (1 minimizes memory).
+    /// Additional ceiling on automatic CPU/memory-based fold concurrency.
     #[arg(long)]
     pub max_active_folds: Option<usize>,
+    /// Tighter total process memory budget in MiB (25% of headroom is reserved).
+    #[arg(long)]
+    pub memory_budget_mib: Option<u64>,
+    /// Diagnostic ceiling on automatically budgeted voting workers.
+    #[arg(long, hide = true)]
+    pub voting_workers: Option<usize>,
 }
 
 /// Fixed full-data method-4 fitting; does not search or rescore a candidate grid.
@@ -312,42 +318,131 @@ fn kib_field(text: &str, key: &str) -> Option<u64> {
     })
 }
 
-fn cv_memory_headroom() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let resident = kib_field(&status, "VmRSS")?;
-    let mut headroom = std::fs::read_to_string("/proc/meminfo").ok()
-        .and_then(|text| kib_field(&text, "MemAvailable"));
-    let env_number = |key| std::env::var(key).ok()?.parse::<u64>().ok().filter(|n| *n > 0);
-    let slurm_mib = env_number("SLURM_MEM_PER_NODE").or_else(|| {
-        env_number("SLURM_MEM_PER_CPU")?.checked_mul(
-            env_number("SLURM_CPUS_ON_NODE").or_else(|| env_number("SLURM_CPUS_PER_TASK"))?,
-        )
-    });
+#[derive(Debug, Default, serde::Serialize)]
+struct CvResources {
+    cpu_budget: usize,
+    headroom: Option<u64>,
+    sources: Vec<String>,
+}
+
+impl CvResources {
+    fn memory_ceiling(&mut self, source: &str, remaining: u64) {
+        self.headroom = Some(self.headroom.map_or(remaining, |h| h.min(remaining)));
+        self.sources.push(format!("{source}: {remaining} bytes remaining"));
+    }
+
+    fn cpu_ceiling(&mut self, source: &str, cpus: usize) {
+        self.cpu_budget = self.cpu_budget.min(cpus.max(1));
+        self.sources.push(format!("{source}: {} CPUs", cpus.max(1)));
+    }
+}
+
+fn env_positive(key: &str) -> Result<Option<u64>> {
+    std::env::var(key).ok().map(|value| {
+        value.parse::<u64>().ok().filter(|n| *n > 0)
+            .with_context(|| format!("{key} must be a positive integer"))
+    }).transpose()
+}
+
+// Resolve mount roots as well as membership: containers can expose a subtree.
+fn cgroup_directories(membership: &str, mounts: &str, controller: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for member in membership.lines() {
+        let fields: Vec<_> = member.splitn(3, ':').collect();
+        if fields.len() != 3 { continue; }
+        let unified = fields[0] == "0" && fields[1].is_empty();
+        if !unified && !fields[1].split(',').any(|s| s == controller) { continue; }
+        for mount in mounts.lines() {
+            let Some((before, after)) = mount.split_once(" - ") else { continue; };
+            let left: Vec<_> = before.split_whitespace().collect();
+            let right: Vec<_> = after.split_whitespace().collect();
+            if left.len() < 5 || right.len() < 3 { continue; }
+            if !(unified && right[0] == "cgroup2"
+                || !unified && right[0] == "cgroup" && right[2].split(',').any(|s| s == controller)) { continue; }
+            let decode = |s: &str| s.replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\");
+            let root = PathBuf::from(decode(left[3]));
+            let mountpoint = PathBuf::from(decode(left[4]));
+            let member = PathBuf::from(fields[2]);
+            let relative = member.strip_prefix(&root).or_else(|_| member.strip_prefix("/")).unwrap_or_else(|_| std::path::Path::new(""));
+            // Never let a namespace-relative /../ membership escape the visible mount.
+            let current = if relative.components().any(|c| c == std::path::Component::ParentDir) {
+                mountpoint.clone()
+            } else { mountpoint.join(relative) };
+            paths.extend(current.ancestors().take_while(|p| p.starts_with(&mountpoint)).map(PathBuf::from));
+        }
+    }
+    paths
+}
+
+fn read_number(path: &std::path::Path) -> Option<u64> {
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+fn cv_resources(args: &CvArgs) -> Result<CvResources> {
+    anyhow::ensure!(args.threads != Some(0), "threads must be positive");
+    anyhow::ensure!(args.max_active_folds != Some(0), "max-active-folds must be positive");
+    anyhow::ensure!(args.memory_budget_mib != Some(0), "memory-budget-mib must be positive");
+    anyhow::ensure!(args.voting_workers != Some(0), "voting-workers must be positive");
+    let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let mut resources = CvResources { cpu_budget: available, ..Default::default() };
+    resources.cpu_ceiling("available_parallelism", available);
+    let requested = match args.threads { Some(n) => Some(n as u64), None => env_positive("RAYON_NUM_THREADS")? };
+    if let Some(n) = requested { resources.cpu_ceiling("requested threads", n.min(usize::MAX as u64) as usize); }
+    for key in ["SLURM_CPUS_PER_TASK", "SLURM_CPUS_ON_NODE"] {
+        if let Some(n) = env_positive(key)? { resources.cpu_ceiling(key, n.min(usize::MAX as u64) as usize); }
+    }
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    if system.total_memory() > 0 { resources.memory_ceiling("OS available", system.available_memory()); }
+    let pid = sysinfo::Pid::from_u32(std::process::id());
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), true,
+        sysinfo::ProcessRefreshKind::nothing().with_memory());
+    let resident = system.process(pid).map(|p| p.memory());
+    let slurm_mib = match env_positive("SLURM_MEM_PER_NODE")? {
+        Some(n) => Some(n),
+        None => env_positive("SLURM_MEM_PER_CPU")?.and_then(|n| n.checked_mul(resources.cpu_budget as u64)),
+    };
     let mut allocation_known = false;
-    if let Some(limit) = slurm_mib.and_then(|n| n.checked_mul(1024 * 1024)) {
-        let remaining = limit.saturating_sub(resident);
-        headroom = Some(headroom.map_or(remaining, |h| h.min(remaining)));
-        allocation_known = true;
+    if let Some(limit) = slurm_mib {
+        if let Some(resident) = resident {
+            resources.memory_ceiling("Slurm", limit.saturating_mul(1024 * 1024).saturating_sub(resident));
+            allocation_known = true;
+        }
     }
     let membership = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
-    if let Some(relative) = membership.lines().find_map(|line| line.strip_prefix("0::")) {
-        let root = std::path::Path::new("/sys/fs/cgroup");
-        let current = root.join(relative.trim_start_matches('/'));
-        // A parent cgroup can impose the limit even when the leaf says "max".
-        for directory in current.ancestors().take_while(|p| p.starts_with(root)) {
-            let limit = std::fs::read_to_string(directory.join("memory.max")).ok()
-                .and_then(|s| s.trim().parse::<u64>().ok());
-            if let Some(limit) = limit {
-                let used = std::fs::read_to_string(directory.join("memory.current")).ok()?
-                    .trim().parse::<u64>().ok()?;
-                let remaining = limit.saturating_sub(used);
-                headroom = Some(headroom.map_or(remaining, |h| h.min(remaining)));
+    let mounts = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    for directory in cgroup_directories(&membership, &mounts, "memory") {
+        for (limit, usage) in [("memory.max", "memory.current"), ("memory.limit_in_bytes", "memory.usage_in_bytes")] {
+            if let Some(limit) = read_number(&directory.join(limit)) {
+                // cgroup v1 represents unlimited memory with a near-i64::MAX sentinel.
+                if limit >= i64::MAX as u64 / 2 { continue; }
+                let used = read_number(&directory.join(usage)).context("cannot read cgroup memory usage")?;
+                resources.memory_ceiling(&directory.display().to_string(), limit.saturating_sub(used));
                 allocation_known = true;
             }
         }
     }
     let in_slurm = std::env::var_os("SLURM_JOB_ID").is_some() || membership.contains("/job_");
-    if in_slurm && !allocation_known { None } else { headroom }
+    if in_slurm && !allocation_known && args.memory_budget_mib.is_none() {
+        // Unknown scheduler allowance must not erase tighter known OS/process limits.
+        resources.cpu_ceiling("unknown Slurm memory allowance; serial fallback", 1);
+        log::warn!("CV memory allowance unknown; using one fold and one voting worker. Set --memory-budget-mib to supply an application allowance.");
+    }
+    // Linux exposes inherited soft RLIMIT_AS and RLIMIT_DATA without unsafe FFI.
+    if let (Ok(limits), Ok(status)) = (std::fs::read_to_string("/proc/self/limits"), std::fs::read_to_string("/proc/self/status")) {
+        for (name, used) in [("Max address space", "VmSize"), ("Max data size", "VmData")] {
+            if let Some(limit) = limits.lines().find_map(|line| line.strip_prefix(name)?.split_whitespace().next()?.parse::<u64>().ok()) {
+                let used = kib_field(&status, used).context("cannot read process memory usage")?;
+                resources.memory_ceiling(name, limit.saturating_sub(used));
+            }
+        }
+    }
+    if let Some(mib) = args.memory_budget_mib {
+        let bytes = mib.checked_mul(1024 * 1024).context("memory-budget-mib is too large")?;
+        let resident = resident.context("cannot measure process memory for --memory-budget-mib")?;
+        resources.memory_ceiling("application memory budget", bytes.saturating_sub(resident));
+    }
+    Ok(resources)
 }
 
 fn cv_memory_estimate(config: &FinalCvConfig, rows: usize, factors: usize) -> (u64, u64) {
@@ -376,14 +471,14 @@ fn automatic_cv_fold_limit(
         .filter(|n| *n > 0).context("CV repeats and folds must be positive and fit in usize")?;
     anyhow::ensure!(workers > 0, "CV requires at least one available CPU");
     let Some(headroom) = headroom else {
-        log::warn!("CV auto concurrency: memory allowance unknown; using 1 active fold. Set --max-active-folds only after sizing memory.");
+        log::warn!("CV auto concurrency: memory allowance unknown; using 1 active fold. Set --memory-budget-mib to supply an application allowance.");
         return Ok(1);
     };
     let (per_fold, retained) = cv_memory_estimate(config, rows, factors);
-    let usable = headroom - headroom / 4;
+    let usable = headroom / 4 * 3;
     let memory_folds = usable.saturating_sub(retained) / per_fold;
     anyhow::ensure!(memory_folds > 0,
-        "CV auto concurrency cannot fit one estimated fold ({} MiB plus {} MiB retained buffers) within 75% of {} MiB memory headroom; request more memory, or use an explicit cap only after measuring actual memory",
+        "CV auto concurrency cannot fit one estimated fold ({} MiB plus {} MiB retained buffers) within 75% of {} MiB memory headroom; request more memory or reduce input dimensions",
         per_fold / 1024 / 1024, retained / 1024 / 1024, headroom / 1024 / 1024);
     let limit = memory_folds.min(workers as u64).min(tasks as u64) as usize;
     log::info!("CV auto concurrency: active_folds={} cpu_budget={} memory_headroom_MiB={} estimated_fold_MiB={} retained_MiB={} reserve_percent=25",
@@ -458,21 +553,23 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
             ..KnockoffConfig::default()
         },
     };
-    let mut pool = rayon::ThreadPoolBuilder::new();
-    if let Some(threads) = args.threads {
-        ensure!(threads > 0, "threads must be positive");
-        pool = pool.num_threads(threads);
-    }
-    let pool = pool.build()?;
-    if args.max_active_folds.is_none() {
-        let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        let slurm_cpus = std::env::var("SLURM_CPUS_PER_TASK").ok()
-            .and_then(|s| s.parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(available);
-        let workers = pool.current_num_threads().min(available).min(slurm_cpus);
-        config.max_active_folds = automatic_cv_fold_limit(
-            &config, loaded_z.matrix.nrows(), loaded_z.matrix.ncols(), workers, cv_memory_headroom(),
-        )?;
-    }
+    let resources = cv_resources(&args)?;
+    let (per_fold, retained) = cv_memory_estimate(&config, loaded_z.matrix.nrows(), loaded_z.matrix.ncols());
+    config.max_active_folds = automatic_cv_fold_limit(
+        &config, loaded_z.matrix.nrows(), loaded_z.matrix.ncols(), resources.cpu_budget, resources.headroom,
+    )?.min(args.max_active_folds.unwrap_or(usize::MAX));
+    let voting_workspace = per_fold; // Conservatively charge a full fold for each extra voting worker.
+    let memory_workers = resources.headroom.map(|h| {
+        (h / 4 * 3).saturating_sub(retained) / config.max_active_folds as u64 / voting_workspace
+    }).unwrap_or(1).max(1) as usize;
+    // Enabled after the paired acceptance gate; see docs/native-cv.md.
+    let voting_workers = args.voting_workers.unwrap_or(usize::MAX)
+        .min(resources.cpu_budget / config.max_active_folds)
+        .min(memory_workers).min(config.knockoff.niter.max(1));
+    config.knockoff.max_voting_workers = Some(voting_workers);
+    log::info!("CV resources: requested_folds={:?} active_folds={} cpu_budget={} voting_workers={} sources={:?}",
+        args.max_active_folds, config.max_active_folds, resources.cpu_budget, voting_workers, resources.sources);
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(resources.cpu_budget).build()?;
     let result = pool.install(|| run_final_slide_cv(&loaded_z.matrix, &y, &config))?;
     // Atomic directory creation prevents concurrent runs from overwriting each other.
     std::fs::create_dir(&args.out)?;
@@ -482,7 +579,11 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
     )?;
     std::fs::write(
         args.out.join("requested-config.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({ "config": config, "requested_max_active_folds": args.max_active_folds, "env_overrides": active_env_overrides() }))?,
+        serde_json::to_vec_pretty(&serde_json::json!({ "config": config, "requested_max_active_folds": args.max_active_folds,
+            "requested_threads": args.threads, "requested_memory_budget_mib": args.memory_budget_mib,
+            "requested_voting_workers": args.voting_workers, "resources": resources,
+            "estimated_fold_bytes": per_fold, "estimated_retained_bytes": retained,
+            "estimated_additional_voting_worker_bytes": voting_workspace, "reserve_percent": 25, "env_overrides": active_env_overrides() }))?,
     )?;
     let mut scores = csv::Writer::from_path(args.out.join("SLIDECV_boxplot_data.csv"))?;
     let metric = if response_type == ResponseType::Binary {
@@ -525,9 +626,13 @@ pub fn run_cv(args: CvArgs) -> Result<()> {
     }
     predictions.flush()?;
     std::fs::write(args.out.join("README.md"), format!(
-        "# Native Rust SLIDEcv\n\nSaved-factor CV; no LOVE refit. RNG differs from R.\n\nConfig: `{}`\n\nZ: `{}`\n\nCommand: `slide cv --config {:?} --z {:?} --out {:?} --nrep {} --k {} --seed {}{}`\n\nObserved mean: {:?}; permuted mean: {:?}. Means use pooled predictions per repeat, not fold means. This is a separate native run, not a replacement of R outputs. CSV/JSON exports are not RDS files.\n",
+        "# Native Rust SLIDEcv\n\nSaved-factor CV; no LOVE refit. RNG differs from R.\n\nConfig: `{}`\n\nZ: `{}`\n\nCommand: `slide cv --config {:?} --z {:?} --out {:?} --nrep {} --k {} --seed {}{}{}{}{}`\n\nObserved mean: {:?}; permuted mean: {:?}. Means use pooled predictions per repeat, not fold means. This is a separate native run, not a replacement of R outputs. CSV/JSON exports are not RDS files.\n",
         args.config.display(), z_path.display(), args.config, z_path, args.out, args.nrep, args.k, args.seed,
-        args.threads.map(|n| format!(" --threads {n}")).unwrap_or_default(), result.mean, result.permuted_mean
+        args.threads.map(|n| format!(" --threads {n}")).unwrap_or_default(),
+        args.max_active_folds.map(|n| format!(" --max-active-folds {n}")).unwrap_or_default(),
+        args.memory_budget_mib.map(|n| format!(" --memory-budget-mib {n}")).unwrap_or_default(),
+        args.voting_workers.map(|n| format!(" --voting-workers {n}")).unwrap_or_default(),
+        result.mean, result.permuted_mean
     ))?;
     log::info!(
         "CV completed: observed {:?}, permuted {:?}; {}",
@@ -1035,6 +1140,8 @@ cv:
             seed: 17,
             threads: Some(1),
             max_active_folds: Some(1),
+            memory_budget_mib: Some(1024),
+            voting_workers: Some(1),
         };
         super::run_cv(args.clone())?;
         let result: slide_cv::FinalCvResult =
@@ -1045,6 +1152,10 @@ cv:
         let records = std::fs::read_to_string(args.out.join("SLIDECV_boxplot_data.csv"))?;
         assert!(records.starts_with("repeat,method,auc,raw_auc"));
         assert!(records.contains("1,SLIDE_y,"));
+        let readme = std::fs::read_to_string(args.out.join("README.md"))?;
+        for flag in ["--threads 1", "--max-active-folds 1", "--memory-budget-mib 1024", "--voting-workers 1"] {
+            assert!(readme.contains(flag));
+        }
         assert!(super::run_cv(args.clone()).is_err());
         std::fs::write(&y_path, y.replacen("1,0", "99,0", 1))?;
         let bad = super::CvArgs {
@@ -1064,6 +1175,44 @@ cv:
             assert_eq!(parsed.do_interacts, Some(expected));
             assert!(serde_yaml::from_str::<super::NativeCvInput>(&yaml.replace(value, "invalid")).is_err());
         }
+    }
+
+    #[test]
+    fn cv_resource_policy_reserves_memory_and_bounds_folds() {
+        let config = slide_cv::FinalCvConfig { repeats: 2, folds: 3, ..Default::default() };
+        let (fold, retained) = super::cv_memory_estimate(&config, 100, 20);
+        let headroom = (retained + fold * 3).div_ceil(3) * 4;
+        assert_eq!(super::automatic_cv_fold_limit(&config, 100, 20, 8, Some(headroom)).unwrap(), 3);
+        assert_eq!(super::automatic_cv_fold_limit(&config, 100, 20, 2, Some(headroom)).unwrap(), 2);
+        assert_eq!(super::automatic_cv_fold_limit(&config, 100, 20, 8, Some(u64::MAX)).unwrap(), 6);
+        assert_eq!(super::automatic_cv_fold_limit(&config, 100, 20, 8, None).unwrap(), 1);
+        assert!(super::automatic_cv_fold_limit(&config, 100, 20, 8, Some(fold)).is_err());
+        assert!(super::automatic_cv_fold_limit(&config, 100, 20, 0, Some(headroom)).is_err());
+        let mut limits = super::CvResources { cpu_budget: 8, ..Default::default() };
+        limits.memory_ceiling("OS", 1000);
+        limits.memory_ceiling("parent cgroup", 700);
+        limits.memory_ceiling("application", 800);
+        limits.cpu_ceiling("Slurm", 2);
+        limits.cpu_ceiling("requested", 4);
+        assert_eq!(limits.headroom, Some(700));
+        assert_eq!(limits.cpu_budget, 2);
+    }
+
+    #[test]
+    fn cv_cgroup_mount_roots_and_inherited_limits() {
+        use std::path::PathBuf;
+        let mounts = "29 23 0:26 /tenant /sys/fs/cgroup rw - cgroup2 cgroup rw";
+        assert_eq!(super::cgroup_directories("0::/tenant/job/step", mounts, "memory"),
+            ["/sys/fs/cgroup/job/step", "/sys/fs/cgroup/job", "/sys/fs/cgroup"].map(PathBuf::from));
+        assert_eq!(super::cgroup_directories("0::/job/step", mounts, "memory"),
+            ["/sys/fs/cgroup/job/step", "/sys/fs/cgroup/job", "/sys/fs/cgroup"].map(PathBuf::from));
+        assert_eq!(super::cgroup_directories("0::/../../hidden", mounts, "memory"),
+            [PathBuf::from("/sys/fs/cgroup")]);
+        let mounts = "29 23 0:26 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory";
+        assert_eq!(super::cgroup_directories("3:memory:/job", mounts, "memory"),
+            ["/sys/fs/cgroup/memory/job", "/sys/fs/cgroup/memory"].map(PathBuf::from));
+        assert!(super::cgroup_directories("3:cpu:/job", mounts, "memory").is_empty());
+        assert_eq!(super::kib_field("VmSize: 100 kB", "VmSize"), Some(102400));
     }
 
 }

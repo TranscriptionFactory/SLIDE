@@ -96,6 +96,9 @@ pub struct KnockoffConfig {
     /// Whether to use rayon parallelism for the voting iterations.
     /// Set to `false` when called from an outer parallel context.
     pub parallel: bool,
+    /// Explicit workspace ceiling; None preserves unrestricted non-CV voting.
+    #[serde(default)]
+    pub max_voting_workers: Option<usize>,
     /// Match R SLIDEcv covariance gating and Gaussian knockoff lambda grid.
     #[serde(default)]
     pub r_compatible: bool,
@@ -117,6 +120,7 @@ impl Default for KnockoffConfig {
             f_size: None,
             family: GlmnetFamily::Gaussian,
             parallel: true,
+            max_voting_workers: None,
             r_compatible: false,
         }
     }
@@ -167,6 +171,8 @@ pub enum KnockoffError {
     InvalidOffset { actual: usize },
     #[error("niter must be at least 1")]
     InvalidIterationCount,
+    #[error("max_voting_workers must be positive")]
+    InvalidVotingWorkerCount,
     #[error("nlambda must be at least 1")]
     InvalidLambdaCount,
     #[error("f_size must be at least 1, got {actual}")]
@@ -554,7 +560,27 @@ pub fn knockoff_filter_voting(
         Matrix::from_ndarray(buf)
     };
 
-    let selected_list: Vec<Vec<usize>> = if use_cached_path {
+    let selected_list: Vec<Vec<usize>> = if config.parallel && config.max_voting_workers.is_some() {
+        let workers = config.max_voting_workers.unwrap_or(1).max(1)
+            .min(rayon::current_num_threads()).min(config.niter);
+        let chunk_size = config.niter.div_ceil(workers);
+        // One workspace per contiguous draw chunk, ordered collection preserves seeds/results.
+        let chunks = (0..workers).into_par_iter().map(|worker| {
+            let start = worker * chunk_size;
+            let stop = (start + chunk_size).min(config.niter);
+            if use_cached_path {
+                let mut ws = GaussianCdWorkspace::new(n, 2 * p);
+                (start..stop).map(|iteration| run_iteration_cached(&mut ws, iteration))
+                    .collect::<Result<Vec<_>, KnockoffError>>()
+            } else {
+                let mut augmented = init_augmented();
+                let mut swap_buf = vec![0.0; n];
+                (start..stop).map(|iteration| run_iteration_uncached(&mut augmented, &mut swap_buf, iteration))
+                    .collect::<Result<Vec<_>, KnockoffError>>()
+            }
+        }).collect::<Result<Vec<_>, _>>()?;
+        chunks.into_iter().flatten().collect()
+    } else if use_cached_path {
         if config.parallel {
             (0..config.niter)
                 .into_par_iter()
@@ -1297,6 +1323,9 @@ fn validate_voting_inputs(
             actual: config.spec,
         });
     }
+    if config.max_voting_workers == Some(0) {
+        return Err(KnockoffError::InvalidVotingWorkerCount);
+    }
     if config.niter == 0 {
         return Err(KnockoffError::InvalidIterationCount);
     }
@@ -1703,6 +1732,7 @@ mod tests {
             f_size: None,
             family: GlmnetFamily::Gaussian,
             parallel: true,
+            max_voting_workers: None,
             r_compatible: false,
         };
         let voting = knockoff_filter_voting(&z, &y, &config)
@@ -2050,16 +2080,22 @@ mod tests {
             [0.0, 0.0, 1.0],
         ]));
         let y = Vector::from_ndarray(arr1(&[3.0, 2.0, 0.5, 0.25, 0.1, 0.0]));
-        let config = simple_config();
-
-        let left = knockoff_filter_voting(&x, &y, &config)
-            .unwrap_or_else(|error| panic!("voting failed: {error}"));
-        let right = knockoff_filter_voting(&x, &y, &config)
-            .unwrap_or_else(|error| panic!("voting failed: {error}"));
-
-        assert_eq!(left.selection_counts, right.selection_counts);
-        assert_eq!(left.selected, right.selected);
-        assert_eq!(left.freq_selected, right.freq_selected);
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()
+            .unwrap_or_else(|error| panic!("pool failed: {error}"));
+        for statistic in [KnockoffStatistic::GlmnetLambdasMax, KnockoffStatistic::GlmnetCoefDiff] {
+            let mut config = KnockoffConfig { statistic, parallel: false, ..simple_config() };
+            let serial = knockoff_filter_voting(&x, &y, &config)
+                .unwrap_or_else(|error| panic!("serial voting failed: {error}"));
+            config.parallel = true;
+            for workers in [None, Some(1), Some(2), Some(3), Some(20)] {
+                config.max_voting_workers = workers;
+                let parallel = pool.install(|| knockoff_filter_voting(&x, &y, &config))
+                    .unwrap_or_else(|error| panic!("bounded voting failed: {error}"));
+                assert_eq!(serial, parallel);
+            }
+            config.max_voting_workers = Some(0);
+            assert!(matches!(knockoff_filter_voting(&x, &y, &config), Err(KnockoffError::InvalidVotingWorkerCount)));
+        }
     }
 
     #[test]

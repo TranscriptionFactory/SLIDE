@@ -13,7 +13,7 @@ pixi run --locked -e rust ./target/release/slide cv \
   --config path/to/input.yaml \
   --z path/to/z_matrix.csv \
   --out results/2026-10-27_native-cv \
-  --nrep 15 --k 5 --seed 20261002 --threads 20 --max-active-folds 1
+  --nrep 15 --k 5 --seed 20261002 --threads 20
 ```
 
 Use an existing parent directory and a new output directory. The command refuses
@@ -127,12 +127,58 @@ not establish a speedup or scientific acceptance on a production dataset.
 
 ## Memory and numerical solver
 
-`--max-active-folds` (default 1) limits active folds independently of `--threads`.
-Increasing the thread count does not increase fold concurrency. Batches retain
-split order, per-fold seeds and observed/permuted pairing. Each fold disables
-parallel knockoff voting; ASDP blocks run sequentially. Library callers must
-also set BLAS/OpenMP thread counts to 1 before starting worker threads. The CV
-CLI rejects unset or non-1 `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS` and
+Omit `--max-active-folds` to size fold concurrency at startup. Explicit positive
+values are additional ceilings, not overrides of CPU or memory limits. Future
+launchers should omit historical hard-coded fold caps when automatic sizing is
+intended; archived launchers and benchmark commands retain their original caps.
+
+CPU discovery uses Rust's [standard parallelism detector](https://doc.rust-lang.org/std/thread/fn.available_parallelism.html) (including
+supported affinity/cgroup restrictions), capped by `--threads` or
+`RAYON_NUM_THREADS`, and tighter Slurm CPU allowances. One Rayon pool serves
+folds and voting. There is no load polling or ordinary-run benchmarking.
+
+[`sysinfo` 0.37.2](https://docs.rs/sysinfo/0.37.2/sysinfo/) supplies OS-available memory on Linux, macOS and Windows.
+Linux cgroup v1/v2 memory limits are read from the process membership through
+visible ancestors, including mounted subtrees. Slurm memory, inherited Linux
+address-space/data limits, and `--memory-budget-mib` can tighten that allowance.
+The application budget is total process memory; the resident bytes already in
+use are subtracted. Container usage is subtracted from each container limit;
+virtual address usage is subtracted from the address-space limit. Host available
+memory alone does not establish a Slurm job's allowance. If that allowance is
+unknown, use one fold, or supply `--memory-budget-mib`. If a known budget cannot
+fit one estimated fold, the CLI fails before CV and creates no result directory.
+
+The policy reserves 25% of detected headroom. Its sizing heuristic separates
+shared/retained data, active fold workspaces and extra voting workspaces:
+
+- Fold: 128 MiB + 128 × (N × K + K²) bytes + 8 × draws × (K + 3) bytes.
+- Retained: saved factor matrix, split indices, both methods' predictions and
+  worst-case retained interaction indices across folds/repeats.
+- Each extra voting worker: another full fold estimate, conservatively.
+
+These are conservative sizing estimates, not measured peak bounds. Other
+processes can consume memory after startup. Slurm metadata without cgroup usage
+cannot account for other processes sharing that allocation. Native macOS process
+limits and Windows Job Object memory limits are not probed; use an explicit
+application budget when those impose a tighter limit. Production peak memory
+and laptop behavior remain unverified.
+
+Fixed worker loops take indexed folds from a shared queue: a completed fold
+admits the next one without a batch barrier. Results retain split order and
+per-fold/per-draw seeds. On error, admission stops, running folds finish, and
+no complete result is published. ASDP blocks and interaction submodels remain
+sequential. Automatic inner voting uses spare startup CPU capacity only when
+its additional workspaces fit the same memory budget. It passed the acceptance
+gate below; the hidden `--voting-workers` diagnostic ceiling can restrict it
+(for example, `--voting-workers 1` forces serial voting) on the same pool. Outer workers × voting workers never exceeds the CPU
+budget. Non-CV callers retain their existing voting behavior; the serde-defaulted
+`KnockoffConfig.max_voting_workers` optionally bounds their voting workspaces.
+
+The CLI records requested limits, effective CPU/fold/voting counts, memory
+estimates, reserve and budget sources in `requested-config.json`, and logs the
+resource decision before computation. Library callers keep explicit configurations
+and must set BLAS/OpenMP thread counts to 1 before starting worker threads. The
+CV CLI rejects unset or non-1 `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS` and
 `MKL_NUM_THREADS` rather than oversubscribing nested native threads.
 
 SDP blocks up to 64 variables retain Clarabel. Larger blocks use the existing
@@ -149,9 +195,79 @@ and covariance feasibility repairs still run afterward. Numerical failures keep
 the existing fallback semantics. A resource-limit error does not trigger an
 equicorrelated fallback: dimensions above 4096 fail before solver allocation.
 This is a conservative resource limit, not a promise that every configuration
-below it fits every allocation. Keep the default fold limit until the intended
-workload has been measured.
+below it fits every allocation. Use `--max-active-folds 1 --voting-workers 1`
+when validating an unfamiliar workload with minimum concurrency.
 
 See `sdp-memory-status.md` for measured memory, numerical comparisons and limits
 of the validation. R's public feasibility shrinkage differs from Rust's existing
 repair, so raw SDP agreement does not imply identical knockoff samples or AUCs.
+
+
+### Combined concurrency acceptance
+
+Build the CLI and selected Rust test executables once, then run the existing
+portable smoke entrypoint:
+
+```bash
+python scripts/slide_artifact_smoke.py --binary target/release/slide \
+  --workdir .tmpfiles/YYYY-MM-DD_cv-acceptance --cv-concurrency \
+  --test-binary path/to/prebuilt-test-executable --profile-voting
+```
+
+Repeat `--test-binary` for the CV, knockoff, SDP, DSDP and CLI suites. The CLI
+suite is filtered to `run::tests::`; unrelated TUI tests are outside this batch.
+`--cv-fixture` reuses an existing small CLI fixture; `--cv-reference` compares
+its 101-draw outputs with accepted files. Without it, native CI reuses the
+committed HIV saved factors. `--saved-config`, `--saved-z`, and
+`--saved-reference` add the existing 778-cell/425-factor, two-draw diagnostic
+(one repeat, five folds, seed 20261602), once with automatic queued folds.
+No fitting or production submission occurs.
+
+`--profile-voting` runs three alternating serial/parallel pairs with 1,000 draws,
+identical CPU/memory budgets and a per-child timeout (600 seconds by default).
+POSIX `wait4` measures each process's CPU time and peak RSS. The existing
+`SLIDE_KNOCKOFF_PROFILE` switch adds DSDP lock-wait and solve timing; zero calls
+mean the fixture did not enter DSDP, not a measured DSDP speedup. The gate requires
+baseline CPU utilization below 80% of budget, every pair faster, median paired
+elapsed improvement of at least 10%, byte-identical outputs and respected
+resource bounds. A failed or timed-out gate does not authorize enabling automatic inner voting. The portable
+resource/queue smoke runs in the existing native-platform CI; profiling is an
+engineering acceptance test, not a scientific-equivalence margin.
+
+
+#### Linux acceptance, 2026-11-01
+
+The combined run passed 59 focused tests (seven opt-in tests skipped), resource
+ceilings, inherited Linux process limits, default progress, queue admission and
+failure handling, and exact-result checks across concurrency settings. The saved
+778-cell/425-factor diagnostic used four queued folds and matched the accepted
+result JSON, predictions CSV and scores CSV byte-for-byte. Its settings remained
+two draws, one repeat and five folds; it was not a production CV run.
+
+The existing 12-row/3-factor CLI fixture passed three alternating profile pairs
+at 1,000 draws, one outer fold, four CPUs and a 2 GiB application budget:
+
+| Pair | Serial seconds | Four voting workers, seconds | Baseline CPU budget used |
+| --- | ---: | ---: | ---: |
+| 1 | 1.668 | 0.637 | 24.2% |
+| 2 | 1.667 | 0.628 | 24.3% |
+| 3 | 1.657 | 0.647 | 24.3% |
+
+Median paired elapsed improvement was 61.8%; all pairs were faster and their
+outputs matched exactly. Peak RSS was at most 30.2 MiB. The small fixture made
+zero DSDP calls: lock-wait and solve totals were zero, not evidence of improved
+DSDP throughput. These results authorize the startup-budgeted inner-voting
+default, not a production speedup claim.
+
+Evidence: `.tmpfiles/2026-11-01_auto-cv-acceptance/combined/`, including the
+command in `README.md`, per-check logs, and paired measurements in `summary.json`.
+macOS, Windows, Rust 1.88 execution and production memory/runtime are unverified
+locally. Native-platform CI is wired but has not been run in this session.
+
+After enabling the default, the 44 affected CLI/CV/knockoff tests passed again,
+including serial-versus-bounded equality for cached and uncached voting. The
+small accepted fixture and the portable HIV fixture both passed the smoke;
+a one-fold ceiling used four budgeted voting workers with identical outputs.
+Only affected checks were repeated; the saved-factor diagnostic and paired
+profiling were not rerun. See `enabled-default/` and `portable-fixture/` beside
+the combined run for those checks.

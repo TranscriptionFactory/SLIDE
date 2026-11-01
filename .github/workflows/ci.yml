@@ -202,6 +202,15 @@ jobs:
             scripts/slide_artifact_smoke.py --binary target/release/slide.exe `
             --workdir "$env:RUN_DIR/rust-smoke" --out-path "$env:RUN_DIR/results"
           if ($LASTEXITCODE -ne 0) { throw 'Rust native smoke failed; Windows ConPTY is not checked' }
+      - name: Native saved-factor CV resource and queue acceptance
+        if: ${{ !cancelled() && steps.rust-build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $binary = if ($IsWindows) { "target/release/slide.exe" } else { "target/release/slide" }
+          pixi run --locked -e rust "$env:SMOKE_PYTHON" `
+            scripts/slide_artifact_smoke.py --binary $binary `
+            --workdir "$env:RUN_DIR/cv-concurrency" --cv-concurrency
+          if ($LASTEXITCODE -ne 0) { throw 'Rust CV concurrency acceptance failed' }
       - name: Upload source smoke results (PDF visual review still required)
         if: always()
         uses: actions/upload-artifact@v4
@@ -210,5 +219,6 @@ jobs:
           path: |
             ${{ env.RUN_DIR }}/results
             ${{ env.RUN_DIR }}/rust-smoke
+            ${{ env.RUN_DIR }}/cv-concurrency
           include-hidden-files: true
           if-no-files-found: warn
