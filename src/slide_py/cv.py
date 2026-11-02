@@ -1,9 +1,4 @@
-"""Cross-validation module for SLIDE latent-factor models.
-
-Implements R-style SLIDEcv: repeated stratified k-fold CV that benchmarks
-a fitted SLIDE model against a permuted-y null, reporting Spearman
-correlation (regression) or ROC-AUC (classification).
-"""
+"""Method-4 repeated CV on saved latent factors, with a training-y null."""
 
 from __future__ import annotations
 
@@ -14,476 +9,286 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
-from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import KFold, StratifiedKFold
-from sklearn.preprocessing import StandardScaler
 
 from .knockoffs import Knockoffs
+from .sample_cv import _fit_ols
 from .tools import calc_default_fsize
 
 logger = logging.getLogger(__name__)
 
 
 class SLIDEcv:
-    """Repeated k-fold cross-validation benchmark for a fitted SLIDE model.
+    """Reselect method-4 models within repeated caret-style stratified folds.
 
-    Runs knockoff variable selection *within* each CV fold on the pre-computed
-    latent-factor Z matrix, then scores predictions against a permuted-y
-    null (``SLIDE_y``).
-
-    Args:
-        slide_obj: A fitted ``OptimizeSLIDE`` instance (must have
-            ``latent_factors``, ``data.Y``, ``input_params``, ``marginal_idxs``).
-        nrep: Number of independent replicates.
-        k: Number of CV folds per replicate.
-        eval_type: ``'corr'`` for Spearman correlation (regression) or
-            ``'auc'`` for ROC-AUC (classification).
-        **kwargs: Reserved for forward compatibility.
+    Saved Z is globally sample-SD scaled, as in R/SLIDEcv.R. Continuous
+    targets use training-fold mean/SD; binary AUC uses the original labels.
+    Selection uses native Gaussian knockoffs, offset zero and findOptIter.
+    Numerical seeds define native draws, not paired draws across languages.
     """
 
-    def __init__(
-        self,
-        slide_obj,
-        *,
-        nrep: int = 20,
-        k: int = 10,
-        eval_type: str = "corr",
-        **kwargs,
-    ) -> None:
+    def __init__(self, slide_obj, *, nrep=20, k=10, eval_type="corr", **kwargs):
         self.slide_obj = slide_obj
-        self.nrep = nrep
-        self.k = k
-        self.eval_type = eval_type
-
-        # Extract data from the fitted SLIDE object
-        self.z_matrix: np.ndarray = np.asarray(slide_obj.latent_factors.values)
-        self.y: np.ndarray = np.asarray(slide_obj.data.Y.values).flatten()
+        self.nrep, self.k, self.eval_type = nrep, k, eval_type
+        factors, response = slide_obj.latent_factors, slide_obj.data.Y
+        self.z_matrix = np.asarray(factors, dtype=float)
+        values = np.asarray(response, dtype=float)
+        if (self.z_matrix.ndim != 2 or values.ndim not in (1, 2)
+                or (values.ndim == 2 and values.shape[1] != 1)):
+            raise ValueError("SLIDEcv requires matrix Z and a single response column")
+        self.y = values.reshape(-1)
         self.n_samples, self.n_lfs = self.z_matrix.shape
-
-        # Determine if classification
-        self.is_classifier: bool = len(np.unique(self.y)) == 2
-
-        if self.eval_type == "auc" and not self.is_classifier:
-            logger.warning(
-                "eval_type='auc' requested but y is not binary; falling back to 'corr'"
-            )
-            self.eval_type = "corr"
-
-        # Compute f_size once from full dataset (matches R SLIDEcv behavior)
-        self._f_size: int = kwargs.pop(
-            "f_size", calc_default_fsize(self.n_samples, self.n_lfs)
-        )
-
-        # Knockoff parameters forwarded from the fitted model
+        if (self.n_samples < 3 or self.n_lfs < 1 or len(self.y) != self.n_samples
+                or not np.isfinite(self.z_matrix).all() or not np.isfinite(self.y).all()):
+            raise ValueError("SLIDEcv requires finite row-aligned Z/y with >=3 rows and >=1 factor")
+        self.sample_ids = (factors.index.to_numpy() if isinstance(factors, pd.DataFrame)
+                           else np.arange(self.n_samples))
+        if (pd.Index(self.sample_ids).has_duplicates or pd.isna(self.sample_ids).any()
+                or (isinstance(response, (pd.DataFrame, pd.Series))
+                    and not pd.Index(self.sample_ids).equals(response.index))):
+            raise ValueError("SLIDEcv Z/y sample IDs must be unique, nonmissing and identically ordered")
+        for name, value, upper in (("nrep", nrep, None), ("k", k, self.n_samples)):
+            if (isinstance(value, bool) or not isinstance(value, (int, np.integer))
+                    or value < (2 if name == "k" else 1)
+                    or (upper is not None and value > upper)):
+                raise ValueError(f"SLIDEcv {name}: invalid integer {value}")
+        if eval_type not in ("corr", "auc"):
+            raise ValueError("SLIDEcv eval_type must be corr or auc")
+        self.is_classifier = eval_type == "auc"
+        if np.ptp(self.y) == 0 or (self.is_classifier and len(np.unique(self.y)) != 2):
+            raise ValueError("SLIDEcv requires variable y; auc requires exactly two levels")
+        scales = self.z_matrix.std(axis=0, ddof=1)
+        if (scales <= 0).any():
+            raise ValueError("SLIDEcv saved Z has constant factors and cannot be sample-SD scaled")
+        self.z_matrix = (self.z_matrix - self.z_matrix.mean(axis=0)) / scales
+        self._f_size = kwargs.pop("f_size", calc_default_fsize(self.n_samples, self.n_lfs))
         params = slide_obj.input_params
-        self._ko_params: dict = dict(
-            spec=params.get("spec", 0.2),
-            fdr=params.get("fdr", 0.1),
-            niter=params.get("niter", 100),
-            backend=params.get("knockoff_backend", "python"),
-            method=params.get("knockoff_method", "asdp"),
-            shrink=params.get("knockoff_shrink", False),
-            offset=params.get("knockoff_offset", 0),
-            fstat=params.get("fstat", "glmnet_lambdasmax"),
-            n_workers=params.get("n_workers", 1),
-        )
+        for name, expected in (("knockoff_backend", "python"), ("knockoff_method", "asdp"),
+                               ("knockoff_shrink", False), ("knockoff_offset", 0),
+                               ("fstat", "glmnet_lambdasmax")):
+            if params.get(name, expected) != expected:
+                raise ValueError(f"SLIDEcv native method-4 requires {name}={expected!r}")
+        self._ko_params = dict(spec=params.get("spec", 0.2), fdr=params.get("fdr", 0.1),
+                               niter=params.get("niter", 100), n_workers=params.get("n_workers", 1))
+        self.do_interacts = params.get("do_interacts", True)
+        if (isinstance(self._f_size, bool) or not isinstance(self._f_size, (int, np.integer))
+                or self._f_size < 1):
+            raise ValueError("SLIDEcv f_size must be a positive integer")
+        if (not 0 < self._ko_params["spec"] <= 1 or not 0 < self._ko_params["fdr"] < 1
+                or isinstance(self._ko_params["niter"], bool)
+                or not isinstance(self._ko_params["niter"], (int, np.integer))
+                or self._ko_params["niter"] < 1):
+            raise ValueError("SLIDEcv requires spec in (0,1], fdr in (0,1), and positive integer niter")
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def run(self, *, outpath: Optional[Union[str, Path]] = None, seed=42, **kwargs):
+        """Return tidy repeat scores; keep every held-out row in predictions_.
 
-    def run(
-        self,
-        *,
-        outpath: Optional[Union[str, Path]] = None,
-        seed: int = 42,
-        **kwargs,
-    ) -> pd.DataFrame:
-        """Execute repeated CV and return tidy results.
-
-        Args:
-            outpath: If given, saves a CSV and boxplot to this directory.
-            seed: Base random seed (incremented per replicate).
-            **kwargs: Forwarded to ``_bench_cv``.
-
-        Returns:
-            DataFrame with columns ``[method, metric_value, replicate]``.
+        metric_value is Spearman or direction-corrected AUC; raw_metric retains
+        its direction, mse uses fold-standardized targets for corr, and status
+        explicitly identifies an undefined metric. Both branches use Gaussian OLS.
         """
-        frames: list[pd.DataFrame] = []
+        if (isinstance(seed, bool) or not isinstance(seed, (int, np.integer)) or seed < 0):
+            raise ValueError("SLIDEcv seed must be a nonnegative integer")
+        self._prediction_rows = []
+        frames = []
         for rep in range(self.nrep):
             logger.info("SLIDEcv replicate %d / %d", rep + 1, self.nrep)
-            rep_seed = seed + rep
-            df = self._bench_cv(rep, seed=rep_seed, **kwargs)
-            frames.append(df)
-
+            frames.append(self._bench_cv(rep, seed=seed + rep, **kwargs))
         results = pd.concat(frames, ignore_index=True)
-
+        self.predictions_ = pd.DataFrame(self._prediction_rows)
         if outpath is not None:
             outpath = Path(outpath)
             outpath.mkdir(parents=True, exist_ok=True)
             results.to_csv(outpath / "slidecv_results.csv", index=False)
+            self.predictions_.to_csv(outpath / "slidecv_predictions.csv", index=False)
             self._plot_boxplot(results, outpath)
-
         return results
 
-    # ------------------------------------------------------------------
-    # Per-replicate logic
-    # ------------------------------------------------------------------
+    def _bench_cv(self, rep, *, seed=0, max_resplit=10, **kwargs):
+        rng = np.random.default_rng(seed)
+        folds = self._make_folds(rng, max_resplit)
+        predictions = {method: np.full(self.n_samples, np.nan) for method in ("SLIDE", "SLIDE_y")}
+        coverage = np.zeros(self.n_samples, dtype=int)
+        true = np.empty(self.n_samples)
+        rows = []
+        for fold, (train, valid) in enumerate(folds):
+            train_y, valid_y = self.y[train], self.y[valid]
+            if not self.is_classifier:
+                train_y, valid_y = self._standardize_fold(train_y, valid_y)
+            true[valid] = valid_y
+            coverage[valid] += 1
+            permuted = train_y[rng.permutation(len(train_y))]
+            for method, response in (("SLIDE", train_y), ("SLIDE_y", permuted)):
+                pred = np.asarray(self._run_slide_fold(self.z_matrix[train], response,
+                                                      self.z_matrix[valid], rng=rng, **kwargs))
+                if pred.shape != (len(valid),):
+                    raise ValueError(f"SLIDEcv repeat {rep} fold {fold} {method}: incomplete predictions")
+                predictions[method][valid] = pred
+                rows.extend(dict(replicate=rep, fold=fold, method=method, row_index=int(i),
+                                 sample_id=str(self.sample_ids[i]), y_true=float(t), y_pred=float(p),
+                                 model="gaussian_ols") for i, t, p in zip(valid, valid_y, pred))
+        if not np.all(coverage == 1):
+            raise ValueError(f"SLIDEcv repeat {rep}: incomplete or duplicate held-out sample coverage")
+        if hasattr(self, "_prediction_rows"):
+            self._prediction_rows.extend(rows)
+        scores = []
+        for method, predicted in predictions.items():
+            metric, raw, mse = self._score(true, predicted)
+            scores.append(dict(method=method, metric_value=metric, replicate=rep,
+                               raw_metric=raw, mse=mse,
+                               imputed_predictions=int(np.isnan(predicted).sum()) if self.is_classifier and np.isfinite(predicted).any() else 0,
+                               status="ok" if np.isfinite(metric) else "undefined_metric"))
+        return pd.DataFrame(scores)
 
-    def _bench_cv(
-        self,
-        rep: int,
-        *,
-        seed: int = 0,
-        max_resplit: int = 10,
-        **kwargs,
-    ) -> pd.DataFrame:
-        """Run one replicate of k-fold CV.
+    def _select(self, z, y, spec, f_size, rng):
+        # The shared selector seeds legacy NumPy internals; preserve caller RNG state.
+        state = np.random.get_state()
+        try:
+            return np.asarray(Knockoffs.select_short_freq(
+                z=z, y=y, spec=spec, f_size=f_size, backend="python",
+                fdr=self._ko_params["fdr"], niter=self._ko_params["niter"],
+                n_workers=self._ko_params["n_workers"],
+                base_seed=int(rng.integers(0, 2**31)), slide_selection=True), dtype=int)
+        finally:
+            np.random.set_state(state)
 
-        Args:
-            rep: Replicate index (used in output only).
-            seed: Random seed for this replicate.
-            max_resplit: Maximum re-splits when a fold has zero-variance y.
-            **kwargs: Forwarded to ``_run_slide_fold``.
+    @staticmethod
+    def _increase_spec(spec):
+        if spec + 0.1 > 1 + 1e-12:
+            raise ValueError("SLIDEcv model remains oversized at maximal selection specificity")
+        return min(1.0, spec + 0.1)
 
-        Returns:
-            DataFrame with one row per method (``SLIDE``, ``SLIDE_y``).
-        """
-        rng = np.random.RandomState(seed)
-
-        z = self.z_matrix
-        y = self.y
-
-        # Choose fold splitter
-        if self.is_classifier:
-            splitter_cls = StratifiedKFold
-        else:
-            splitter_cls = KFold
-
-        # Split, re-splitting if a fold has zero-variance y (matches R while-loop)
-        for attempt in range(max_resplit):
-            splitter = splitter_cls(
-                n_splits=self.k, shuffle=True, random_state=rng.randint(0, 2**31)
-            )
-            folds = list(splitter.split(z, y))
-            if self._folds_valid(y, folds):
+    def _run_slide_fold(self, train_z, train_y, valid_z, *, rng=None, **kwargs):
+        rng = np.random.default_rng(0) if rng is None else rng
+        spec = self._ko_params["spec"]
+        while True:
+            marginals = self._select(train_z, train_y, spec, self._f_size, rng)
+            if len(marginals) < len(train_y):
                 break
-        else:
-            logger.warning(
-                "Rep %d: could not find valid folds after %d attempts", rep, max_resplit
-            )
+            spec = self._increase_spec(spec)
+        if not len(marginals):
+            marginals = np.array([rng.integers(train_z.shape[1])])
+        train_x, valid_x = train_z[:, marginals], valid_z[:, marginals]
+        if self.do_interacts and len(marginals) < len(train_y):
+            pairs = self._find_interactions_fold(train_z, train_y, marginals, self._f_size, rng=rng)
+            ups_train, ups_valid = self._build_prediction_features(
+                train_z, valid_z, marginals, pairs, train_y=train_y)
+            selected = (np.array([0]) if len(marginals) == 1 else
+                        self._select(ups_train, train_y, self._ko_params["spec"], self._f_size, rng))
+            if len(selected):
+                train_x, valid_x = ups_train[:, selected], ups_valid[:, selected]
+        return self._gaussian_predict(train_x, train_y, valid_x)
 
-        slide_preds = np.full(self.n_samples, np.nan)
-        slide_y_preds = np.full(self.n_samples, np.nan)
-
-        for fold_idx, (train_idx, valid_idx) in enumerate(folds):
-            logger.debug("  Rep %d fold %d / %d", rep, fold_idx + 1, self.k)
-
-            z_train, z_valid = z[train_idx], z[valid_idx]
-            y_train, y_valid = y[train_idx], y[valid_idx]
-
-            # Standardize within fold (train stats applied to valid)
-            z_train_s, z_valid_s = self._standardize_fold(z_train, z_valid)
-
-            # Permuted y for null distribution
-            y_perm = y_train[rng.permutation(len(y_train))]
-
-            # True SLIDE predictions
-            preds = self._run_slide_fold(z_train_s, y_train, z_valid_s, **kwargs)
-            slide_preds[valid_idx] = preds
-
-            # Null (permuted y) predictions
-            preds_null = self._run_slide_fold(z_train_s, y_perm, z_valid_s, **kwargs)
-            slide_y_preds[valid_idx] = preds_null
-
-        # Compute metric across all held-out samples
-        slide_metric = self._compute_metric(y, slide_preds)
-        slide_y_metric = self._compute_metric(y, slide_y_preds)
-
-        return pd.DataFrame(
-            {
-                "method": ["SLIDE", "SLIDE_y"],
-                "metric_value": [slide_metric, slide_y_metric],
-                "replicate": [rep, rep],
-            }
-        )
-
-    # ------------------------------------------------------------------
-    # Per-fold knockoff + prediction
-    # ------------------------------------------------------------------
-
-    def _run_slide_fold(
-        self,
-        train_z: np.ndarray,
-        train_y: np.ndarray,
-        valid_z: np.ndarray,
-        **kwargs,
-    ) -> np.ndarray:
-        """Select features via knockoffs on train, predict on valid.
-
-        Mirrors R SLIDEcv fold logic:
-        1. Run knockoff filter for marginal LFs on train_z.
-        2. For each marginal, correct y and test interactions.
-        3. Build a prediction model (with or without interactions).
-        4. Return predictions for valid set.
-
-        Args:
-            train_z: Standardized training Z matrix ``(n_train, K)``.
-            train_y: Training response ``(n_train,)``.
-            valid_z: Standardized validation Z matrix ``(n_valid, K)``.
-            **kwargs: Reserved.
-
-        Returns:
-            Predicted values for the validation set ``(n_valid,)``.
-        """
-        n_train, n_lfs = train_z.shape
-        f_size = self._f_size
-        ko = self._ko_params
-
-        # --- Step 1: marginal selection ---
-        marginal_idxs = Knockoffs.select_short_freq(
-            z=train_z,
-            y=train_y,
-            spec=ko["spec"],
-            fdr=ko["fdr"],
-            niter=ko["niter"],
-            f_size=f_size,
-            n_workers=ko["n_workers"],
-            backend=ko["backend"],
-            method=ko["method"],
-            shrink=ko["shrink"],
-            offset=ko["offset"],
-            fstat=ko["fstat"],
-        )
-
-        # If nothing found, pick one random feature (matches R fallback)
-        if len(marginal_idxs) == 0:
-            marginal_idxs = np.array(
-                [np.random.randint(0, n_lfs)]
-            )
-            logger.debug("No marginals selected; using random feature %d", marginal_idxs[0])
-
-        # --- Step 2: interaction selection (R-style per-marginal) ---
-        interaction_pairs = self._find_interactions_fold(
-            train_z, train_y, marginal_idxs, f_size
-        )
-
-        # --- Step 3: build prediction features ---
-        train_X, valid_X = self._build_prediction_features(
-            train_z, valid_z, marginal_idxs, interaction_pairs
-        )
-
-        # --- Step 4: fit model on train, predict on valid ---
-        if self.is_classifier:
-            model = LogisticRegression(max_iter=1000, solver="lbfgs")
-        else:
-            model = LinearRegression()
-
-        model.fit(train_X, train_y)
-
-        if self.is_classifier:
-            return model.predict_proba(valid_X)[:, 1]
-        return model.predict(valid_X)
-
-    # ------------------------------------------------------------------
-    # Interaction detection within a fold
-    # ------------------------------------------------------------------
-
-    def _find_interactions_fold(
-        self,
-        train_z: np.ndarray,
-        train_y: np.ndarray,
-        marginal_idxs: np.ndarray,
-        f_size: int,
-        **kwargs,
-    ) -> list[tuple[int, int]]:
-        """Find interaction pairs within a fold (R-style per-marginal logic).
-
-        For each marginal:
-        1. Build interaction terms with candidate LFs.
-        2. Correct y for the marginal's effect.
-        3. Run knockoff filter on interaction terms vs corrected y.
-
-        Args:
-            train_z: Training Z matrix.
-            train_y: Training response.
-            marginal_idxs: Indices of marginal LFs found.
-            f_size: Feature chunk size for knockoffs.
-            **kwargs: Reserved.
-
-        Returns:
-            List of ``(marginal_idx, interacting_idx)`` tuples.
-        """
-        ko = self._ko_params
-        n_lfs = train_z.shape[1]
-        used_marginals: set[int] = set()
-        pairs: list[tuple[int, int]] = []
-
-        for marg_idx in marginal_idxs:
-            used_marginals.add(int(marg_idx))
-            z_marginal = train_z[:, marg_idx]
-
-            # Candidates: all LFs except already-used marginals
-            candidate_idxs = [i for i in range(n_lfs) if i not in used_marginals]
-            if len(candidate_idxs) == 0:
-                continue
-
-            z_candidates = train_z[:, candidate_idxs]
-
-            # Interaction terms: marginal x each candidate
-            interaction_terms = z_marginal[:, np.newaxis] * z_candidates
-
-            # Correct y for marginal effect
-            corrected_y = Knockoffs.correct_y(z_marginal, train_y)
-
-            # Knockoff filter on interaction terms
-            int_f_size = self._f_size
-
-            sig_local = Knockoffs.select_short_freq(
-                z=interaction_terms,
-                y=corrected_y,
-                spec=ko["spec"],
-                fdr=ko["fdr"],
-                niter=ko["niter"],
-                f_size=int_f_size,
-                n_workers=ko["n_workers"],
-                backend=ko["backend"],
-                method=ko["method"],
-                shrink=ko["shrink"],
-                offset=ko["offset"],
-                fstat=ko["fstat"],
-            )
-
-            for local_idx in sig_local:
-                pairs.append((int(marg_idx), candidate_idxs[local_idx]))
-
-        return pairs
-
-    # ------------------------------------------------------------------
-    # Feature construction
-    # ------------------------------------------------------------------
+    def _find_interactions_fold(self, train_z, train_y, marginal_idxs, f_size, *, rng=None, **kwargs):
+        rng = np.random.default_rng(0) if rng is None else rng
+        spec = self._ko_params["spec"]
+        while True:
+            pairs = []
+            for marginal in marginal_idxs:
+                # R's numeric already_made names miss Z-prefixed pairs, so keep reverse pairs.
+                candidates = [j for j in range(train_z.shape[1]) if j != marginal]
+                fitted = self._gaussian_predict(train_z[:, [marginal]], train_y, train_z[:, [marginal]])
+                selected = (self._select(train_z[:, [marginal]] * train_z[:, candidates],
+                                         train_y - fitted, spec, 100, rng)
+                            if candidates else [])
+                if len(selected) > len(train_y) - len(marginal_idxs):
+                    spec = self._increase_spec(spec)
+                    break
+                pairs.extend((int(marginal), candidates[j]) for j in selected)
+            else:
+                return pairs
 
     @staticmethod
-    def _build_prediction_features(
-        train_z: np.ndarray,
-        valid_z: np.ndarray,
-        marginal_idxs: np.ndarray,
-        interaction_pairs: list[tuple[int, int]],
-        **kwargs,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Construct the feature matrices for prediction.
+    def _gaussian_predict(train_x, train_y, valid_x):
+        design = np.column_stack((np.ones(len(train_x)), train_x))
+        kept, coefficients = _fit_ols(design, train_y)
+        predicted = np.column_stack((np.ones(len(valid_x)), valid_x))[:, kept] @ coefficients
+        if not np.isfinite(predicted).all():
+            raise ValueError("SLIDEcv Gaussian OLS produced nonfinite predictions")
+        return predicted
 
-        If interactions are found, for each marginal the method builds
-        an upsilon (fitted value from ``lm(y ~ marginal + interactions)``),
-        then stacks the marginal columns alongside the interaction columns.
-        If no interactions, uses marginal columns directly.
+    @staticmethod
+    def _build_prediction_features(train_z, valid_z, marginal_idxs, interaction_pairs, *, train_y):
+        """Fit each marginal/interaction Gaussian submodel and predict its upsilon."""
+        ups_train, ups_valid = [], []
+        for marginal in marginal_idxs:
+            partners = [j for m, j in interaction_pairs if m == marginal]
+            train_x = np.column_stack((train_z[:, marginal],
+                                       train_z[:, [marginal]] * train_z[:, partners]))
+            valid_x = np.column_stack((valid_z[:, marginal],
+                                       valid_z[:, [marginal]] * valid_z[:, partners]))
+            fitted = SLIDEcv._gaussian_predict(train_x, train_y, np.vstack((train_x, valid_x)))
+            ups_train.append(fitted[:len(train_z)])
+            ups_valid.append(fitted[len(train_z):])
+        return np.column_stack(ups_train), np.column_stack(ups_valid)
 
-        Args:
-            train_z: Training Z matrix.
-            valid_z: Validation Z matrix.
-            marginal_idxs: Marginal LF indices.
-            interaction_pairs: ``(marginal, interacting)`` tuples.
-            **kwargs: Reserved.
-
-        Returns:
-            ``(train_X, valid_X)`` feature matrices for the final model.
-        """
-        train_marginals = train_z[:, marginal_idxs]
-        valid_marginals = valid_z[:, marginal_idxs]
-
-        if len(interaction_pairs) == 0:
-            return train_marginals, valid_marginals
-
-        # Build interaction columns
-        train_interactions = np.column_stack(
-            [train_z[:, m] * train_z[:, j] for m, j in interaction_pairs]
-        )
-        valid_interactions = np.column_stack(
-            [valid_z[:, m] * valid_z[:, j] for m, j in interaction_pairs]
-        )
-
-        train_X = np.column_stack([train_marginals, train_interactions])
-        valid_X = np.column_stack([valid_marginals, valid_interactions])
-
-        return train_X, valid_X
-
-    # ------------------------------------------------------------------
-    # Evaluation helpers
-    # ------------------------------------------------------------------
-
-    def _compute_metric(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
-        """Compute the evaluation metric over all held-out predictions.
-
-        Args:
-            y_true: True response values.
-            y_pred: Predicted values (probabilities for classification).
-
-        Returns:
-            Spearman correlation or ROC-AUC, depending on ``self.eval_type``.
-        """
-        # Drop NaN entries (shouldn't happen, but defensive)
-        mask = ~np.isnan(y_pred)
-        y_true = y_true[mask]
-        y_pred = y_pred[mask]
-
+    def _score(self, y_true, y_pred):
+        predicted = np.asarray(y_pred, dtype=float).copy()
         if self.eval_type == "auc":
-            if len(np.unique(y_true)) < 2:
-                return np.nan
-            return roc_auc_score(y_true, y_pred)
+            if np.isinf(predicted).any():
+                raise ValueError("SLIDEcv AUC predictions must be finite or missing")
+            present = ~np.isnan(predicted)
+            if not present.any() or len(np.unique(y_true)) != 2:
+                return np.nan, np.nan, np.nan
+            predicted[~present] = np.median(predicted[present])
+            raw = float(roc_auc_score(y_true, predicted))
+            return max(raw, 1 - raw), raw, np.nan
+        mse = float(np.mean((predicted - y_true)**2))
+        if (not np.isfinite(predicted).all() or not np.isfinite(y_true).all()
+                or np.ptp(predicted) == 0 or np.ptp(y_true) == 0):
+            return np.nan, np.nan, mse
+        corr = float(spearmanr(y_true, predicted).statistic)
+        return corr, corr, mse
 
-        # Default: Spearman correlation
-        if len(y_true) < 3:
-            return np.nan
-        corr, _ = spearmanr(y_true, y_pred)
-        return corr
-
-    # ------------------------------------------------------------------
-    # Fold utilities
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _standardize_fold(
-        z_train: np.ndarray, z_valid: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Standardize using training statistics (matches R ``standCV``).
-
-        Args:
-            z_train: Training feature matrix.
-            z_valid: Validation feature matrix.
-
-        Returns:
-            ``(z_train_scaled, z_valid_scaled)``.
-        """
-        scaler = StandardScaler()
-        z_train_s = scaler.fit_transform(z_train)
-        z_valid_s = scaler.transform(z_valid)
-        return z_train_s, z_valid_s
+    def _compute_metric(self, y_true, y_pred):
+        return self._score(np.asarray(y_true), np.asarray(y_pred))[0]
 
     @staticmethod
-    def _folds_valid(y: np.ndarray, folds: list[tuple]) -> bool:
-        """Check that no fold has zero-variance y (matches R validation loop).
+    def _standardize_fold(train, valid):
+        """Use training sample-SD scaling for a continuous response or matrix."""
+        center, scale = train.mean(axis=0), train.std(axis=0, ddof=1)
+        return (train - center) / scale, (valid - center) / scale
 
-        Args:
-            y: Full response vector.
-            folds: List of ``(train_idx, valid_idx)`` tuples.
+    def _make_folds(self, rng, max_resplit):
+        if (isinstance(max_resplit, bool) or not isinstance(max_resplit, (int, np.integer))
+                or max_resplit < 1):
+            raise ValueError("SLIDEcv max_resplit must be a positive integer")
+        indices = np.arange(self.n_samples)
+        if self.k == self.n_samples:
+            folds = [(indices[indices != i], np.array([i])) for i in indices]
+            if self._folds_valid(self.y, folds):
+                return folds
+        else:
+            if self.is_classifier:
+                labels = self.y
+            else:
+                cuts = min(5, max(2, self.n_samples // self.k))
+                breaks = np.unique(np.quantile(self.y, np.linspace(0, 1, cuts)))
+                labels = np.searchsorted(breaks[1:-1], self.y, side="left")
+            for _ in range(max_resplit):
+                assignments = np.empty(self.n_samples, dtype=int)
+                for label in np.unique(labels):
+                    rows = np.flatnonzero(labels == label)
+                    assigned = np.concatenate((np.tile(np.arange(self.k), len(rows) // self.k),
+                                               rng.permutation(self.k)[:len(rows) % self.k]))
+                    assignments[rows] = rng.permutation(assigned)
+                folds = [(indices[assignments != i], indices[assignments == i]) for i in range(self.k)]
+                if self._folds_valid(self.y, folds):
+                    return folds
+        raise ValueError(f"SLIDEcv cannot generate nondegenerate folds after {max_resplit} attempts")
 
-        Returns:
-            ``True`` if all folds are valid.
-        """
-        for train_idx, valid_idx in folds:
-            if len(np.unique(y[train_idx])) < 2:
-                return False
-            if len(np.unique(y[valid_idx])) < 2:
-                return False
-        return True
+    def _folds_valid(self, y, folds):
+        if any(len(valid) == 0 or len(train) < 2 or np.ptp(y[train]) == 0 for train, valid in folds):
+            return False
+        return (self.is_classifier or any(len(valid) == 1 for _, valid in folds)
+                or all(np.ptp(y[valid]) > 0 for _, valid in folds))
 
     # ------------------------------------------------------------------
     # Plotting
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _plot_boxplot(
+        self,
         results: pd.DataFrame,
         outpath: Path,
         **kwargs,
@@ -511,7 +316,7 @@ class SLIDEcv:
         fig, ax = plt.subplots(figsize=(6, 5), dpi=300)
         fig.patch.set_facecolor("white")
 
-        metric_label = "Spearman r" if "corr" in results.columns else "metric_value"
+        metric_label = "Spearman r" if self.eval_type == "corr" else "Direction-corrected AUC"
 
         if sns is not None:
             sns.set_style("whitegrid")

@@ -141,6 +141,58 @@ selected interactions and compares submodel/final predictions; it does not
 assert cross-language equality of random knockoff selections. These checks do
 not establish a speedup or scientific acceptance on a production dataset.
 
+## Native Python API
+
+`slide_py.SLIDEcv` evaluates a predetermined fitted object's saved factors with
+the method-4 procedure above; it does not rerun LOVE or choose a candidate.
+Set the fitted object's selection parameters before running CV. `niter`, `spec`,
+`fdr`, `do_interacts` and `n_workers` come from its `input_params`.
+
+```python
+from slide_py import SLIDEcv
+
+cv = SLIDEcv(fitted_candidate, nrep=15, k=5, eval_type="corr")
+scores = cv.run(seed=20261002, outpath="new-python-cv")
+predictions = cv.predictions_
+```
+
+Use `eval_type="auc"` for a two-level numeric response. Both modes fit Gaussian
+predictors, not logistic classifiers. Z and y must have finite values and
+matching ordered, unique sample IDs; constant factor columns are rejected.
+The native selector uses Gaussian statistics, offset zero, R-compatible
+covariance/grid settings and `findOptIter`. Conflicting parent settings for
+backend, knockoff method, forced shrinkage, offset or statistic raise an error
+rather than silently changing this procedure. Hybrid backends are not supported
+by this API.
+
+`run()` retains the `method`, `metric_value`, `replicate` result columns and adds
+`raw_metric`, `mse`, `imputed_predictions` and `status`. It writes
+`slidecv_results.csv`, `slidecv_predictions.csv` and `slidecv_boxplot.png`.
+Prediction rows retain sample IDs, zero-based row/fold/repeat indices, the
+observed `SLIDE` or permuted `SLIDE_y` label, and `model=gaussian_ols`.
+Continuous targets in these rows use training-fold standardization; AUC
+predictions are raw Gaussian outputs, not probabilities. Undefined metrics stay
+missing with `status=undefined_metric`; incomplete held-out coverage raises an
+error. Summarize observed and null repeats separately, and retain missing repeats
+in the denominators. The output directory behavior remains unchanged: existing
+files can be overwritten, so use a new directory for each run.
+
+Python runs folds sequentially and uses `n_workers` within selection. Set
+BLAS/OpenMP threads to one and run computational work inside an allocation.
+Invalid splits have a bounded retry limit (`run(max_resplit=10)` by default),
+and oversized selections fail if increasing `spec` to one cannot resolve them.
+These failure limits differ from R's unbounded loops. Seeds reproduce native
+runs, not R folds or knockoff draws. There is no public shared-fold input.
+
+The focused Python tests in `tests/tests/test_cv.py` and
+`tests/tests/test_cv_robustness_gaps.py` cover both branches, seeded native
+selection, scoring and coverage. The optional live-R check fixes selected terms
+and compares submodel/final predictions against this checkout's `getUpsilon`
+and `runSLIDEBeta`, including binary outcomes and aliased columns. This checks
+numerical prediction, not agreement of stochastic selection distributions.
+Historical Python CV used raw-product predictors, fold-scaled Z and different
+AUC handling; do not pool those results with this procedure.
+
 ## Memory and numerical solver
 
 Omit `--max-active-folds` to size fold concurrency at startup. Explicit positive

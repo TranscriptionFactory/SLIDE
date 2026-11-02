@@ -313,6 +313,12 @@ not a full-data predictor. Model terms match the native zero-based
 `z_matrix.csv` headers (`Z0`, `Z1`, and products such as `Z0.Z1`). SampleCV is
 screening, not rigorous SLIDEcv.
 
+Python's [`SLIDEcv` API](docs/native-cv.md#native-python-api) performs method-4
+reselection on saved factors within each fold, with Gaussian submodel/final
+predictors for both continuous and binary responses. It retains observed and
+training-y-permuted predictions and scores separately. Its results are not
+interchangeable with historical Python CV or with sampleCV screening scores.
+
 Legacy Rust checkpoints without screening results cannot resume optimization;
 use a fresh checkpoint. Their control scores are not sampleCV metrics.
 If no marginal factors pass selection, both backends write empty selection
