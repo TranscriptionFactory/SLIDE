@@ -1,7 +1,11 @@
 # SSc/CD4 fresh-retry benchmark campaign
 
-Status: all 24 pilot fits succeeded. The user approved absolute factor-alignment
-tolerance 1e-6 for this campaign and future runs; revalidation precedes production.
+Status: production submitted after all 24 pilot fits and the approved 1e-6
+absolute factor-alignment gate passed. Validation-only job `12091016` completed
+successfully. The 44 production submissions comprise 20 full-fit jobs
+(`12091037`–`12091056`) and 24 CV jobs with IDs between `12091057` and `12091081`;
+`jobs.csv` lists the exact IDs. At submission verification, one job was running
+and 43 were dependency-pending. This is not a completion claim.
 
 - Preparation `12090713` failed before compilation on a rustup shared-home
   settings lock. The scheduler cancelled production `12090714`–`12090757`.
@@ -14,6 +18,10 @@ tolerance 1e-6 for this campaign and future runs; revalidation precedes producti
   Both Python and Rust have this difference (RMSE 1.55e-8; 19,855 of 96,798
   entries exceed 1e-8). All sample IDs and factor names/order match. The other
   seven cells pass, with maximum absolute differences below 4.7e-11.
+- The user approved 1e-6 for current and future benchmark alignment checks.
+  Job `12091016` passed validation without repeating any fits and wrote hashes
+  for all eight shared R factor matrices. Production depends on this gate,
+  not on the earlier failed preparation or validation jobs.
 
 The approved 1e-6 gate uses zero relative tolerance and exact sample-ID and
 factor-name/order checks. This policy change follows inspection of the pilot;
@@ -21,7 +29,9 @@ it is not evidence that the numerical difference has been explained or that
 backend selection is equivalent. Fitting, solver and metric-check tolerances
 are unchanged. The maintained analyzer owns the default in `DEFAULT_Z_TOL`;
 the pilot gate imports that policy from the repository, not the frozen fitting
-source. Historical failed checks retain their original 1e-8 criterion.
+source. Historical failed checks retain their original 1e-8 criterion. Use the
+maintained repository analyzer for reporting; the frozen fitting snapshot is
+immutable and retains the historical analyzer default.
 
 The frozen source is
 `81e1fc97fc13e3e2be3e579907f4608a1ece3515`, which gives native full-fit
@@ -65,7 +75,7 @@ An undefined sampleCV score is not a process failure.
 
 `jobs.csv` records accepted scheduler IDs and dependencies. One preparation job
 builds the frozen Rust source and runs the pilot. Every production job requires
-that preparation job to succeed. Production jobs additionally form a sequential
+the successful validation-only job `12091016`. Production jobs additionally form a sequential
 `afterany` chain so a failed production job does not suppress later comparisons.
 Invalid dependencies cancel waiting jobs. Requeue and automatic resubmission
 are disabled.
