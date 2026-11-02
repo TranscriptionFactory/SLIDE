@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+from contextlib import ExitStack
+from functools import wraps
 import dataclasses
 import datetime as dt
 import json
@@ -39,12 +41,16 @@ import logging
 import math
 import os
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
 import sys
 import time
 import warnings
+import re
+from types import SimpleNamespace
+from unittest.mock import patch
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -118,6 +124,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--configuration", choices=["native", "parity"], default="native",
                    help="Native defaults or matched Gaussian knockoff settings; "
                         "parity does not imply paired RNG or equal solver accuracy")
+    p.add_argument("--workflow", choices=["full-fit", "cv"], default="full-fit")
+    p.add_argument("--z-path", type=Path, help="Saved Z CSV required for native final CV")
+    p.add_argument("--cv-repeats", type=int, default=15)
+    p.add_argument("--cv-folds", type=int, default=5)
+    p.add_argument("--sample-cv-iterations", type=int, default=500)
+    p.add_argument("--sample-cv-k", type=int, default=4)
     p.add_argument("--source-revision", default=None,
                    help="Executed source revision when running a frozen source copy")
     p.add_argument("--x-path", default=_SSC_X, help="Path to X matrix CSV")
@@ -125,7 +137,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--y-factor", action="store_true", help="Treat y as binary factor")
     p.add_argument(
         "--backends", nargs="+",
-        default=["rust", "rust_r_knockoffs", "python_serial", "python", "r_knockoffs", "pure_r"],
+        default=None,
         help="Backends to benchmark",
     )
     p.add_argument(
@@ -172,8 +184,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--skip-run", action="store_true", help="Only compare existing outputs")
     p.add_argument("--measure-process", action="store_true",
                    help="Measure each cell in a fresh process, including startup and I/O")
-    p.add_argument("--cell-timeout", type=float, default=300.0,
-                   help="Wall-time limit per measured cell in seconds (default 300)")
+    p.add_argument("--cell-timeout", type=float, default=None,
+                   help="Wall-time limit per measured cell (default: full-fit 600s, CV 21600s)")
     # SLURM
     p.add_argument("--slurm", action="store_true", help="Submit to SLURM instead of running locally")
     p.add_argument("--slurm-time", default="1-00:00:00")
@@ -182,6 +194,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--slurm-cluster", default="htc")
     p.add_argument("--slurm-partition", default=None)
     args = p.parse_args(argv)
+    if args.backends is None:
+        args.backends = (["python", "rust", "pure_r"] if args.workflow == "cv" else
+                         ["rust", "rust_r_knockoffs", "python_serial", "python", "r_knockoffs", "pure_r"])
+    if args.cell_timeout is None:
+        args.cell_timeout = 21600.0 if args.workflow == "cv" else 600.0
+    if args.workflow == "cv":
+        if args.z_path is None:
+            p.error("--workflow cv requires --z-path")
+        if any(b not in ("python", "rust", "pure_r") for b in args.backends):
+            p.error("--workflow cv supports only python, rust, pure_r")
+    for name, minimum in (("cv_repeats", 1), ("cv_folds", 2),
+                          ("sample_cv_iterations", 1), ("sample_cv_k", 2)):
+        if getattr(args, name) < minimum:
+            p.error(f"--{name.replace('_', '-')} must be >= {minimum}")
     if args.configuration == "parity":
         if args.y_factor:
             p.error("parity currently supports Gaussian responses only")
@@ -261,7 +287,7 @@ def submit_slurm(args: argparse.Namespace) -> int:
         elif val is not None:
             script_args.extend([flag, str(val)])
 
-    inner_cmd = f"python {script} {' '.join(script_args)}"
+    inner_cmd = shlex.join(["python", str(script), *script_args])
     wrap_cmd = f'{pixi_activate}\n{inner_cmd}'
 
     out_dir = args.out_dir.resolve()
@@ -399,6 +425,13 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
         "python": sys.version,
         "platform": sys.platform,
         "seed": args.knockoff_base_seed,
+        "effective_cv_seed": args.knockoff_base_seed if args.knockoff_base_seed is not None else 42,
+        "workflow": args.workflow,
+        "z_path": str(args.z_path.resolve()) if args.z_path else None,
+        "cv_repeats": args.cv_repeats, "cv_folds": args.cv_folds,
+        "sample_cv_iterations": args.sample_cv_iterations,
+        "sample_cv_k": args.sample_cv_k,
+        "auto_select": False,
         "niter": args.niter,
         "spec": args.spec,
         "rust_fdr": args.knockoff_fdr if args.knockoff_fdr is not None else 0.1,
@@ -408,7 +441,7 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
         "source_revision": args.source_revision,
         "source_path": str(_PROJECT_ROOT),
         "rust_binary": str(args.rust_bin) if args.rust_bin else "cargo run --release",
-        "rust_nlambda": args.knockoff_nlambda or 250,
+        "rust_nlambda": 500 if args.workflow == "cv" else (args.knockoff_nlambda or 250),
         "python_r_gaussian_settings": {
             "nlambda": 500, "tolerance": 1e-7, "max_iter": 100000,
             "lambda_min_ratio": 1 / 2000,
@@ -435,6 +468,23 @@ def _write_environment_metadata(args: argparse.Namespace, out_dir: Path) -> None
         "cell_timeout_seconds": args.cell_timeout if args.measure_process else None,
         "memory_method": _MEMORY_METHOD if args.measure_process else None,
         "paired_random_draws": False,
+        "algorithm_matching": "not established; configuration alignment does not pair RNG or solvers",
+        "native_full_fit_defaults_differences": [
+            "Rust defaults to nlambda=250; Python/R use 500",
+            "Rust native covariance adds a condition-number gate; Python/R use positive-definiteness",
+            "Rust native lambda_min_ratio depends on n/(2p); Python/R use 1/2000",
+            "ASDP solvers and RNG streams differ across languages",
+        ],
+        "native_cv_settings": {"nlambda": 500, "r_compatible": True,
+                               "slide_selection": True, "love_refit": False},
+        "selection_block_policy": {"marginal": "calcDefaultFsize(n,K)",
+                                   "interaction": 100, "interaction_model_cap": "n - marginal_count"},
+        "native_failure_policies": [
+            "Rust R-compatible ASDP may fall back to equi on SDP solve failure; see native logs",
+            "R runSLIDE retries selection internally; this is not a harness retry",
+            "Python OptimizeSLIDE catches LOVE/selection failures; missing completed artifacts fail the cell",
+        ],
+        "stage_memory": {"status": "unavailable", "reason": "only whole-process-group RSS is sampled"},
     }
     with (out_dir / "benchmark_environment.json").open("w") as stream:
         json.dump(metadata, stream, indent=2)
@@ -455,6 +505,66 @@ def _merge_cell_summaries(out_dir: Path) -> None:
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()
             writer.writerows(rows)
+
+
+def _timed_stage(function, stage: str, cell_dir: Path):
+    """Time actual Python call boundaries; no per-stage RSS is inferred."""
+    @wraps(function)
+    def call(*args, **kwargs):
+        start = time.perf_counter()
+        status = "failed"
+        try:
+            result = function(*args, **kwargs)
+            status = "success"
+            return result
+        finally:
+            path = cell_dir / "benchmark_stage_timings.csv"
+            fresh = not path.exists()
+            with path.open("a", newline="") as stream:
+                writer = csv.writer(stream)
+                if fresh:
+                    writer.writerow(["stage", "seconds", "status", "method"])
+                writer.writerow([stage, time.perf_counter() - start, status,
+                                 "Python call-boundary wall clock"])
+    return call
+
+
+def run_python_cv_backend(args: argparse.Namespace, delta: float, lam: float,
+                          out_dir: Path) -> TimingRecord:
+    """Run native method-4 CV directly on the saved R factors, never refit LOVE."""
+    import pandas as pd
+    from slide_py import SLIDEcv
+    from threadpoolctl import threadpool_limits
+
+    cell_dir = out_dir / _param_subdir(delta, lam)
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    start = time.perf_counter()
+    try:
+        z = pd.read_csv(args.z_path, index_col=0)
+        y = pd.read_csv(args.y_path, index_col=0)
+        if (not z.index.equals(y.index) or z.index.has_duplicates
+                or z.index.isna().any() or y.shape[1] != 1):
+            raise ValueError(f"{args.z_path}: Z/y require unique, nonmissing, identically ordered sample IDs and one y column")
+        params = dict(niter=args.niter, spec=args.spec, fdr=0.1, n_workers=args.threads,
+                      do_interacts=True, knockoff_backend="python", knockoff_method="asdp",
+                      knockoff_shrink=False, knockoff_offset=0, fstat="glmnet_lambdasmax",
+                      slide_selection=True, auto_select=False)
+        (cell_dir / "benchmark_effective_config.json").write_text(json.dumps({
+            **params, "workflow": "cv", "z_path": str(Path(args.z_path).resolve()),
+            "y_path": str(Path(args.y_path).resolve()), "nrep": args.cv_repeats,
+            "k": args.cv_folds, "seed": args.knockoff_base_seed if args.knockoff_base_seed is not None else 42,
+            "eval_type": "auc" if args.y_factor else "corr",
+        }, indent=2))
+        saved = SimpleNamespace(latent_factors=z, data=SimpleNamespace(Y=y), input_params=params)
+        cv = SLIDEcv(saved, nrep=args.cv_repeats, k=args.cv_folds,
+                     eval_type="auc" if args.y_factor else "corr")
+        seed = args.knockoff_base_seed if args.knockoff_base_seed is not None else 42
+        with threadpool_limits(limits=1):
+            _timed_stage(cv.run, "finalCV", cell_dir)(outpath=cell_dir, seed=seed)
+        return TimingRecord("python", delta, lam, time.perf_counter() - start, "success")
+    except Exception as exc:
+        log.error("Python CV failed: %s", exc)
+        return TimingRecord("python", delta, lam, time.perf_counter() - start, "failed", str(exc))
 
 
 def run_python_backend(
@@ -498,17 +608,41 @@ def run_python_backend(
         "knockoff_base_seed": args.knockoff_base_seed,
         "fstat": "glmnet_lambdasmax",
         "slide_selection": args.slide_selection,
+        "auto_select": False,
+        "sample_cv_iterations": args.sample_cv_iterations,
+        "sample_cv_k": args.sample_cv_k,
+        "eval_type": "auc" if args.y_factor else "corr",
         "delta": [delta],
         "lambda": [lam],
     }
 
     start = time.perf_counter()
     try:
+        cell_dir = out_dir / _param_subdir(delta, lam)
+        cell_dir.mkdir(parents=True, exist_ok=True)
+        (cell_dir / "benchmark_effective_config.json").write_text(json.dumps(input_params, indent=2))
         slider = OptimizeSLIDE(input_params)
+        (cell_dir / "benchmark_effective_config.json").write_text(
+            json.dumps(dict(getattr(slider, "input_params", input_params)), indent=2, default=str))
         from threadpoolctl import threadpool_limits
-        with warnings.catch_warnings(), threadpool_limits(limits=1):
+        with warnings.catch_warnings(), threadpool_limits(limits=1), ExitStack() as stages:
             warnings.simplefilter("ignore")
+            slide_module = sys.modules.get("slide_py.slide")
+            for owner, name, label in ((slider, "get_latent_factors", "LOVE"),
+                                       (slider, "run_SLIDE", "selection"),
+                                       (slide_module, "sample_cv", "sampleCV"),
+                                       (getattr(slide_module, "SLIDE_Estimator", None),
+                                        "score_performance", "control")):
+                if owner is not None and hasattr(owner, name):
+                    stages.enter_context(patch.object(owner, name, _timed_stage(
+                        getattr(owner, name), label, cell_dir)))
             slider.run_pipeline(verbose=True)
+        model_path = cell_dir / "sampleCV_model.json"
+        if not model_path.exists():
+            raise RuntimeError(f"{cell_dir}: pipeline did not export completed sampleCV status")
+        screening = json.loads(model_path.read_text())
+        if screening.get("status") == "selection_failed":
+            raise RuntimeError(f"{cell_dir}: selection_failed")
         elapsed = time.perf_counter() - start
         return TimingRecord(backend, delta, lam, elapsed, "success")
     except Exception as exc:
@@ -538,7 +672,14 @@ def run_pure_r_backend(
         "--niter",  str(args.niter),
         "--spec",   str(args.spec),
         "--threads", str(args.threads),
+        "--workflow", args.workflow,
+        "--sample-cv-iterations", str(args.sample_cv_iterations),
+        "--sample-cv-k", str(args.sample_cv_k),
+        "--cv-repeats", str(args.cv_repeats),
+        "--cv-folds", str(args.cv_folds),
     ]
+    if args.z_path:
+        cmd.extend(["--z-path", str(Path(args.z_path).resolve())])
     if args.knockoff_base_seed is not None:
         cmd.extend(["--base-seed", str(args.knockoff_base_seed)])
     if args.y_factor:
@@ -549,11 +690,8 @@ def run_pure_r_backend(
     # do not each spawn nested BLAS threads.
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         env[var] = "1"
-    # The stability rule only exists in the vendored SLIDE tree, so reaching it
-    # means running run_slide_r.R against vendor/ rather than the installed
-    # package. An explicit environment setting wins, which is how the
-    # vendor-vs-installed equivalence check is run.
-    env.setdefault("SLIDE_R_SOURCE", "installed" if args.slide_selection else "vendor")
+    # The checkout route sources the executed repository; explicit overrides are recorded.
+    env.setdefault("SLIDE_R_SOURCE", "checkout")
     env.setdefault("SLIDE_OPT_ITER", "1" if args.slide_selection else "0")
     if args.configuration == "parity":
         env["SLIDE_OPT_ITER"] = "1" if args.slide_selection else "0"
@@ -590,6 +728,11 @@ def run_rust_backend(
     rust_config = {
         "x_path": str(Path(args.x_path).resolve()),
         "y_path": str(Path(args.y_path).resolve()),
+        "out_path": str(out_dir.resolve()),
+        "auto_select": False,
+        "sample_cv_iterations": args.sample_cv_iterations,
+        "sample_cv_k": args.sample_cv_k,
+        "eval_type": "auc" if args.y_factor else "corr",
         "delta": [delta],
         "lambda": [lam],
         "y_factor": args.y_factor,
@@ -611,11 +754,23 @@ def run_rust_backend(
     with config_path.open("w") as f:
         yaml.safe_dump(rust_config, f, sort_keys=False)
 
+    subcommand = "cv" if args.workflow == "cv" else "run"
+    if args.workflow == "cv":
+        rust_config.update(delta=delta, **{"lambda": lam})
+        with config_path.open("w") as stream:
+            yaml.safe_dump(rust_config, stream, sort_keys=False)
     if args.rust_bin:
-        cmd = [str(args.rust_bin), "run"]
+        cmd = [str(args.rust_bin), subcommand]
     else:
-        cmd = ["cargo", "run", "--release", "-p", "slide-rs", "--", "run"]
-    cmd.extend(["--config", str(config_path), "--checkpoint", str(checkpoint_path)])
+        cmd = ["cargo", "run", "--release", "-p", "slide-rs", "--", subcommand]
+    cmd.extend(["--verbose", "--config", str(config_path)])
+    if args.workflow == "cv":
+        cmd.extend(["--z", str(Path(args.z_path).resolve()), "--out", str(out_dir / "finalCV"),
+                    "--nrep", str(args.cv_repeats), "--k", str(args.cv_folds)])
+        if args.knockoff_base_seed is not None:
+            cmd.extend(["--seed", str(args.knockoff_base_seed)])
+    else:
+        cmd.extend(["--checkpoint", str(checkpoint_path)])
     if args.threads:
         cmd.extend(["--threads", str(args.threads)])
 
@@ -631,6 +786,12 @@ def run_rust_backend(
                 stdout=lf, stderr=subprocess.STDOUT, text=True,
             )
         elapsed = time.perf_counter() - start
+        if args.workflow == "cv":
+            with (out_dir / "benchmark_stage_timings.csv").open("w", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["stage", "seconds", "status", "method"])
+                writer.writerow(["finalCV", elapsed, "success" if result.returncode == 0 else "failed",
+                                 "Rust CV subprocess wall clock including startup/configuration"])
         if result.returncode != 0:
             return TimingRecord(backend, delta, lam, elapsed, "failed", f"exit code {result.returncode}")
         return TimingRecord(backend, delta, lam, elapsed, "success")
@@ -649,6 +810,8 @@ def _run_cell(args: argparse.Namespace, backend: str, delta: float, lam: float) 
         return run_rust_backend(args, backend, delta, lam, backend_dir / _param_subdir(delta, lam))
     if backend == "pure_r":
         return run_pure_r_backend(args, delta, lam, backend_dir)
+    if args.workflow == "cv":
+        return run_python_cv_backend(args, delta, lam, backend_dir)
     return run_python_backend(args, backend, delta, lam, backend_dir)
 
 
@@ -853,6 +1016,76 @@ def load_rust_result(
 # ---------------------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------------------
+def _cell_artifacts(timing: TimingRecord, out_dir: Path) -> dict[str, Any]:
+    """Expose native metrics and artifact paths without turning missing values into zero."""
+    cell = out_dir / timing.backend / _param_subdir(timing.delta, timing.lam)
+    native = cell
+    if timing.backend.startswith("rust"):
+        candidates = list(cell.glob("*_out/sampleCV_model.json"))
+        if len(candidates) == 1:
+            native = candidates[0].parent
+    sample_path = native / "sampleCV_model.json"
+    sample = json.loads(sample_path.read_text()) if sample_path.exists() else {}
+    summary_path = cell / "benchmark_summary.csv"
+    row = {}
+    if not summary_path.exists():
+        summary_path = cell / "summary_table.csv"
+    if summary_path.exists():
+        with summary_path.open(newline="") as stream:
+            row = next(csv.DictReader(stream), {})
+    sample_metric = sample.get("metric")
+    if sample_metric is None:
+        value = row.get("sampleCV_Performance")
+        if value not in (None, "", "NA", "NaN", "nan"):
+            sample_metric = float(value)
+    cv_dir = cell / "finalCV" if (cell / "finalCV").is_dir() else cell
+    score_path = next((cv_dir / name for name in (
+        "slidecv_results.csv", "finalCV_repeat_scores.csv", "SLIDECV_boxplot_data.csv")
+                       if (cv_dir / name).exists()), None)
+    prediction_path = next((cv_dir / name for name in (
+        "slidecv_predictions.csv", "finalCV_predictions.csv", "predictions.csv")
+                            if (cv_dir / name).exists()), None)
+    scores = None
+    if score_path:
+        with score_path.open(newline="") as stream:
+            scores = list(csv.DictReader(stream))
+    stages = []
+    stage_path = cell / "benchmark_stage_timings.csv"
+    if stage_path.exists():
+        with stage_path.open(newline="") as stream:
+            stages.extend(csv.DictReader(stream))
+    rust_log = cell / "rust.log"
+    if rust_log.exists():
+        for match in re.finditer(r"\[SLIDE timing\] ([^:\n]+): ([0-9.]+)s", rust_log.read_text()):
+            stages.append(dict(stage=match[1], seconds=float(match[2]), status="success",
+                               method="native Rust elapsed log; Scoring includes sampleCV"))
+    def artifact(path):
+        return str(path.relative_to(out_dir)) if path.exists() else None
+    return {
+        "backend": timing.backend, "delta": timing.delta, "lambda": timing.lam,
+        "run_status": timing.status, "error": timing.error or None,
+        "sampleCV": {
+            "metric": sample_metric,
+            "status": sample.get("status", row.get("sampleCV_Status") or "unavailable"),
+            "provenance": sample.get("provenance", row.get("sampleCV_Provenance")
+                                     or sample.get("settings", {}).get("score_provenance")),
+            "model": artifact(sample_path),
+            "predictions": artifact(native / "sampleCV_predictions.csv"),
+        },
+        "control": {"performance": artifact(native / "ControlPerformance.csv"),
+                    "in_sample_score_is_not_sampleCV": True},
+        "finalCV": {"status": "exported" if score_path and prediction_path else "unavailable",
+                    "repeat_scores": scores,
+                    "scores_path": artifact(score_path) if score_path else None,
+                    "predictions": artifact(prediction_path) if prediction_path else None},
+        "effective_configs": [str(path.relative_to(out_dir)) for path in (
+            cell / "benchmark_effective_config.json", cell / "rust_config.yaml",
+            cell / "benchmark_provenance.json", cv_dir / "requested-config.json") if path.exists()],
+        "stage_timings": stages or None,
+        "stage_memory_status": "unavailable; only whole-process-group RSS is measured",
+    }
+
+
 def jaccard(s1: set, s2: set) -> float:
     if not s1 and not s2:
         return 1.0
@@ -940,6 +1173,7 @@ def write_report(
         "timings": [dataclasses.asdict(t) for t in timings],
         "comparisons": [dataclasses.asdict(c) for c in comparisons],
         "results": {},
+        "cell_artifacts": [_cell_artifacts(t, out_dir) for t in timings],
     }
     for key, r in results.items():
         summary["results"][f"{r.backend}_{r.delta}_{r.lam}"] = {
@@ -949,9 +1183,24 @@ def write_report(
             "n_sig_interacts": len(r.sig_interacts),
             "sig_interacts": sorted(r.sig_interacts),
             "score": r.score,
+            "score_provenance": "legacy in-sample score; not sampleCV or finalCV",
         }
     with (out_dir / "benchmark_summary.json").open("w") as f:
         json.dump(summary, f, indent=2, default=str)
+    with (out_dir / "benchmark_metrics.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=["backend", "delta", "lambda", "run_status",
+            "sampleCV_metric", "sampleCV_status", "sampleCV_provenance", "sampleCV_predictions",
+            "finalCV_status", "finalCV_scores", "finalCV_predictions"])
+        writer.writeheader()
+        for cell in summary["cell_artifacts"]:
+            writer.writerow({**{name: cell[name] for name in ("backend", "delta", "lambda", "run_status")},
+                "sampleCV_metric": cell["sampleCV"]["metric"],
+                "sampleCV_status": cell["sampleCV"]["status"],
+                "sampleCV_provenance": cell["sampleCV"]["provenance"],
+                "sampleCV_predictions": cell["sampleCV"]["predictions"],
+                "finalCV_status": cell["finalCV"]["status"],
+                "finalCV_scores": cell["finalCV"]["scores_path"],
+                "finalCV_predictions": cell["finalCV"]["predictions"]})
 
     # -- Markdown report --
     report_path = out_dir / "comparison_report.md"
@@ -1034,7 +1283,9 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Validate data paths
-    for p, label in [(args.x_path, "X matrix"), (args.y_path, "Y vector")]:
+    data_paths = [(args.y_path, "Y vector")]
+    data_paths.append((args.z_path, "Z matrix") if args.workflow == "cv" else (args.x_path, "X matrix"))
+    for p, label in data_paths:
         if not Path(p).exists():
             log.error("%s not found: %s", label, p)
             return 1
@@ -1092,6 +1343,8 @@ def main(argv: list[str] | None = None) -> int:
     for backend in args.backends:
         for delta, lam in param_grid:
             backend_dir = out_dir / backend
+            if args.workflow == "cv":
+                continue
             if backend in ("rust", "rust_r_knockoffs"):
                 rust_dir = backend_dir / _param_subdir(delta, lam)
                 r = load_rust_result(backend, delta, lam, rust_dir)
@@ -1118,7 +1371,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     write_report(timings, results, comparisons, out_dir)
-    return 0
+    return 1 if any(t.status in ("failed", "timeout") for t in timings) else 0
 
 
 if __name__ == "__main__":

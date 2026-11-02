@@ -132,23 +132,27 @@ def test_python_runner_passes_base_seed_into_pipeline(monkeypatch, tmp_path):
 
         def run_pipeline(self, verbose):
             assert verbose is True
+            cell = Path(captured["out_path"]) / "0.1_1.0_out"
+            (cell / "sampleCV_model.json").write_text(json.dumps({"status": "no_marginals", "metric": None}))
 
     monkeypatch.setitem(
         sys.modules, "slide_py",
         types.SimpleNamespace(OptimizeSLIDE=FakeOptimizeSLIDE),
     )
     monkeypatch.setattr(benchmark, "np", __import__("numpy"))
-    args = types.SimpleNamespace(
-        profile=False, knockoff_base_seed=123, threads=2,
-        x_path="x.csv", y_path="y.csv", y_factor=False,
-        niter=5, spec=0.1, slide_selection=False,
-    )
+    args = benchmark.parse_args(["--knockoff-base-seed", "123", "--threads", "2",
+                                 "--x-path", "x.csv", "--y-path", "y.csv",
+                                 "--niter", "5", "--no-slide-selection"])
 
     result = benchmark.run_python_backend(args, "python", 0.1, 1.0, tmp_path)
 
     assert result.status == "success"
     assert captured["knockoff_base_seed"] == 123
     assert captured["slide_selection"] is False
+    assert captured["auto_select"] is False
+    assert captured["sample_cv_iterations"] == 500
+    assert captured["sample_cv_k"] == 4
+    assert captured["eval_type"] == "corr"
 
 
 def test_measured_mode_requires_prebuilt_rust():
@@ -251,3 +255,110 @@ def test_measured_parity_checks_dsdp_before_pipeline(monkeypatch, tmp_path, conf
     else:
         assert calls == []
         assert exit_code == 0 and record["status"] == "success"
+
+
+@pytest.mark.parametrize("flags", [
+    ["--workflow", "cv", "--backends", "python"],
+    ["--workflow", "cv", "--z-path", "z.csv", "--backends", "r_knockoffs"],
+    ["--sample-cv-iterations", "0"], ["--sample-cv-k", "1"],
+    ["--cv-repeats", "0"], ["--cv-folds", "1"],
+])
+def test_workflow_settings_reject_invalid_values(flags):
+    with pytest.raises(SystemExit):
+        benchmark.parse_args(flags)
+
+
+@pytest.mark.parametrize("workflow", ["full-fit", "cv"])
+def test_rust_commands_export_settings_and_native_cv(monkeypatch, tmp_path, workflow):
+    import yaml
+
+    calls = []
+    monkeypatch.setattr(benchmark.subprocess, "run", lambda cmd, **kwargs:
+                        calls.append(cmd) or types.SimpleNamespace(returncode=0))
+    args = benchmark.parse_args(["--backends", "rust", "--workflow", workflow,
+        "--z-path", "saved.csv", "--rust-bin", "/prebuilt/slide", "--threads", "4",
+        "--knockoff-base-seed", "71", "--sample-cv-iterations", "37", "--sample-cv-k", "3"])
+    record = benchmark.run_rust_backend(args, "rust", 0.1, 1.0, tmp_path)
+    config = yaml.safe_load((tmp_path / "rust_config.yaml").read_text())
+    assert record.status == "success"
+    assert config["out_path"] == str(tmp_path.resolve())
+    assert config["sample_cv_iterations"] == 37 and config["sample_cv_k"] == 3
+    assert config["auto_select"] is False and config["eval_type"] == "corr"
+    assert calls[0][:2] == ["/prebuilt/slide", "cv" if workflow == "cv" else "run"]
+    if workflow == "cv":
+        assert config["delta"] == 0.1 and config["lambda"] == 1.0
+        for flag, value in (("--z", str(Path("saved.csv").resolve())),
+                            ("--nrep", "15"), ("--k", "5"), ("--seed", "71"), ("--threads", "4")):
+            assert calls[0][calls[0].index(flag) + 1] == value
+        assert "--checkpoint" not in calls[0]
+    else:
+        assert config["delta"] == [0.1] and config["lambda"] == [1.0]
+        assert "--checkpoint" in calls[0]
+
+
+def test_python_cv_wraps_saved_factors_without_love(monkeypatch, tmp_path):
+    import pandas as pd
+
+    captured = {}
+    class FakeCV:
+        def __init__(self, saved, **kwargs):
+            captured.update(params=saved.input_params, z=saved.latent_factors,
+                            y=saved.data.Y, settings=kwargs)
+        def run(self, **kwargs):
+            captured.update(run=kwargs)
+
+    monkeypatch.setitem(sys.modules, "slide_py", types.SimpleNamespace(SLIDEcv=FakeCV))
+    z = tmp_path / "z.csv"
+    y = tmp_path / "y.csv"
+    pd.DataFrame({"Z0": [1., 2., 3.]}, index=["a", "b", "c"]).to_csv(z)
+    pd.DataFrame({"y": [2., 5., 1.]}, index=["a", "b", "c"]).to_csv(y)
+    args = benchmark.parse_args(["--workflow", "cv", "--backends", "python", "--z-path", str(z),
+                                 "--y-path", str(y), "--knockoff-base-seed", "19"])
+    assert benchmark.run_python_cv_backend(args, .1, 1., tmp_path).status == "success"
+    assert captured["settings"] == dict(nrep=15, k=5, eval_type="corr")
+    assert captured["run"]["seed"] == 19
+    assert captured["params"]["niter"] == 500
+    assert captured["z"].index.equals(captured["y"].index)
+    pd.DataFrame({"y": [2., 5., 1.]}, index=["c", "b", "a"]).to_csv(y)
+    failed = benchmark.run_python_cv_backend(args, .1, 1., tmp_path)
+    assert failed.status == "failed" and "identically ordered" in failed.error
+
+
+def test_artifacts_keep_missing_and_zero_samplecv_distinct(tmp_path):
+    record = benchmark.TimingRecord("python", .1, 1., .2, "success")
+    missing = benchmark._cell_artifacts(record, tmp_path)
+    assert missing["sampleCV"]["metric"] is None
+    assert missing["sampleCV"]["status"] == "unavailable"
+    cell = tmp_path / "python/0.1_1.0_out"
+    cell.mkdir(parents=True)
+    (cell / "sampleCV_model.json").write_text(json.dumps({"status": "ok", "metric": 0.0,
+        "settings": {"score_provenance": "pooled_holdout"}}))
+    (cell / "sampleCV_predictions.csv").write_text("iteration,sample_id,y_true,y_pred\n0,a,1,1\n")
+    (cell / "slidecv_results.csv").write_text("replicate,method,metric_value\n0,SLIDE,0.2\n0,SLIDE_y,0.0\n")
+    (cell / "slidecv_predictions.csv").write_text("replicate,method,sample_id,y_true,y_pred\n")
+    result = benchmark._cell_artifacts(record, tmp_path)
+    assert result["sampleCV"]["metric"] == 0.0
+    assert result["sampleCV"]["provenance"] == "pooled_holdout"
+    assert result["sampleCV"]["predictions"].endswith("sampleCV_predictions.csv")
+    assert result["finalCV"]["status"] == "exported"
+    assert len(result["finalCV"]["repeat_scores"]) == 2
+    assert result["stage_timings"] is None
+
+
+def test_cv_defaults_use_native_backends_and_six_hour_cap():
+    args = benchmark.parse_args(["--workflow", "cv", "--z-path", "saved.csv"])
+    assert args.backends == ["python", "rust", "pure_r"]
+    assert args.cell_timeout == 21600
+    assert benchmark.parse_args([]).cell_timeout == 600
+
+
+def test_stage_timer_retains_failed_call_without_inferred_memory(tmp_path):
+    def fail():
+        raise ValueError("selection failure")
+    with pytest.raises(ValueError, match="selection failure"):
+        benchmark._timed_stage(fail, "selection", tmp_path)()
+    with (tmp_path / "benchmark_stage_timings.csv").open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 1 and rows[0]["status"] == "failed"
+    assert float(rows[0]["seconds"]) >= 0
+    assert "rss" not in rows[0]

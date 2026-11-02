@@ -1149,10 +1149,12 @@ fn run_slide_evaluation(
             None
         }
     };
+    let sample_cv_start = Instant::now();
     let sample_config = slide_cv::optimizer_sample_cv_config(&config.sample_cv, z.nrows());
     let sample_cv = Some(slide_cv::run_sample_cv(
         &z, y, &marginal.sig_lfs, &interactions.sig_interacts, &sample_config,
     )?);
+    log::info!("[SLIDE timing] sampleCV: {:.6}s", sample_cv_start.elapsed().as_secs_f64());
     log::info!("[SLIDE timing] Scoring: {:.2}s", stage_start.elapsed().as_secs_f64());
     log::info!("[SLIDE timing] TOTAL: {:.2}s (delta={}, lambda={})", eval_start.elapsed().as_secs_f64(), delta, lambda);
 

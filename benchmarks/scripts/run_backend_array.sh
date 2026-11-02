@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --time=04:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 #SBATCH --cluster=htc
 #SBATCH --array=0-8
@@ -9,6 +9,11 @@
 # Backends: python, r_knockoffs, rust
 
 set -euo pipefail
+
+export TMPDIR="${PWD}/.tmpfiles/tmp"
+export TMP="$TMPDIR" TEMP="$TMPDIR"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+mkdir -p "$TMPDIR"
 
 # A frozen manifest reuses the harness for sequential, resource-isolated cells.
 if [[ ${1:-} == --manifest ]]; then
@@ -78,6 +83,9 @@ python3 benchmarks/scripts/benchmark_backends.py \
     --lam "$LAMBDA" \
     --rust-bin "$RUST_BIN" \
     --out-dir "$OUT_DIR" \
+    --configuration parity \
+    --measure-process --cell-timeout 600 \
+    --sample-cv-iterations 500 --sample-cv-k 4 \
     --threads 4
 
 echo "Finished: $(date)"

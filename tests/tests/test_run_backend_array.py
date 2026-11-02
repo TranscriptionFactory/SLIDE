@@ -10,10 +10,13 @@ def test_manifest_records_failure_and_stops_ladder(tmp_path):
         "import json, pathlib, sys\n"
         "out = pathlib.Path(sys.argv[sys.argv.index('--out-dir')+1]) / 'rust'\n"
         "out.mkdir()\n"
+        "(out/'forwarded.json').write_text(json.dumps(sys.argv[1:]))\n"
         "(out/'timings.json').write_text(json.dumps([{'status':'timeout'}]))\n"
     )
     tasks = [dict(backend="rust", out=str(tmp_path / str(i)), ladder="rust",
-                  args=["--measure-process", "--out-dir", str(tmp_path / str(i))]) for i in range(2)]
+                  args=["--measure-process", "--workflow", "cv", "--z-path", "saved-R-Z.csv",
+                        "--cv-repeats", "15", "--cv-folds", "5",
+                        "--out-dir", str(tmp_path / str(i))]) for i in range(2)]
     manifest = tmp_path / "cells.json"
     manifest.write_text(json.dumps(tasks))
     subprocess.run(["bash", str(script), "--manifest", str(manifest), "--validate-only"],
@@ -22,6 +25,7 @@ def test_manifest_records_failure_and_stops_ladder(tmp_path):
     rows = [json.loads(line) for line in manifest.with_suffix(".status.jsonl").read_text().splitlines()]
     assert [row["status"] for row in rows] == ["failed", "not_attempted_after_limit"]
     assert rows[0]["timings"][0]["status"] == "timeout"
+    assert json.loads((tmp_path / "0/rust/forwarded.json").read_text()) == tasks[0]["args"]
     assert not (tmp_path / "1").exists()
     # A rerun cannot truncate the retained outcomes.
     repeat = subprocess.run(["bash", str(script), "--manifest", str(manifest)], cwd=tmp_path)
