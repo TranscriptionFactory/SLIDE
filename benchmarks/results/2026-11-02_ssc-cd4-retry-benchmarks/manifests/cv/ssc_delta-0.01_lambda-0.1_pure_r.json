@@ -1,0 +1,61 @@
+[
+  {
+    "dataset": "ssc",
+    "backend": "pure_r",
+    "seed": 20261101,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/cv/ssc/pure_r/delta-0.01_lambda-0.1",
+    "cells": [
+      [
+        0.01,
+        0.1
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "81e1fc97fc13e3e2be3e579907f4608a1ece3515",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "pure_r",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/inputs/ssc/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/inputs/ssc/Y.csv",
+      "--delta",
+      "0.01",
+      "--lam",
+      "0.1",
+      "--knockoff-base-seed",
+      "20261101",
+      "--cell-timeout",
+      "7100",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/cv/ssc/pure_r/delta-0.01_lambda-0.1",
+      "--workflow",
+      "cv",
+      "--z-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/pilot/full-fit/ssc/pure_r/seed_42/pure_r/0.01_0.1_out/z_matrix.csv",
+      "--cv-repeats",
+      "10",
+      "--cv-folds",
+      "5"
+    ]
+  }
+]

@@ -1,0 +1,38 @@
+{
+  "ssc": {
+    "n": 24,
+    "p": 804,
+    "response_unique": 18,
+    "pairing": "user-confirmed positional mapping; X IDs replaced without reordering",
+    "files": {
+      "X": {
+        "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/inputs/ssc/X.csv",
+        "source_sha256": "9cc14385d91db2be81ee10454cbafccde8a135699f95bbfa3c8f170aec0665b8",
+        "staged_sha256": "39d8f7a332681e41739dde8fd597729068f2d6cd3d4d8ec8849becf81a580093"
+      },
+      "Y": {
+        "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/inputs/ssc/Y.csv",
+        "source_sha256": "c4a141c7c55777746ebac95ebf0d25dc034a7643e422d37a36aede8371d4ae1a",
+        "staged_sha256": "7009790c7f25e4477c5a24d2851a22d52495cd1558ece55d91937f857890a5ae"
+      }
+    }
+  },
+  "cd4": {
+    "n": 2482,
+    "p": 1776,
+    "response_unique": 3,
+    "pairing": "matching ordered IDs",
+    "files": {
+      "X": {
+        "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/inputs/cd4/X.csv",
+        "source_sha256": "0ec1c3bef8fc26fdcc876533a31a69887b3c3a3845aaf6a8a46a9968a87b2476",
+        "staged_sha256": "a1928afbf0d2d71f7ce10e5ec0ef07d68f7ae6c7dc4fdd1c21c16aebfbc6f25a"
+      },
+      "Y": {
+        "source": "/vast/djishnu/Aaron/1_general_use/omni-SLIDE/.tmpfiles/2026-10-16_production-readiness/inputs/cd4/Y.csv",
+        "source_sha256": "c7c5d2899283cd53bd9bcf739ee6a85b4680d2975969fba6905d1a7c36dd914a",
+        "staged_sha256": "4039deb4e4e279179e78a5b028446a6edffa2c76f909bf0817d247cd3b9ff13f"
+      }
+    }
+  }
+}
