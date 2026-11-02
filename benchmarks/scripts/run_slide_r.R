@@ -514,7 +514,7 @@ jsonlite::write_json(list(metric = diagnostics$sample_metric,
   last_train_indices = if (!is.null(model)) diagnostics$last_train - 1L else integer(),
   last_train_ids = if (!is.null(model)) rownames(y_original)[diagnostics$last_train] else character(),
   prediction_ids_provenance = "captured_actual_sample_indices_no_rng_replay"),
-  file.path(combo_dir, "sampleCV_model.json"), auto_unbox = TRUE, pretty = TRUE, na = "null")
+  file.path(combo_dir, "sampleCV_model.json"), auto_unbox = TRUE, pretty = TRUE, na = "null", digits = 17)
 write_metadata()
 
 if (cell_summary$sampleCV_Status == "failed") quit(save = "no", status = 1L)

@@ -171,6 +171,8 @@ p <- utils::read.csv(file.path(e$combo_dir, "sampleCV_predictions.csv"))
 m <- jsonlite::read_json(file.path(e$combo_dir, "sampleCV_model.json"))
 stopifnot(basename(e$combo_dir) == "0.1_1.0_out", summary$sampleCV_Status == "ok",
           isTRUE(all.equal(summary$sampleCV_Performance, raw)), nrow(p) == 18L,
+          abs(m$metric - raw) < 1e-15,
+          isTRUE(all.equal(unlist(m$last_coefficients), unname(coef(model)))),
           length(m$last_coefficients) == 3L, m$settings$model == "last_split_ols",
           isTRUE(all.equal(as.numeric(y[p$sample_id, 1]), p$y_true)))
 message("PASS: full-fit real sampleCV model, summary, IDs and native directory rename")
