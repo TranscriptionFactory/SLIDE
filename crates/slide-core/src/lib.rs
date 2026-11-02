@@ -297,6 +297,8 @@ pub enum SlideCoreError {
     DegenerateMarginal { marginal_lf: usize },
     #[error("interaction knockoff seed namespace exceeds u64; reduce base_seed, niter, or factor count")]
     InteractionSeedOverflow,
+    #[error("marginal knockoff seed namespace exceeds u64; reduce base_seed, niter, or factor count")]
+    MarginalSeedOverflow,
     #[error("delta_grid must contain at least one value")]
     EmptyDeltaGrid,
     #[error("lambda_grid must contain at least one value")]
@@ -394,6 +396,7 @@ impl PartialEq for SlideCoreError {
             | (DegenerateBinaryScore, DegenerateBinaryScore)
             | (NoSuccessfulEvaluations, NoSuccessfulEvaluations)
             | (CheckpointInputMismatch, CheckpointInputMismatch)
+            | (Self::MarginalSeedOverflow, Self::MarginalSeedOverflow)
             | (Self::InteractionSeedOverflow, Self::InteractionSeedOverflow) => true,
             (
                 FeatureResponseLengthMismatch {
@@ -453,12 +456,21 @@ pub fn find_standalone_lfs(
     y: &Vector,
     config: &MarginalLfSelectionConfig,
 ) -> Result<MarginalLfSelection, SlideCoreError> {
-    // R marginalSLIDE reruns selection at spec + 0.1 until fewer than n
-    // marginals remain. Native marginal retries keep base_seed unchanged, so
-    // they redraw identical knockoffs and only move the frequency cut.
+    // R marginalSLIDE reruns selection with fresh draws at spec + 0.1.
+    // Each pass reserves one marginal namespace and ncols interaction namespaces.
     let n = z.shape().0;
+    let seed_width = (z.ncols() as u64)
+        .checked_add(1)
+        .ok_or(SlideCoreError::MarginalSeedOverflow)?;
+    let seed_stride = (config.niter as u64)
+        .checked_mul(seed_width)
+        .ok_or(SlideCoreError::MarginalSeedOverflow)?;
     let mut knockoff_config = config.to_knockoff_config();
     loop {
+        knockoff_config.base_seed
+            .checked_add(seed_stride)
+            .and_then(|end| end.checked_add(1_000_000))
+            .ok_or(SlideCoreError::MarginalSeedOverflow)?;
         let voting = select_short_freq(z, y, &knockoff_config)?;
         if voting.selected.len() < n {
             return Ok(MarginalLfSelection {
@@ -481,6 +493,10 @@ pub fn find_standalone_lfs(
                 voting,
             });
         }
+        knockoff_config.base_seed = seed_width
+            .checked_mul(seed_stride)
+            .and_then(|offset| knockoff_config.base_seed.checked_add(offset))
+            .ok_or(SlideCoreError::MarginalSeedOverflow)?;
     }
 }
 
@@ -568,10 +584,13 @@ fn find_interaction_lfs_with_progress(
     // select_short_freq's niter voting loop (width 500), not this narrow
     // marginal loop (width = #sig_LFs, typically ~2).
     // Each namespace covers chunk draws and the stage-two prefix, with room
-    // for up to ncols subproblems. Retries reserve a fresh full marginal pass.
-    let seed_stride = (ncols as u64)
+    // for up to ncols subproblems. Each pass reserves its first namespace for
+    // marginal selection, followed by ncols interaction namespaces.
+    let seed_width = (ncols as u64)
         .checked_add(1)
-        .and_then(|width| (config.niter as u64).checked_mul(width))
+        .ok_or(SlideCoreError::InteractionSeedOverflow)?;
+    let seed_stride = (config.niter as u64)
+        .checked_mul(seed_width)
         .ok_or(SlideCoreError::InteractionSeedOverflow)?;
     let mut retry_index = 0u64;
 
@@ -601,7 +620,7 @@ fn find_interaction_lfs_with_progress(
             let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
             let mut interaction_config = knockoff_config.clone();
             interaction_config.base_seed = retry_index
-                .checked_mul(total_marginals as u64)
+                .checked_mul(seed_width)
                 .and_then(|offset| offset.checked_add(marginal_position as u64))
                 .and_then(|offset| offset.checked_add(1))
                 .and_then(|namespace| namespace.checked_mul(seed_stride))
@@ -1588,6 +1607,10 @@ mod tests {
         assert_eq!(result.sig_lfs, result.voting.selected);
         assert_eq!(result.voting.stage_one_union, Some(result.sig_lfs.clone()));
         assert!(!result.sig_lfs.is_empty());
+        assert_eq!(
+            result.voting,
+            super::select_short_freq(&z, &y, &config.to_knockoff_config()).unwrap()
+        );
     }
 
     #[test]
@@ -1789,6 +1812,69 @@ mod tests {
     }
 
     #[test]
+    fn marginal_size_cap_stops_when_spec_exceeds_one() {
+        let (z, y) = cap_fixture(4, 12);
+        let config = MarginalLfSelectionConfig {
+            base_seed: 1395,
+            ..cap_config(1, 1.0)
+        };
+        let voting = super::select_short_freq(&z, &y, &config.to_knockoff_config()).unwrap();
+        assert!(voting.selected.len() >= z.nrows(), "fixture must exceed its cap");
+        let result = find_standalone_lfs(&z, &y, &config).unwrap();
+        assert!(result.sig_lfs.is_empty());
+        assert_eq!(result.voting, voting);
+    }
+
+    #[test]
+    fn marginal_seed_namespace_rejects_overflow() {
+        let (z, y) = cap_fixture(4, 12);
+        for (base_seed, niter) in [
+            (u64::MAX, 1),
+            (u64::MAX - 1_000_000, 1),
+            (42, usize::MAX),
+        ] {
+            let config = MarginalLfSelectionConfig {
+                base_seed,
+                ..cap_config(niter, 0.1)
+            };
+            assert_eq!(
+                find_standalone_lfs(&z, &y, &config),
+                Err(SlideCoreError::MarginalSeedOverflow)
+            );
+        }
+    }
+
+    #[test]
+    fn marginal_size_cap_retries_with_fresh_draws_and_is_repeatable() {
+        let (z, y) = cap_fixture(4, 12);
+        let config = cap_config(4, 0.1);
+        let mut expected_config = config.to_knockoff_config();
+        let pass_stride = config.niter as u64 * (z.ncols() as u64 + 1).pow(2);
+        let mut first_counts = None;
+        let mut expected = None;
+        for retry_index in 0..10 {
+            expected_config.base_seed = config.base_seed + retry_index * pass_stride;
+            let voting = super::select_short_freq(&z, &y, &expected_config).unwrap();
+            if retry_index == 0 {
+                assert!(voting.selected.len() >= z.nrows());
+                first_counts = Some(voting.selection_counts.clone());
+            }
+            if voting.selected.len() < z.nrows() {
+                assert!(retry_index > 0, "fixture must exercise a retry");
+                assert_ne!(Some(voting.selection_counts.clone()), first_counts);
+                expected = Some(voting);
+                break;
+            }
+            expected_config.spec += 0.1;
+        }
+        let expected = expected.expect("fixture must settle below its cap");
+        let result = find_standalone_lfs(&z, &y, &config).unwrap();
+        assert_eq!(result.voting, expected);
+        assert_eq!(result.sig_lfs, expected.selected);
+        assert_eq!(find_standalone_lfs(&z, &y, &config).unwrap(), result);
+    }
+
+    #[test]
     fn interaction_size_cap_retries_with_fresh_draws_and_is_repeatable() {
         // The initial pass selects 10 interactions against a cap of 3.
         let (z, y) = cap_fixture(4, 12);
@@ -1803,7 +1889,8 @@ mod tests {
         let mut first_counts = None;
         let mut expected = None;
         for retry_index in 0..10 {
-            expected_config.base_seed = config.base_seed + (retry_index + 1) * stride;
+            expected_config.base_seed =
+                config.base_seed + (retry_index * (z.ncols() as u64 + 1) + 1) * stride;
             let voting = super::select_short_freq(&terms, &corrected_y, &expected_config)
                 .unwrap_or_else(|error| panic!("reference voting failed: {error}"));
             if retry_index == 0 {

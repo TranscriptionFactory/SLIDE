@@ -26,6 +26,18 @@ from .sample_cv import sample_cv
 logger = logging.getLogger(__name__)
 
 
+def _validate_knockoff_seed_range(base_seed, draw_block, backend):
+    limit = {"python": 2**32 - 1, "r_knockoffs": 2**31 - 1}.get(backend)
+    if base_seed is None or limit is None:
+        return
+    end = base_seed + draw_block - 1
+    if base_seed < 0 or end > limit:
+        raise ValueError(
+            f"{backend} knockoff seed range [{base_seed}, {end}] must fit [0, {limit}]; "
+            "the reserved block includes chunk and stage-two draws"
+        )
+
+
 def _format_interaction_pairs(interaction_pairs):
     """Serialize a 2-by-N interaction index matrix for backend comparison."""
     if np.size(interaction_pairs) == 0:
@@ -433,10 +445,12 @@ class OptimizeSLIDE(SLIDE):
 
         machop = Knockoffs(y=self.data.Y.values, z2=latent_factors.values)
 
-        # R marginalSLIDE reruns selection at spec + 0.1 until fewer than n
-        # marginals remain; base_seed is unchanged, so only the cut moves.
-        n_samples = latent_factors.shape[0]
+        # Each retry reserves a marginal block and one block per interaction subproblem.
+        n_samples, n_lfs = latent_factors.shape
+        seed_stride = niter * (n_lfs + 1)
+        retry_stride = seed_stride * (n_lfs + 1)
         while True:
+            _validate_knockoff_seed_range(knockoff_base_seed, seed_stride, knockoff_backend)
             marginal_idxs = machop.select_short_freq(
                 z=latent_factors.values,
                 y=self.data.Y.values,
@@ -461,6 +475,8 @@ class OptimizeSLIDE(SLIDE):
             if spec > 1.0:
                 marginal_idxs = []
                 break
+            if knockoff_base_seed is not None:
+                knockoff_base_seed += retry_stride
 
         self.marginal_idxs = marginal_idxs
         return machop
@@ -580,6 +596,13 @@ class OptimizeSLIDE(SLIDE):
                 corrected_y = Knockoffs.correct_y(z_marginal, y)
 
                 # Run knockoff filter
+                seed = (
+                    None if knockoff_base_seed is None
+                    else knockoff_base_seed + (
+                        retry_index * (n_lfs + 1) + marginal_position + 1
+                    ) * seed_stride
+                )
+                _validate_knockoff_seed_range(seed, seed_stride, knockoff_backend)
                 sig_interaction_local_idxs = Knockoffs.select_short_freq(
                     z=interaction_terms,
                     y=corrected_y,
@@ -593,12 +616,7 @@ class OptimizeSLIDE(SLIDE):
                     method=knockoff_method,
                     shrink=knockoff_shrink,
                     offset=knockoff_offset,
-                    base_seed=(
-                        None if knockoff_base_seed is None
-                        else knockoff_base_seed + (
-                            retry_index * len(self.marginal_idxs) + marginal_position + 1
-                        ) * seed_stride
-                    ),
+                    base_seed=seed,
                     fstat=fstat,
                     slide_selection=slide_selection,
                     sdp_solver=sdp_solver,

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Use fresh knockoff draws for Rust/Python full-fit marginal size-cap retries.
+  Reserve separate marginal and interaction retry seed ranges; first-pass
+  seeds stay unchanged, while seeded outputs after a size-cap retry can change.
 - Add R-compatible sampleCV screening to Python and Rust: fixed raw selected
   terms, repeated holdout OLS, pooled metrics, explicit missing states, and
   last-holdout model/prediction exports with sample IDs.

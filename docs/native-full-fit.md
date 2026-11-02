@@ -76,6 +76,14 @@ Equal numerical seeds do not give matched R/Rust random draws or folds. The
 comparison remains selection-conditioned and cell-level, not independent-animal
 validation. Do not select new delta/lambda winners from these comparison runs.
 
+Rust and Python full-fit marginal and interaction size-cap retries use fresh
+draws in separate deterministic seed ranges when a seed is supplied. First-pass
+seeds stay unchanged. This matches R's fresh-draw retry policy, not its random
+draws, and does not establish improved backend selection agreement.
+Python rejects reserved chunk/stage-two seed blocks outside its backend's seed
+range before selection: unsigned 32-bit for `python`, signed 32-bit for
+`r_knockoffs`. It does not wrap overflowing retry seeds.
+
 Verification reuses the existing tests and artifact fixture:
 
 ```bash
