@@ -54,10 +54,12 @@ def test_interaction_pairs_are_serialized_with_both_latent_factors():
 
 def test_interaction_subproblems_use_disjoint_seed_ranges(monkeypatch):
     seeds = []
+    candidates = []
 
     def fake_select(**kwargs):
         seeds.append(kwargs["base_seed"])
-        return np.array([], dtype=int)
+        candidates.append(kwargs["z"])
+        return np.arange(kwargs["z"].shape[1])
 
     monkeypatch.setattr(Knockoffs, "select_short_freq", staticmethod(fake_select))
     slide = OptimizeSLIDE.__new__(OptimizeSLIDE)
@@ -71,6 +73,37 @@ def test_interaction_subproblems_use_disjoint_seed_ranges(monkeypatch):
     )
 
     assert seeds == [18, 26]
+    z = slide.latent_factors.values
+    np.testing.assert_array_equal(candidates[0], z[:, [0]] * z[:, [1, 2]])
+    np.testing.assert_array_equal(candidates[1], z[:, [1]] * z[:, [0, 2]])
+    np.testing.assert_array_equal(slide.interaction_pairs, [[0, 0, 1, 1], [1, 2, 0, 2]])
+    np.testing.assert_array_equal(slide.interaction_terms, np.column_stack(candidates))
+
+
+@pytest.mark.parametrize("base_seed", [10, None])
+def test_interaction_retries_restart_with_fresh_reproducible_seeds(monkeypatch, base_seed):
+    calls = []
+
+    def fake_select(**kwargs):
+        calls.append((kwargs["spec"], kwargs["base_seed"]))
+        return np.array([[0], [0, 1, 2], [2], [3]][(len(calls) - 1) % 4])
+
+    monkeypatch.setattr(Knockoffs, "select_short_freq", staticmethod(fake_select))
+    slide = OptimizeSLIDE.__new__(OptimizeSLIDE)
+    slide.latent_factors = pd.DataFrame(np.arange(20, dtype=float).reshape(4, 5))
+    slide.marginal_idxs = np.array([1, 3])
+    slide.data = SimpleNamespace(Y=pd.Series([0.0, 1.0, 2.0, 3.0]))
+
+    for _ in range(2):
+        slide.find_interaction_LFs(
+            None, spec=0.1, fdr=0.1, niter=2, f_size=2,
+            knockoff_backend="python", knockoff_base_seed=base_seed,
+        )
+        np.testing.assert_array_equal(slide.interaction_pairs, [[1, 3], [3, 4]])
+
+    expected_seeds = [22, 34, 46, 58] if base_seed is not None else [None] * 4
+    assert calls[:4] == list(zip([0.1, 0.1, 0.2, 0.2], expected_seeds))
+    assert calls[4:] == calls[:4]
 
 
 @pytest.mark.parametrize("backend", ["python", "r_knockoffs"])

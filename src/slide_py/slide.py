@@ -457,6 +457,7 @@ class OptimizeSLIDE(SLIDE):
             if len(marginal_idxs) < n_samples:
                 break
             spec += 0.1
+            logger.warning("Marginal selection reached sample size %d; increasing spec to %.2f", n_samples, spec)
             if spec > 1.0:
                 marginal_idxs = []
                 break
@@ -487,8 +488,8 @@ class OptimizeSLIDE(SLIDE):
 
         When use_r_style=True (default), uses sequential per-marginal processing that
         matches R's interactionSLIDE.R behavior:
-        1. For each marginal, generate interaction terms with ALL other LFs
-           (excluding already-used marginals)
+        1. For each marginal, generate interaction terms with ALL other LFs,
+           including reverse pairs from earlier marginals
         2. Correct y for this marginal's effect (residuals from lm(y ~ z_marginal))
         3. Run knockoff filter on interaction terms vs corrected y
         4. Collect significant interactions
@@ -548,6 +549,8 @@ class OptimizeSLIDE(SLIDE):
         n_lfs = z_all.shape[1]
         max_interactions = y.shape[0] - len(self.marginal_idxs)
         current_spec = spec
+        retry_index = 0
+        seed_stride = niter * (n_lfs + 1)
         if max_interactions <= 0:
             self.interaction_pairs = np.array([])
             self.interaction_terms = np.array([])
@@ -556,16 +559,13 @@ class OptimizeSLIDE(SLIDE):
         while True:
             # R-style sequential per-marginal processing
             all_sig_interactions = []  # List of (marginal_idx, interacting_idx) tuples
-            used_marginals = set()
             retry_with_higher_spec = False
 
-            seed_stride = niter * (n_lfs + 1)
             for marginal_position, marg_idx in enumerate(self.marginal_idxs):
-                used_marginals.add(marg_idx)
                 z_marginal = z_all[:, marg_idx]
 
-                # Get candidate columns: all LFs except already-used marginals
-                candidate_idxs = [i for i in range(n_lfs) if i not in used_marginals]
+                # R's numeric already_made names do not match interUnion's Z names.
+                candidate_idxs = [i for i in range(n_lfs) if i != marg_idx]
                 if len(candidate_idxs) == 0:
                     continue
 
@@ -595,7 +595,9 @@ class OptimizeSLIDE(SLIDE):
                     offset=knockoff_offset,
                     base_seed=(
                         None if knockoff_base_seed is None
-                        else knockoff_base_seed + (marginal_position + 1) * seed_stride
+                        else knockoff_base_seed + (
+                            retry_index * len(self.marginal_idxs) + marginal_position + 1
+                        ) * seed_stride
                     ),
                     fstat=fstat,
                     slide_selection=slide_selection,
@@ -616,6 +618,7 @@ class OptimizeSLIDE(SLIDE):
 
             if not retry_with_higher_spec:
                 break
+            retry_index += 1
             if current_spec > 1.0:
                 warnings.warn(
                     "Interaction selection exceeded model size even after "

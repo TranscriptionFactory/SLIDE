@@ -155,6 +155,15 @@ produce different control-performance scores. KDE uses R's Gaussian kernel and
 
 ## Configuration modes
 
+Current native full fits test each marginal against every other factor,
+including directed reverse pairs, matching the checked-in R naming behavior.
+Oversize interaction passes use fresh deterministic seed namespaces when
+increasing `spec`; equal seed numbers still do not pair cross-language draws.
+Historical native full-fit runs excluded previously used marginals. Keep their
+results separate from this procedure. Native marginal size-limit retries still
+reuse draws, whereas R consumes fresh draws; record retry incidence when
+interpreting comparisons.
+
 `SLIDE_KNOCKOFF_TOL`, `SLIDE_KNOCKOFF_MAX_ITER`, `SLIDE_KNOCKOFF_MATCH_R_LAMBDA`
 and `SLIDE_KNOCKOFF_MATCH_R_COV` override knockoff fitting for R-parity
 experiments. When any is set, `slide` warns and stores it under

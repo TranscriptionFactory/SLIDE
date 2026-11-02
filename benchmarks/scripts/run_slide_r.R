@@ -517,4 +517,4 @@ jsonlite::write_json(list(metric = diagnostics$sample_metric,
   file.path(combo_dir, "sampleCV_model.json"), auto_unbox = TRUE, pretty = TRUE, na = "null")
 write_metadata()
 
-if (cell_summary$sampleCV_Status %in% c("failed", "missing_metric")) quit(save = "no", status = 1L)
+if (cell_summary$sampleCV_Status == "failed") quit(save = "no", status = 1L)

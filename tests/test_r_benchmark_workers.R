@@ -174,3 +174,10 @@ stopifnot(basename(e$combo_dir) == "0.1_1.0_out", summary$sampleCV_Status == "ok
           length(m$last_coefficients) == 3L, m$settings$model == "last_split_ols",
           isTRUE(all.equal(as.numeric(y[p$sample_id, 1]), p$y_true)))
 message("PASS: full-fit real sampleCV model, summary, IDs and native directory rename")
+
+# A completed but unscorable screening fit is not a process failure.
+e$diagnostics$sample_metric <- NA_real_
+eval(expressions[[index("cell_summary <-")]], e)
+stopifnot(e$cell_summary$sampleCV_Status == "missing_metric")
+eval(expressions[[length(expressions)]], e)
+message("PASS: completed undefined sampleCV remains missing without a failed exit")

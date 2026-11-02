@@ -14,7 +14,7 @@ use slide_love::{
     compute_z_map, love_cached, LoveCache, LoveConfig, LoveError, LoveResult, ZMatrixError,
 };
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -295,6 +295,8 @@ pub enum SlideCoreError {
         "cannot correct response with latent factor {marginal_lf}: denominator z'z is zero or non-finite"
     )]
     DegenerateMarginal { marginal_lf: usize },
+    #[error("interaction knockoff seed namespace exceeds u64; reduce base_seed, niter, or factor count")]
+    InteractionSeedOverflow,
     #[error("delta_grid must contain at least one value")]
     EmptyDeltaGrid,
     #[error("lambda_grid must contain at least one value")]
@@ -391,7 +393,8 @@ impl PartialEq for SlideCoreError {
             | (DegenerateContinuousScore, DegenerateContinuousScore)
             | (DegenerateBinaryScore, DegenerateBinaryScore)
             | (NoSuccessfulEvaluations, NoSuccessfulEvaluations)
-            | (CheckpointInputMismatch, CheckpointInputMismatch) => true,
+            | (CheckpointInputMismatch, CheckpointInputMismatch)
+            | (Self::InteractionSeedOverflow, Self::InteractionSeedOverflow) => true,
             (
                 FeatureResponseLengthMismatch {
                     expected: left_expected,
@@ -451,8 +454,8 @@ pub fn find_standalone_lfs(
     config: &MarginalLfSelectionConfig,
 ) -> Result<MarginalLfSelection, SlideCoreError> {
     // R marginalSLIDE reruns selection at spec + 0.1 until fewer than n
-    // marginals remain. As in find_interaction_lfs, base_seed is unchanged, so
-    // a retry redraws identical knockoffs and only moves the frequency cut.
+    // marginals remain. Native marginal retries keep base_seed unchanged, so
+    // they redraw identical knockoffs and only move the frequency cut.
     let n = z.shape().0;
     let mut knockoff_config = config.to_knockoff_config();
     loop {
@@ -554,26 +557,26 @@ fn find_interaction_lfs_with_progress(
     }
     let max_interactions = headroom.max(0) as usize;
 
-    // Precompute candidate sets: iteration i excludes sig_lfs[0..=i]
+    // R's numeric `already_made` names do not match interUnion's Z-prefixed
+    // columns, so each marginal also tests the reverse pairs of earlier ones.
     let candidate_sets: Vec<Vec<usize>> = sig_lfs
         .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let excluded: HashSet<usize> = sig_lfs[..=i].iter().copied().collect();
-            (0..ncols).filter(|idx| !excluded.contains(idx)).collect()
-        })
+        .map(|marginal| (0..ncols).filter(|idx| idx != marginal).collect())
         .collect();
 
     // parallel: true (via to_knockoff_config) — parallelism lives in each
     // select_short_freq's niter voting loop (width 500), not this narrow
     // marginal loop (width = #sig_LFs, typically ~2).
-    let seed_stride = config.niter as u64 * (ncols as u64 + 1);
+    // Each namespace covers chunk draws and the stage-two prefix, with room
+    // for up to ncols subproblems. Retries reserve a fresh full marginal pass.
+    let seed_stride = (ncols as u64)
+        .checked_add(1)
+        .and_then(|width| (config.niter as u64).checked_mul(width))
+        .ok_or(SlideCoreError::InteractionSeedOverflow)?;
+    let mut retry_index = 0u64;
 
-    // R reruns the whole interaction pass at a stricter spec as soon as one
-    // marginal overshoots the cap, discarding the marginals already done. Retry
-    // cost is the same 500 knockoff draws: `spec` is a selection threshold and
-    // does not touch the RNG stream (base_seed is unchanged), so a retry redraws
-    // identical knockoffs and differs only in where the frequency cut falls.
+    // R reruns the whole interaction pass with fresh draws at a stricter spec
+    // as soon as one marginal overshoots the cap, discarding completed results.
     let mut spec = config.spec;
     let flattened: Vec<InteractionVotingResult> = loop {
         let mut knockoff_config = config.to_knockoff_config();
@@ -597,8 +600,19 @@ fn find_interaction_lfs_with_progress(
             let corrected_y = correct_y_for_marginal(y, &marginal, marginal_lf)?;
             let interaction_terms = build_interaction_terms(z, marginal_lf, candidate_lfs);
             let mut interaction_config = knockoff_config.clone();
-            interaction_config.base_seed =
-                knockoff_config.base_seed + (marginal_position as u64 + 1) * seed_stride;
+            interaction_config.base_seed = retry_index
+                .checked_mul(total_marginals as u64)
+                .and_then(|offset| offset.checked_add(marginal_position as u64))
+                .and_then(|offset| offset.checked_add(1))
+                .and_then(|namespace| namespace.checked_mul(seed_stride))
+                .and_then(|offset| knockoff_config.base_seed.checked_add(offset))
+                .ok_or(SlideCoreError::InteractionSeedOverflow)?;
+            // Inner voting adds subproblem/iteration offsets and 1,000,000 for
+            // swap RNGs; reject exhausted namespaces before its unchecked adds.
+            interaction_config.base_seed
+                .checked_add(seed_stride)
+                .and_then(|end| end.checked_add(1_000_000))
+                .ok_or(SlideCoreError::InteractionSeedOverflow)?;
             let voting = select_short_freq(&interaction_terms, &corrected_y, &interaction_config)?;
             let selected_interactors: Vec<_> = voting
                 .selected
@@ -643,6 +657,9 @@ fn find_interaction_lfs_with_progress(
             log::warn!("[SLIDE] interaction spec exceeded 1.0; returning no interactions");
             break Vec::new();
         }
+        retry_index = retry_index
+            .checked_add(1)
+            .ok_or(SlideCoreError::InteractionSeedOverflow)?;
     };
 
     // Sequential post-processing: count total interactions, pre-allocate matrix
@@ -1652,7 +1669,7 @@ mod tests {
     }
 
     #[test]
-    fn find_interaction_lfs_respects_used_set_and_maps_selected_pairs() {
+    fn find_interaction_lfs_tests_reverse_candidates_and_maps_selected_pairs() {
         let z = Matrix::from_ndarray(arr2(&[
             [2.0, 2.0, 0.0],
             [1.0, 1.0, 1.0],
@@ -1677,17 +1694,31 @@ mod tests {
 
         assert_eq!(result.voting.len(), 2);
         assert_eq!(result.voting[0].candidate_lfs, vec![1, 2]);
-        assert_eq!(result.voting[1].candidate_lfs, vec![2]);
-        assert!(result
-            .sig_interacts
+        assert_eq!(result.voting[1].candidate_lfs, vec![0, 2]);
+        let expected_pairs: Vec<_> = result
+            .voting
             .iter()
-            .all(|(marginal, interactor)| *marginal < *interactor));
+            .flat_map(|result| {
+                result
+                    .voting
+                    .selected
+                    .iter()
+                    .map(move |&index| (result.marginal_lf, result.candidate_lfs[index]))
+            })
+            .collect();
+        assert_eq!(result.sig_interacts, expected_pairs);
         assert_eq!(result.sig_interacts.len(), result.interaction_terms.ncols());
+        for (column, &(marginal, interactor)) in result.sig_interacts.iter().enumerate() {
+            assert_eq!(
+                result.interaction_terms.as_ndarray().column(column),
+                &z.as_ndarray().column(marginal) * &z.as_ndarray().column(interactor)
+            );
+        }
     }
 
     /// Deterministic fixture for the interaction size cap. `nrows` fixes the cap
     /// at `nrows - sig_lfs.len()`; the values are arbitrary but fixed, and the
-    /// knockoff draws are seeded, so the selection ladders below are stable.
+    /// knockoff draws are seeded, so each retry's fresh draws are repeatable.
     fn cap_fixture(nrows: usize, ncols: usize) -> (Matrix, Vector) {
         let z = Matrix::from_ndarray(Array2::from_shape_fn((nrows, ncols), |(i, j)| {
             (((i * ncols + j) as Scalar) * 0.37).sin() + (j as Scalar) * 0.11
@@ -1758,16 +1789,62 @@ mod tests {
     }
 
     #[test]
-    fn interaction_size_cap_escalates_spec_when_a_marginal_exceeds_the_model_size() {
-        // 4 rows, one marginal -> the model holds at most 3 interactions. This
-        // fixture selects 10 at spec 0.1 and 0.2 (min_selections 1) and 3 at spec
-        // 0.3 (min_selections 2), so the loop must escalate twice and then settle.
+    fn interaction_size_cap_retries_with_fresh_draws_and_is_repeatable() {
+        // The initial pass selects 10 interactions against a cap of 3.
         let (z, y) = cap_fixture(4, 12);
-
-        let result = find_interaction_lfs(&z, &y, &[0], &cap_config(4, 0.1))
+        let config = cap_config(4, 0.1);
+        let candidates: Vec<_> = (1..z.ncols()).collect();
+        let terms = super::build_interaction_terms(&z, 0, &candidates);
+        let marginal = Vector::from_ndarray(z.as_ndarray().column(0).to_owned());
+        let corrected_y = correct_y(&y, &marginal).unwrap();
+        let mut expected_config = config.to_knockoff_config();
+        expected_config.f_size = Some(100);
+        let stride = config.niter as u64 * (z.ncols() as u64 + 1);
+        let mut first_counts = None;
+        let mut expected = None;
+        for retry_index in 0..10 {
+            expected_config.base_seed = config.base_seed + (retry_index + 1) * stride;
+            let voting = super::select_short_freq(&terms, &corrected_y, &expected_config)
+                .unwrap_or_else(|error| panic!("reference voting failed: {error}"));
+            if retry_index == 0 {
+                assert_eq!(voting.selected.len(), 10);
+                first_counts = Some(voting.selection_counts.clone());
+            }
+            if voting.selected.len() <= 3 {
+                assert!(retry_index > 0, "fixture must exercise a retry");
+                assert_ne!(Some(voting.selection_counts.clone()), first_counts);
+                expected = Some(voting);
+                break;
+            }
+            expected_config.spec += 0.1;
+            if expected_config.spec > 1.0 {
+                break;
+            }
+        }
+        let expected = expected.unwrap_or_else(|| panic!("fixture must settle below its cap"));
+        let result = find_interaction_lfs(&z, &y, &[0], &config)
             .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
+        assert_eq!(result.voting[0].voting, expected);
+        let expected_pairs: Vec<_> = expected
+            .selected
+            .iter()
+            .map(|&i| (0, candidates[i]))
+            .collect();
+        assert_eq!(result.sig_interacts, expected_pairs);
+        assert_eq!(result.sig_interacts.len(), result.interaction_terms.ncols());
+        assert_eq!(find_interaction_lfs(&z, &y, &[0], &config).unwrap(), result);
+    }
 
-        assert_eq!(result.sig_interacts.len(), 3);
+    #[test]
+    fn interaction_fixed_draw_votes_match_r_reference() {
+        let (z, y) = cap_fixture(4, 12);
+        // The R reference replays fixed first-pass draws; it does not model
+        // interactionSLIDE's fresh retry draws.
+        let config = MarginalLfSelectionConfig {
+            interaction_size_cap: false,
+            ..cap_config(4, 0.3)
+        };
+        let result = find_interaction_lfs(&z, &y, &[0], &config).unwrap();
         let reference: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tests/fixtures/slide_core/interaction_cap/r_reference.json"
         ))
@@ -1785,12 +1862,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_pairs
         );
-        assert_eq!(result.sig_interacts.len(), result.interaction_terms.ncols());
-        let threshold = result.voting[0].voting.threshold;
-        assert!(
-            (0.25..0.35).contains(&threshold),
-            "expected the surviving pass at spec ~0.3, got {threshold}"
-        );
+    }
+
+    #[test]
+    fn interaction_seed_namespace_rejects_overflow() {
+        let (z, y) = cap_fixture(4, 8);
+        for (base_seed, niter) in [
+            (u64::MAX, 1),
+            (u64::MAX - 1_000_000, 1),
+            (42, usize::MAX),
+        ] {
+            let config = MarginalLfSelectionConfig {
+                base_seed,
+                ..cap_config(niter, 0.1)
+            };
+            assert_eq!(
+                find_interaction_lfs(&z, &y, &[0], &config),
+                Err(SlideCoreError::InteractionSeedOverflow)
+            );
+        }
     }
 
     #[test]
@@ -1812,14 +1902,11 @@ mod tests {
 
     #[test]
     fn interaction_size_cap_stops_escalating_past_spec_one() {
-        // With niter = 1, min_selections is ceil(1 * spec) = 1 for every legal
-        // spec, so escalation cannot shrink the selection: this fixture keeps 6
-        // interactions against a cap of 3 no matter how high spec climbs. The
-        // guard has to give up at spec > 1.0 instead of looping (and instead of
-        // handing select_short_freq an out-of-range spec).
+        // With niter = 1, the first pass selects 6 interactions against a cap
+        // of 3 even at spec = 1. Stop before an out-of-range retry is attempted.
         let (z, y) = cap_fixture(4, 8);
 
-        let result = find_interaction_lfs(&z, &y, &[0], &cap_config(1, 0.1))
+        let result = find_interaction_lfs(&z, &y, &[0], &cap_config(1, 1.0))
             .unwrap_or_else(|error| panic!("find_interaction_lfs failed: {error}"));
 
         assert!(result.sig_interacts.is_empty());
