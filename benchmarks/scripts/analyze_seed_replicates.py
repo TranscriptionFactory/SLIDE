@@ -31,6 +31,7 @@ from benchmark_backends import _param_subdir, load_python_result, load_rust_resu
 
 CORE_RATE = 0.8  # a factor is in an arm's core set when selected in >= 80% of its runs
 FLAG_DELTA = 0.5  # flag factors whose selection rates differ by at least this much
+DEFAULT_Z_TOL = 1e-6
 CV_COLUMNS = {"pure_r": ("score", "repeat_id", "sample_id"),
               "python": ("metric_value", "replicate", "sample_id"),
               "rust": ("corr", "repeat", "sample_index")}
@@ -803,7 +804,8 @@ def main():
     p.add_argument("--expected-cells", type=int, default=4)
     p.add_argument("--equivalence", action="store_true", help="Pilot intervals; requires identical Z and independent runs")
     p.add_argument("--z-reference", help="Arm whose Z every run must match (also checks K)")
-    p.add_argument("--z-tol", type=float, default=1e-8)
+    p.add_argument("--z-tol", type=float, default=DEFAULT_Z_TOL,
+                   help="Absolute factor-alignment tolerance (default: %(default)g); no relative tolerance")
     p.add_argument("--heatmap-cell", action="append", default=[], help="Cell label, e.g. 'd=0.01 l=0.1'")
     p.add_argument("--permutations", type=int, default=10000)
     p.add_argument("--bootstrap", type=int, default=10000)

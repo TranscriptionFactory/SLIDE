@@ -61,6 +61,20 @@ def test_strict_alignment_rejects_permuted_factor_names(monkeypatch):
         analysis.check_z(runs([set()] * 2, [set()] * 2), "r", 1e-8)
 
 
+@pytest.mark.parametrize("difference, accepted", [(2e-7, True), (2e-6, False)])
+def test_default_factor_alignment_tolerance(monkeypatch, difference, accepted):
+    assert analysis.DEFAULT_Z_TOL == 1e-6
+    monkeypatch.setattr(analysis, "load_z", lambda row: (
+        ["Z1", "Z2"], np.ones((3, 2)) + (difference if row.arm == "a" else 0)))
+    df = runs([set()] * 2, [set()] * 2)
+    if accepted:
+        result = analysis.check_z(df, "r", analysis.DEFAULT_Z_TOL)
+        assert result.max_abs_z_diff.max() == pytest.approx(difference)
+    else:
+        with pytest.raises(AssertionError, match="max"):
+            analysis.check_z(df, "r", analysis.DEFAULT_Z_TOL)
+
+
 def test_all_empty_cells_retain_historical_comparison(monkeypatch):
     monkeypatch.setattr(analysis, "load_z", lambda _: (["Z1", "Z2"], np.ones((3, 2))))
     df = runs([set()] * 3, [set()] * 3).assign(

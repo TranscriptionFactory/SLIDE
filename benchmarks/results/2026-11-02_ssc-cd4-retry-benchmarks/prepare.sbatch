@@ -37,10 +37,14 @@ import hashlib
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(os.environ['REPO']) / 'benchmarks/scripts'))
+from analyze_seed_replicates import DEFAULT_Z_TOL
 
 logging.basicConfig(level=logging.INFO)
 run = Path(os.environ['RUN'])
@@ -78,10 +82,10 @@ for dataset in ('ssc', 'cd4'):
                 factors = pd.read_csv(path, index_col=0)
                 assert factors.index.equals(reference.index), path
                 assert factors.columns.equals(reference.columns), path
-                np.testing.assert_allclose(factors.to_numpy(), reference.to_numpy(), atol=1e-8, rtol=0,
+                np.testing.assert_allclose(factors.to_numpy(), reference.to_numpy(), atol=DEFAULT_Z_TOL, rtol=0,
                                            err_msg=str(path))
             hashes.append(f'{hashlib.sha256(reference_path.read_bytes()).hexdigest()}  {reference_path}\n')
 with (run / 'saved-factors.sha256').open('x') as handle:
     handle.writelines(hashes)
-logging.info('Pilot gate passed: 24 full-fit cells, eight aligned R factor matrices.')
+logging.info('Pilot gate passed: 24 full-fit cells, eight aligned R factor matrices; absolute tolerance %g.', DEFAULT_Z_TOL)
 PY

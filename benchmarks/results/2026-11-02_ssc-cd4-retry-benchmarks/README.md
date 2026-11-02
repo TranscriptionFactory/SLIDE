@@ -1,7 +1,7 @@
 # SSc/CD4 fresh-retry benchmark campaign
 
-Status: all 24 pilot fits succeeded; production remains withheld because one
-new CD4 setting exceeds the declared factor-alignment tolerance.
+Status: all 24 pilot fits succeeded. The user approved absolute factor-alignment
+tolerance 1e-6 for this campaign and future runs; revalidation precedes production.
 
 - Preparation `12090713` failed before compilation on a rustup shared-home
   settings lock. The scheduler cancelled production `12090714`–`12090757`.
@@ -15,8 +15,13 @@ new CD4 setting exceeds the declared factor-alignment tolerance.
   entries exceed 1e-8). All sample IDs and factor names/order match. The other
   seven cells pass, with maximum absolute differences below 4.7e-11.
 
-No production rerun is submitted. The tolerance remains unchanged; proceeding
-requires a decision to investigate the difference or approve a revised gate.
+The approved 1e-6 gate uses zero relative tolerance and exact sample-ID and
+factor-name/order checks. This policy change follows inspection of the pilot;
+it is not evidence that the numerical difference has been explained or that
+backend selection is equivalent. Fitting, solver and metric-check tolerances
+are unchanged. The maintained analyzer owns the default in `DEFAULT_Z_TOL`;
+the pilot gate imports that policy from the repository, not the frozen fitting
+source. Historical failed checks retain their original 1e-8 criterion.
 
 The frozen source is
 `81e1fc97fc13e3e2be3e579907f4608a1ece3515`, which gives native full-fit
@@ -53,7 +58,7 @@ Each CV cell uses its predetermined R seed-42 pilot factor matrix:
 `pilot/full-fit/<dataset>/pure_r/seed_42/pure_r/<delta>_<lambda>_out/z_matrix.csv`.
 All three backends use that same matrix. The choice does not depend on scores.
 The pilot checks all 24 cell outcomes, sample IDs, factor names/order and
-absolute factor agreement within 1e-8 before writing `saved-factors.sha256`.
+absolute factor agreement within 1e-6 before writing `saved-factors.sha256`.
 An undefined sampleCV score is not a process failure.
 
 ## Submission and resource limits

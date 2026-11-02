@@ -33,6 +33,13 @@ and differences from the preceding run in a `README.md`.
   `analyze_paired_xtilde.py`, `replay_paired_xtilde.py`: saved-draw preparation,
   replay and analysis for investigating selection differences.
 
+Factor-alignment checks use absolute tolerance **1e-6**, with zero relative
+tolerance, while requiring matching factor counts and column names/order.
+`analyze_seed_replicates.py --z-tol` overrides this default; pilot gates reuse
+its `DEFAULT_Z_TOL`. Sample-ID checks remain exact. This numerical tolerance is
+not a statistical-equivalence margin and does not change fitting or solver
+tolerances. Historical reports retain their original thresholds.
+
 ## Runtime and memory comparisons
 
 Measurements use frozen source `4b32111` with profiling enabled.
