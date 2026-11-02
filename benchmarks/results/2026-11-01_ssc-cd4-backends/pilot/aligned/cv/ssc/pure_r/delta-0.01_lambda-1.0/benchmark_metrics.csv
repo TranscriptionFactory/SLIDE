@@ -1,0 +1,2 @@
+backend,delta,lambda,run_status,sampleCV_metric,sampleCV_status,sampleCV_provenance,sampleCV_predictions,finalCV_status,finalCV_scores,finalCV_predictions
+pure_r,0.01,1.0,success,,unavailable,,,exported,pure_r/0.01_1.0_out/finalCV_repeat_scores.csv,pure_r/0.01_1.0_out/finalCV_predictions.csv

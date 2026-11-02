@@ -1,0 +1,2 @@
+"delta","lambda","workers","Num_of_LFs","Num_of_Sig_LFs","Num_of_Interactors","f_size","sampleCV_Performance","sampleCV_Provenance","sampleCV_Status","error","selection_calls","selection_errors"
+0.01,0.1,4,172,5,14,24,0.110831287851525,"pooled_holdout_last_split_ols","ok","",1,0

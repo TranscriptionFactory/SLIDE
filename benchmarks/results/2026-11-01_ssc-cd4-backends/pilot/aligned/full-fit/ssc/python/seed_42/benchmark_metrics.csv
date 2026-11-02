@@ -1,0 +1,5 @@
+backend,delta,lambda,run_status,sampleCV_metric,sampleCV_status,sampleCV_provenance,sampleCV_predictions,finalCV_status,finalCV_scores,finalCV_predictions
+python,0.01,0.1,success,,model_too_large,pooled_holdout,python/0.01_0.1_out/sampleCV_predictions.csv,unavailable,,
+python,0.01,1.0,success,0.34403148239093423,ok,pooled_holdout,python/0.01_1.0_out/sampleCV_predictions.csv,unavailable,,
+python,0.1,0.1,success,0.690623829160948,ok,pooled_holdout,python/0.1_0.1_out/sampleCV_predictions.csv,unavailable,,
+python,0.1,1.0,success,0.5539089404162272,ok,pooled_holdout,python/0.1_1.0_out/sampleCV_predictions.csv,unavailable,,

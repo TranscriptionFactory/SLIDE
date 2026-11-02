@@ -1,0 +1,2 @@
+backend,delta,lambda,run_status,sampleCV_metric,sampleCV_status,sampleCV_provenance,sampleCV_predictions,finalCV_status,finalCV_scores,finalCV_predictions
+python,0.01,1.0,success,,unavailable,,,exported,python/0.01_1.0_out/slidecv_results.csv,python/0.01_1.0_out/slidecv_predictions.csv

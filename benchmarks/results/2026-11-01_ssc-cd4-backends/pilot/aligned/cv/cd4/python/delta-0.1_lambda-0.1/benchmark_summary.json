@@ -1,0 +1,76 @@
+{
+  "timestamp": "2026-11-02T04:04:19.824661+00:00",
+  "timings": [
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 13.576510805869475,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 1060208640,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 9.403740426991135,
+      "python_glmnet_available": true
+    }
+  ],
+  "comparisons": [],
+  "results": {},
+  "cell_artifacts": [
+    {
+      "backend": "python",
+      "delta": 0.1,
+      "lambda": 0.1,
+      "run_status": "success",
+      "error": null,
+      "sampleCV": {
+        "metric": null,
+        "status": "unavailable",
+        "provenance": null,
+        "model": null,
+        "predictions": null
+      },
+      "control": {
+        "performance": null,
+        "in_sample_score_is_not_sampleCV": true
+      },
+      "finalCV": {
+        "status": "exported",
+        "repeat_scores": [
+          {
+            "method": "SLIDE",
+            "metric_value": "0.45029119235566756",
+            "replicate": "0",
+            "raw_metric": "0.45029119235566756",
+            "mse": "0.7372856419353399",
+            "imputed_predictions": "0",
+            "status": "ok"
+          },
+          {
+            "method": "SLIDE_y",
+            "metric_value": "0.017832280437230404",
+            "replicate": "0",
+            "raw_metric": "0.017832280437230404",
+            "mse": "1.0196097447256633",
+            "imputed_predictions": "0",
+            "status": "ok"
+          }
+        ],
+        "scores_path": "python/0.1_0.1_out/slidecv_results.csv",
+        "predictions": "python/0.1_0.1_out/slidecv_predictions.csv"
+      },
+      "effective_configs": [
+        "python/0.1_0.1_out/benchmark_effective_config.json"
+      ],
+      "stage_timings": [
+        {
+          "stage": "finalCV",
+          "seconds": "9.344917893176898",
+          "status": "success",
+          "method": "Python call-boundary wall clock"
+        }
+      ],
+      "stage_memory_status": "unavailable; only whole-process-group RSS is measured"
+    }
+  ]
+}

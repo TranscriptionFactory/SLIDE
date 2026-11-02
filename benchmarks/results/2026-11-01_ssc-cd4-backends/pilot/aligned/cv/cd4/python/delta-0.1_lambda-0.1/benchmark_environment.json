@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-11-02T04:04:06.201109+00:00",
+  "enclosing_git_sha": "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+  "hostname": "htc-1024-n3.crc.pitt.edu",
+  "cpu_count": 64,
+  "threads": 4,
+  "blas_threads": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1"
+  },
+  "python": "3.11.15 | packaged by conda-forge | (main, Mar  5 2026, 16:45:40) [GCC 14.3.0]",
+  "platform": "linux",
+  "seed": 20261101,
+  "effective_cv_seed": 20261101,
+  "workflow": "cv",
+  "z_path": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/pilot/aligned/full-fit/cd4/pure_r/seed_42/pure_r/0.1_0.1_out/z_matrix.csv",
+  "cv_repeats": 1,
+  "cv_folds": 5,
+  "sample_cv_iterations": 500,
+  "sample_cv_k": 4,
+  "auto_select": false,
+  "niter": 10,
+  "spec": 0.1,
+  "rust_fdr": 0.1,
+  "python_r_fdr": 0.1,
+  "slide_selection": true,
+  "configuration": "parity",
+  "source_revision": "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+  "source_path": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/source",
+  "rust_binary": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+  "rust_nlambda": 500,
+  "python_r_gaussian_settings": {
+    "nlambda": 500,
+    "tolerance": 1e-07,
+    "max_iter": 100000,
+    "lambda_min_ratio": 0.0005
+  },
+  "rust_native_defaults": {
+    "tolerance": 1e-07,
+    "max_iter": 100000,
+    "covariance_gate": "positive definite and condition number <= 100000",
+    "lambda_min_ratio": "1e-4 if n > 2p else 1/2000"
+  },
+  "inherited_environment": {
+    "SLIDE_R_OPTIMIZE": "0",
+    "SLIDE_R_SOURCE": "checkout",
+    "SLIDE_OPT_ITER": "1"
+  },
+  "rust_solver_environment": {
+    "SLIDE_KNOCKOFF_TOL": "1e-7",
+    "SLIDE_KNOCKOFF_MAX_ITER": "100000",
+    "SLIDE_KNOCKOFF_MATCH_R_COV": "1",
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA": "1"
+  },
+  "workers_by_backend": {
+    "python": 4
+  },
+  "timing_boundary": "fresh interpreter and backend startup, imports, I/O and preprocessing; excludes report generation",
+  "cell_timeout_seconds": 120.0,
+  "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+  "paired_random_draws": false,
+  "algorithm_matching": "not established; configuration alignment does not pair RNG or solvers",
+  "native_full_fit_defaults_differences": [
+    "Rust defaults to nlambda=250; Python/R use 500",
+    "Rust native covariance adds a condition-number gate; Python/R use positive-definiteness",
+    "Rust native lambda_min_ratio depends on n/(2p); Python/R use 1/2000",
+    "ASDP solvers and RNG streams differ across languages"
+  ],
+  "native_cv_settings": {
+    "nlambda": 500,
+    "r_compatible": true,
+    "slide_selection": true,
+    "love_refit": false
+  },
+  "selection_block_policy": {
+    "marginal": "calcDefaultFsize(n,K)",
+    "interaction": 100,
+    "interaction_model_cap": "n - marginal_count"
+  },
+  "native_failure_policies": [
+    "Rust R-compatible ASDP may fall back to equi on SDP solve failure; see native logs",
+    "R runSLIDE retries selection internally; this is not a harness retry",
+    "Python OptimizeSLIDE catches LOVE/selection failures; missing completed artifacts fail the cell"
+  ],
+  "stage_memory": {
+    "status": "unavailable",
+    "reason": "only whole-process-group RSS is sampled"
+  }
+}

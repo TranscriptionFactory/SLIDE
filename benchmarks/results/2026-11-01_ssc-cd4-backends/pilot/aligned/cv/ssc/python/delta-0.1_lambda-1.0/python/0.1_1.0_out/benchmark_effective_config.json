@@ -1,0 +1,21 @@
+{
+  "niter": 10,
+  "spec": 0.1,
+  "fdr": 0.1,
+  "n_workers": 4,
+  "do_interacts": true,
+  "knockoff_backend": "python",
+  "knockoff_method": "asdp",
+  "knockoff_shrink": false,
+  "knockoff_offset": 0,
+  "fstat": "glmnet_lambdasmax",
+  "slide_selection": true,
+  "auto_select": false,
+  "workflow": "cv",
+  "z_path": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/pilot/aligned/full-fit/ssc/pure_r/seed_42/pure_r/0.1_1.0_out/z_matrix.csv",
+  "y_path": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/Y.csv",
+  "nrep": 1,
+  "k": 5,
+  "seed": 20261101,
+  "eval_type": "corr"
+}

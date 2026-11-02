@@ -1,14 +1,42 @@
 # SSc/CD4 backend campaign
 
-Status: native interaction correction approved; repeating the matched pilot
-before production submission. This campaign measures current implementations, not
+Status: production submitted after both matched pilots passed. This campaign
+measures current implementations, not
 the historical October results. The user approved the matrix and resource caps
 below, conditional on the matched pilot.
+
+## Submitted jobs
+
+`jobs.csv` records all 31 accepted Slurm jobs and dependencies:
+
+- `12087132`–`12087147`: 16 jobs covering 300 full-fit cells.
+- `12087148`–`12087162`: 15 saved-factor CV jobs.
+
+The first job started; the rest follow a sequential `afterany` chain. Slurm
+requeue is disabled (`Requeue=0`) for every job. These submissions contain no
+automatic resubmissions and reserve at most 560 CPU-hours in total. Preparation
+allocations `12086757` and `12086872` are closed. Production results and their
+statistical analysis are not complete.
+
+The source, binary, saved R factor matrices and external environments named in
+`environment.sh` must remain available while the jobs run. Each job checks
+`build-artifacts.sha256` and `saved-factors.sha256` before execution and records
+hardware/affinity under `logs/`. Manifests are single-use and refuse existing
+output/status paths. To reproduce with fresh paths, use the maintained runner:
+
+```bash
+source benchmarks/results/2026-11-01_ssc-cd4-backends/environment.sh
+cd "$RUN/source"
+bash benchmarks/scripts/run_backend_array.sh --manifest "$MANIFEST"
+```
+
+Run that command inside an allocation; choose the manifest from `jobs.csv`.
+Do not resubmit an existing manifest while its job is active.
 
 ## Pilot stop and next decision
 
 Executed source: `3a739ae6770d003794bc26753919dbb213890667`, with a prebuilt
-Rust executable and frozen Python/R/runner sources under `source/`.
+Rust executable and frozen sources retained under `pilot/original/`.
 Allocation `12086757` used four CPUs and 32 GiB; it was cancelled after 18
 minutes when source inspection confirmed the mismatch. All four SSc cells
 completed for each native backend. R completed three SSc cells; its fourth
@@ -38,6 +66,29 @@ The R regression for a completed-but-undefined sampleCV metric passed: the
 score remains missing without turning a completed fit into a process failure.
 No scientific model construction changes accompany that status change.
 
+## Matched pilot and production source
+
+All 15 full-fit cells passed at `7c89e73` in allocation `12086872`; its source
+snapshot is retained under `pilot/aligned/source/`. Screening predictions have
+the expected IDs and 500 holdouts (3,000 rows for SSc, 310,000 for CD4). Pooled
+scores reproduce from CSV within 1e-8; that is a serialization tolerance, not
+a practical equivalence margin. Maximum absolute factor-matrix difference
+against R is 4.69e-11. No marginal size-limit retry was observed in this pilot.
+
+The full-fit pilot exposed four-decimal R JSON rounding. Native CSV/RDS values
+remain intact; use the CSV screening scores for that pilot. `d5c9d67` fixes JSON
+export precision, with a real-model metric/coefficient round-trip regression.
+It changes no fits or random draws. Production and all 15 saved-factor CV
+pilot cells use `d5c9d675c28ba63a7594fc8c5f1387af7459fc44`.
+The Rust executable uses the identical Rust source tree from `7c89e73`.
+
+All CV pilot cells passed: both branches cover every sample exactly once per
+repeat; folds match between branches; held-out targets use the training-fold
+mean/SD; pooled Spearman and MSE reproduce from predictions. All backends use
+the same predetermined R factor matrix per cell. The Python CD4 pilot figure
+was rendered and inspected; one repeat provides no uncertainty estimate.
+These diagnostics do not establish statistical equivalence or replacement.
+
 ## Inputs and fixed settings
 
 - SSc: 24 samples × 804 features; delta {0.01, 0.1} × lambda {0.1, 1.0}.
@@ -63,14 +114,18 @@ unchanged; input CSVs live on the shared filesystem.
 
 ## Run matrix and resource limits
 
-Full fits: 20 seeds per backend/cell, 1,000 through 20,000 in steps of 1,000:
-300 runs. Equal numeric seeds do not pair cross-language random draws.
+Full fits: 20 seeds per backend/cell, 10,000,000 through 1,910,000,000 in steps
+of 100,000,000: 300 runs. Wide spacing avoids overlap between native per-block
+and per-retry seed ranges for these cells. Equal numeric seeds do not pair
+cross-language random draws. Earlier closely spaced, unsubmitted manifests
+were discarded before production.
 
 Final CV: each backend evaluates the same predetermined R pilot factor matrix
 (seed 42) for each cell, with 15 repeats, 5 folds and 500 selection draws.
 Both observed and training-response-permuted branches run. There are 15 final-CV
 runs, not 300. Each backend generates independent folds; no shared-fold claim.
 The matrices are chosen before seeing their scores. No native-factor CV arm.
+CV base seed: 20,261,101.
 
 Pilot: one full-fit seed (42) per backend/cell with production scientific
 settings, capped at 180 seconds each. Saved-factor CV uses one repeat, five
@@ -86,6 +141,9 @@ Production full-fit timeout: 600 seconds per run. Final-CV timeout: 21,600
 seconds per run. The maximum compute reservation is 560 CPU-hours, plus an
 eight-CPU-hour preparation/pilot allocation. No automatic job retries. Retain
 timeouts, failures, empty selections and undefined scores in denominators.
+Child limits are 590 seconds and 21,500 seconds, respectively, leaving time
+for final artifact/report writes inside those scheduler caps. Production uses
+the `htc` partition's `turin` constraint, with sequential `afterany` dependencies.
 
 ## Execution and interpretation
 
@@ -105,6 +163,12 @@ the exported raw term sets used by sampleCV. This consumes time and RNG draws;
 full-fit runtimes are not an equal-instruction-count comparison. R's intrinsic
 selection retry/skip behavior and native solver failure policies must be
 reported separately. Final CV uses the method-4 submodel predictor in all arms.
+The R CV engine also reads/scales raw X although the SLIDE predictor uses saved
+Z. R exports failed-repeat placeholders and can continue later repeats; native
+CV aborts on a fold error. Do not average only the surviving R repeats or treat
+those failure-path runtimes as equal-work comparisons. R's early-return cluster
+cleanup can leave idle workers until cleanup; the measured group RSS includes
+them. The CPU allowance remains four, with four configured voting workers.
 
 Verification covers input order, effective settings, sampleCV IDs/statuses,
 saved-factor compatibility, both CV branches, prediction coverage, pooled
@@ -114,3 +178,9 @@ R-to-R variability, and does not count all pairwise overlaps as independent
 observations. No practical equivalence margins are agreed, so this campaign
 cannot claim equivalence from a nonsignificant difference. No FDR/power claim
 without a separate known-truth simulation analysis.
+
+Analysis must gate selection comparisons on successful cell timings; partial
+files from failed cells are not empty selections. Keep those failed cells in
+the attempted-run denominators. The seed-analysis tools' legacy `score` field
+is in-sample: read `cell_artifacts.sampleCV` and the final-CV repeat-score CSVs
+for held-out performance, rather than relabeling that field.

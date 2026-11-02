@@ -1,0 +1,50 @@
+[
+  {
+    "backend": "python",
+    "delta": 0.01,
+    "lam": 0.1,
+    "wall_seconds": 91.48024640092626,
+    "status": "success",
+    "error": "",
+    "peak_rss_bytes": 1229111296,
+    "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+    "backend_wall_seconds": 85.84501323499717,
+    "python_glmnet_available": true
+  },
+  {
+    "backend": "python",
+    "delta": 0.01,
+    "lam": 1.0,
+    "wall_seconds": 84.62115401099436,
+    "status": "success",
+    "error": "",
+    "peak_rss_bytes": 1217847296,
+    "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+    "backend_wall_seconds": 80.45911332895048,
+    "python_glmnet_available": true
+  },
+  {
+    "backend": "python",
+    "delta": 0.1,
+    "lam": 0.1,
+    "wall_seconds": 29.850373055087402,
+    "status": "success",
+    "error": "",
+    "peak_rss_bytes": 1136254976,
+    "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+    "backend_wall_seconds": 25.59930496593006,
+    "python_glmnet_available": true
+  },
+  {
+    "backend": "python",
+    "delta": 0.1,
+    "lam": 1.0,
+    "wall_seconds": 33.117246937938035,
+    "status": "success",
+    "error": "",
+    "peak_rss_bytes": 1155907584,
+    "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+    "backend_wall_seconds": 29.608043547021225,
+    "python_glmnet_available": true
+  }
+]

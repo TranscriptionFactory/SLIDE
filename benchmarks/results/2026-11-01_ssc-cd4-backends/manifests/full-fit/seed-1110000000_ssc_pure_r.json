@@ -1,0 +1,415 @@
+[
+  {
+    "dataset": "ssc",
+    "backend": "pure_r",
+    "seed": 1110000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/pure_r/seed_1110000000",
+    "cells": [
+      [
+        0.01,
+        0.1
+      ],
+      [
+        0.01,
+        1.0
+      ],
+      [
+        0.1,
+        0.1
+      ],
+      [
+        0.1,
+        1.0
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "pure_r",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/Y.csv",
+      "--delta",
+      "0.01",
+      "0.1",
+      "--lam",
+      "0.1",
+      "1.0",
+      "--knockoff-base-seed",
+      "1110000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/pure_r/seed_1110000000"
+    ]
+  },
+  {
+    "dataset": "ssc",
+    "backend": "python",
+    "seed": 1110000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/python/seed_1110000000",
+    "cells": [
+      [
+        0.01,
+        0.1
+      ],
+      [
+        0.01,
+        1.0
+      ],
+      [
+        0.1,
+        0.1
+      ],
+      [
+        0.1,
+        1.0
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "python",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/Y.csv",
+      "--delta",
+      "0.01",
+      "0.1",
+      "--lam",
+      "0.1",
+      "1.0",
+      "--knockoff-base-seed",
+      "1110000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/python/seed_1110000000"
+    ]
+  },
+  {
+    "dataset": "cd4",
+    "backend": "rust",
+    "seed": 1110000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/cd4/rust/seed_1110000000",
+    "cells": [
+      [
+        0.1,
+        0.1
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "rust",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/Y.csv",
+      "--delta",
+      "0.1",
+      "--lam",
+      "0.1",
+      "--knockoff-base-seed",
+      "1110000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/cd4/rust/seed_1110000000"
+    ]
+  },
+  {
+    "dataset": "cd4",
+    "backend": "pure_r",
+    "seed": 1110000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/cd4/pure_r/seed_1110000000",
+    "cells": [
+      [
+        0.1,
+        0.1
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "pure_r",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/Y.csv",
+      "--delta",
+      "0.1",
+      "--lam",
+      "0.1",
+      "--knockoff-base-seed",
+      "1110000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/cd4/pure_r/seed_1110000000"
+    ]
+  },
+  {
+    "dataset": "cd4",
+    "backend": "python",
+    "seed": 1110000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/cd4/python/seed_1110000000",
+    "cells": [
+      [
+        0.1,
+        0.1
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "python",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/Y.csv",
+      "--delta",
+      "0.1",
+      "--lam",
+      "0.1",
+      "--knockoff-base-seed",
+      "1110000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/cd4/python/seed_1110000000"
+    ]
+  },
+  {
+    "dataset": "ssc",
+    "backend": "rust",
+    "seed": 1210000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/rust/seed_1210000000",
+    "cells": [
+      [
+        0.01,
+        0.1
+      ],
+      [
+        0.01,
+        1.0
+      ],
+      [
+        0.1,
+        0.1
+      ],
+      [
+        0.1,
+        1.0
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "rust",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/Y.csv",
+      "--delta",
+      "0.01",
+      "0.1",
+      "--lam",
+      "0.1",
+      "1.0",
+      "--knockoff-base-seed",
+      "1210000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/rust/seed_1210000000"
+    ]
+  },
+  {
+    "dataset": "ssc",
+    "backend": "pure_r",
+    "seed": 1210000000,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/pure_r/seed_1210000000",
+    "cells": [
+      [
+        0.01,
+        0.1
+      ],
+      [
+        0.01,
+        1.0
+      ],
+      [
+        0.1,
+        0.1
+      ],
+      [
+        0.1,
+        1.0
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "pure_r",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/ssc/Y.csv",
+      "--delta",
+      "0.01",
+      "0.1",
+      "--lam",
+      "0.1",
+      "1.0",
+      "--knockoff-base-seed",
+      "1210000000",
+      "--cell-timeout",
+      "590",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/full-fit/ssc/pure_r/seed_1210000000"
+    ]
+  }
+]

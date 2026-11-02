@@ -1,0 +1,59 @@
+{
+  "config": {
+    "base_seed": 20261101,
+    "folds": 5,
+    "include_interactions": true,
+    "knockoff": {
+      "base_seed": 42,
+      "f_size": null,
+      "family": "Gaussian",
+      "fdr": 0.1,
+      "knockoff_backend": "rust",
+      "knockoff_method": {
+        "Asdp": {
+          "max_block_size": 500
+        }
+      },
+      "knockoff_offset": 0,
+      "max_voting_workers": 1,
+      "niter": 10,
+      "nlambda": 250,
+      "parallel": true,
+      "r_compatible": false,
+      "slide_selection": true,
+      "spec": 0.1,
+      "statistic": "GlmnetLambdasMax"
+    },
+    "max_active_folds": 4,
+    "repeats": 1,
+    "response_type": "Continuous"
+  },
+  "env_overrides": {
+    "SLIDE_KNOCKOFF_MATCH_R_COV": "1",
+    "SLIDE_KNOCKOFF_MATCH_R_LAMBDA": "1",
+    "SLIDE_KNOCKOFF_MAX_ITER": "100000",
+    "SLIDE_KNOCKOFF_TOL": "1e-7"
+  },
+  "estimated_additional_voting_worker_bytes": 138546864,
+  "estimated_fold_bytes": 138546864,
+  "estimated_retained_bytes": 4769728,
+  "requested_max_active_folds": null,
+  "requested_memory_budget_mib": null,
+  "requested_threads": 4,
+  "requested_voting_workers": null,
+  "reserve_percent": 25,
+  "resources": {
+    "cpu_budget": 4,
+    "headroom": 33462480896,
+    "sources": [
+      "available_parallelism: 4 CPUs",
+      "requested threads: 4 CPUs",
+      "SLURM_CPUS_PER_TASK: 4 CPUs",
+      "SLURM_CPUS_ON_NODE: 4 CPUs",
+      "OS available: 1033237164032 bytes remaining",
+      "Slurm: 34344534016 bytes remaining",
+      "/sys/fs/cgroup/system.slice/slurmstepd.scope/job_12086872/step_9/user: 34293837824 bytes remaining",
+      "/sys/fs/cgroup/system.slice/slurmstepd.scope/job_12086872: 33462480896 bytes remaining"
+    ]
+  }
+}

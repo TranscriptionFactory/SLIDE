@@ -1,0 +1,5 @@
+stage,seconds,status,method
+LOVE,2.7774788870010525,success,Python call-boundary wall clock
+selection,23.00768758612685,success,Python call-boundary wall clock
+control,0.29658003500662744,success,Python call-boundary wall clock
+sampleCV,0.27611860795877874,success,Python call-boundary wall clock

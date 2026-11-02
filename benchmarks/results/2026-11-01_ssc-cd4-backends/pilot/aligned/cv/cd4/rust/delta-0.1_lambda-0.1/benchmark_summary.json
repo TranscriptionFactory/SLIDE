@@ -1,0 +1,75 @@
+{
+  "timestamp": "2026-11-02T04:05:14.500850+00:00",
+  "timings": [
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lam": 0.1,
+      "wall_seconds": 10.34551200689748,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 359362560,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 9.9887076059822,
+      "python_glmnet_available": null
+    }
+  ],
+  "comparisons": [],
+  "results": {},
+  "cell_artifacts": [
+    {
+      "backend": "rust",
+      "delta": 0.1,
+      "lambda": 0.1,
+      "run_status": "success",
+      "error": null,
+      "sampleCV": {
+        "metric": null,
+        "status": "unavailable",
+        "provenance": null,
+        "model": null,
+        "predictions": null
+      },
+      "control": {
+        "performance": null,
+        "in_sample_score_is_not_sampleCV": true
+      },
+      "finalCV": {
+        "status": "exported",
+        "repeat_scores": [
+          {
+            "repeat": "1",
+            "method": "SLIDE",
+            "corr": "0.43260816056591433",
+            "raw_corr": "0.43260816056591433",
+            "mse": "0.7426076860444268",
+            "imputed_predictions": "0"
+          },
+          {
+            "repeat": "1",
+            "method": "SLIDE_y",
+            "corr": "0.04929712269530951",
+            "raw_corr": "0.04929712269530951",
+            "mse": "1.0068821931103673",
+            "imputed_predictions": "0"
+          }
+        ],
+        "scores_path": "rust/0.1_0.1_out/finalCV/SLIDECV_boxplot_data.csv",
+        "predictions": "rust/0.1_0.1_out/finalCV/predictions.csv"
+      },
+      "effective_configs": [
+        "rust/0.1_0.1_out/rust_config.yaml",
+        "rust/0.1_0.1_out/finalCV/requested-config.json"
+      ],
+      "stage_timings": [
+        {
+          "stage": "finalCV",
+          "seconds": "9.9887076059822",
+          "status": "success",
+          "method": "Rust CV subprocess wall clock including startup/configuration"
+        }
+      ],
+      "stage_memory_status": "unavailable; only whole-process-group RSS is measured"
+    }
+  ]
+}

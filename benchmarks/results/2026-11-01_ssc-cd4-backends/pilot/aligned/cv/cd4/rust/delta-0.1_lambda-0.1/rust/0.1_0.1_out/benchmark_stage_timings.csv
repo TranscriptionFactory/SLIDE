@@ -1,0 +1,2 @@
+stage,seconds,status,method
+finalCV,9.9887076059822,success,Rust CV subprocess wall clock including startup/configuration

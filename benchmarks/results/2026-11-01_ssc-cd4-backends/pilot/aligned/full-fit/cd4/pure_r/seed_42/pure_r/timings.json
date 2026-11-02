@@ -1,0 +1,14 @@
+[
+  {
+    "backend": "pure_r",
+    "delta": 0.1,
+    "lam": 0.1,
+    "wall_seconds": 143.0026350200642,
+    "status": "success",
+    "error": "",
+    "peak_rss_bytes": 1788248064,
+    "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+    "backend_wall_seconds": 142.6373801480513,
+    "python_glmnet_available": null
+  }
+]

@@ -1,0 +1,5 @@
+backend,delta,lambda,run_status,sampleCV_metric,sampleCV_status,sampleCV_provenance,sampleCV_predictions,finalCV_status,finalCV_scores,finalCV_predictions
+rust,0.01,0.1,success,0.7168345318691994,ok,"R-compatible repeated uniform holdout OLS on fixed raw marginal/product terms; screening, not rigorous SLIDEcv",rust/0.01_0.1_out/0.01_0.1_out/sampleCV_predictions.csv,unavailable,,
+rust,0.01,1.0,success,0.8064351319434628,ok,"R-compatible repeated uniform holdout OLS on fixed raw marginal/product terms; screening, not rigorous SLIDEcv",rust/0.01_1.0_out/0.01_1_out/sampleCV_predictions.csv,unavailable,,
+rust,0.1,0.1,success,0.6993564155717974,ok,"R-compatible repeated uniform holdout OLS on fixed raw marginal/product terms; screening, not rigorous SLIDEcv",rust/0.1_0.1_out/0.1_0.1_out/sampleCV_predictions.csv,unavailable,,
+rust,0.1,1.0,success,0.24428279414836107,ok,"R-compatible repeated uniform holdout OLS on fixed raw marginal/product terms; screening, not rigorous SLIDEcv",rust/0.1_1.0_out/0.1_1_out/sampleCV_predictions.csv,unavailable,,

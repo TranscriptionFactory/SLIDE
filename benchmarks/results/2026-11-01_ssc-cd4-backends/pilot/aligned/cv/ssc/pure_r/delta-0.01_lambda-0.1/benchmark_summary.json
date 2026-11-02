@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-11-02T03:59:08.582217+00:00",
+  "timings": [
+    {
+      "backend": "pure_r",
+      "delta": 0.01,
+      "lam": 0.1,
+      "wall_seconds": 76.35618272307329,
+      "status": "success",
+      "error": "",
+      "peak_rss_bytes": 2472189952,
+      "memory_method": "Linux /proc process-group RSS sum sampled every 50ms; shared pages double-counted, short peaks may be missed; not cgroup peak",
+      "backend_wall_seconds": 76.00950066908263,
+      "python_glmnet_available": null
+    }
+  ],
+  "comparisons": [],
+  "results": {},
+  "cell_artifacts": [
+    {
+      "backend": "pure_r",
+      "delta": 0.01,
+      "lambda": 0.1,
+      "run_status": "success",
+      "error": null,
+      "sampleCV": {
+        "metric": null,
+        "status": "unavailable",
+        "provenance": null,
+        "model": null,
+        "predictions": null
+      },
+      "control": {
+        "performance": null,
+        "in_sample_score_is_not_sampleCV": true
+      },
+      "finalCV": {
+        "status": "exported",
+        "repeat_scores": [
+          {
+            "repeat_id": "1",
+            "method": "SLIDE",
+            "metric": "corr",
+            "score": "0.414003053926966",
+            "raw_auc": "NA",
+            "mse": "0.903018145815212",
+            "imputed_count": "0",
+            "flipped_auc": "NA",
+            "status": "ok",
+            "error": "",
+            "f_size": "24"
+          },
+          {
+            "repeat_id": "1",
+            "method": "SLIDE_y",
+            "metric": "corr",
+            "score": "0.00652315736229463",
+            "raw_auc": "NA",
+            "mse": "1.66069974406111",
+            "imputed_count": "0",
+            "flipped_auc": "NA",
+            "status": "ok",
+            "error": "",
+            "f_size": "24"
+          }
+        ],
+        "scores_path": "pure_r/0.01_0.1_out/finalCV_repeat_scores.csv",
+        "predictions": "pure_r/0.01_0.1_out/finalCV_predictions.csv"
+      },
+      "effective_configs": [
+        "pure_r/0.01_0.1_out/benchmark_provenance.json"
+      ],
+      "stage_timings": [
+        {
+          "stage": "selection",
+          "elapsed_s": "14.057"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "3.355"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "9.691"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "5.294"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "9.021"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "2.691"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "2.089"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "5.70800000000001"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "4.39899999999999"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "5.14"
+        },
+        {
+          "stage": "selection",
+          "elapsed_s": "9.92200000000001"
+        },
+        {
+          "stage": "finalCV",
+          "elapsed_s": "74.938"
+        }
+      ],
+      "stage_memory_status": "unavailable; only whole-process-group RSS is measured"
+    }
+  ]
+}

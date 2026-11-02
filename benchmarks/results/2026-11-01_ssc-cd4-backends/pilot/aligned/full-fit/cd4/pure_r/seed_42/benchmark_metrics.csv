@@ -1,0 +1,2 @@
+backend,delta,lambda,run_status,sampleCV_metric,sampleCV_status,sampleCV_provenance,sampleCV_predictions,finalCV_status,finalCV_scores,finalCV_predictions
+pure_r,0.1,0.1,success,0.5061,ok,pooled_holdout_last_split_ols,pure_r/0.1_0.1_out/sampleCV_predictions.csv,unavailable,,

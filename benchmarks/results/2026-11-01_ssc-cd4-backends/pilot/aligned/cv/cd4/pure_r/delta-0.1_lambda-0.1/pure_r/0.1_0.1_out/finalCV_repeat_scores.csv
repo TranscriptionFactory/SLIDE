@@ -1,0 +1,3 @@
+"repeat_id","method","metric","score","raw_auc","mse","imputed_count","flipped_auc","status","error","f_size"
+1,"SLIDE","corr",0.456082629002651,NA,0.740864804477532,0,NA,"ok","",39
+1,"SLIDE_y","corr",-0.0381074347906402,NA,1.02471053021456,0,NA,"ok","",39

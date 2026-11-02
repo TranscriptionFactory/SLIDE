@@ -1,0 +1,61 @@
+[
+  {
+    "dataset": "cd4",
+    "backend": "rust",
+    "seed": 20261101,
+    "out": "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/cv/cd4/rust/delta-0.1_lambda-0.1",
+    "cells": [
+      [
+        0.1,
+        0.1
+      ]
+    ],
+    "args": [
+      "--configuration",
+      "parity",
+      "--source-revision",
+      "d5c9d675c28ba63a7594fc8c5f1387af7459fc44",
+      "--niter",
+      "500",
+      "--spec",
+      ".1",
+      "--sample-cv-iterations",
+      "500",
+      "--sample-cv-k",
+      "4",
+      "--slide-selection",
+      "--threads",
+      "4",
+      "--rust-bin",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/bin/slide",
+      "--rscript",
+      "/vast/djishnu/Aaron/.tmpfiles/20260902_knockoff-generator-parity/project/.pixi/envs/dev/bin/Rscript",
+      "--measure-process",
+      "--profile",
+      "--backends",
+      "rust",
+      "--x-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/X.csv",
+      "--y-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/inputs/cd4/Y.csv",
+      "--delta",
+      "0.1",
+      "--lam",
+      "0.1",
+      "--knockoff-base-seed",
+      "20261101",
+      "--cell-timeout",
+      "21500",
+      "--out-dir",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/cv/cd4/rust/delta-0.1_lambda-0.1",
+      "--workflow",
+      "cv",
+      "--z-path",
+      "/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-01_ssc-cd4-backends/pilot/aligned/full-fit/cd4/pure_r/seed_42/pure_r/0.1_0.1_out/z_matrix.csv",
+      "--cv-repeats",
+      "15",
+      "--cv-folds",
+      "5"
+    ]
+  }
+]
