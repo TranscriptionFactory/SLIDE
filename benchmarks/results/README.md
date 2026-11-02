@@ -7,7 +7,7 @@ to locate the measured source.
 
 | Run | Contents |
 | --- | --- |
-| [SSc/CD4 fresh-retry campaign](2026-11-02_ssc-cd4-retry-benchmarks/README.md) | Planned 240 full fits and 24 saved-factor CV jobs; preparation failed on a toolchain lock, and all production jobs were cancelled before running |
+| [SSc/CD4 fresh-retry campaign](2026-11-02_ssc-cd4-retry-benchmarks/README.md) | All 24 pilot fits completed; planned 240 full fits and 24 CV jobs remain withheld after a new CD4 cell exceeded the factor-alignment tolerance |
 | [Production-readiness pilot](2026-10-16_production-readiness/README.md) | Repeated SSc/CD4 runtime, memory, [full selected-LF counts and pairwise overlap](2026-10-16_production-readiness/README.md#backend-selection-details), partial truth results and paired solver replay |
 | [Large-feature scaling](2026-10-16_large-feature-scaling/README.md) | Runtime and memory at 10,000–20,000 features, including R timeouts |
 | [LS skin transcriptomics](2026-10-17_torok-all-binary/README.md) | Localized scleroderma/control binary capacity, selected factors and interactions, runtime and memory |

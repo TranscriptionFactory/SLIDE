@@ -44,3 +44,5 @@ job_id,workflow,manifest,dependency,cpus,memory_gib,time_limit_seconds,cell_coun
 12090755,cv,manifests/cv/ssc_delta-0.1_lambda-1.0_pure_r.json,"afterok:12090713,afterany:12090754",4,32,7320,1,81e1fc97fc13e3e2be3e579907f4608a1ece3515,2026-11-02T19:10:01.539385+00:00
 12090756,cv,manifests/cv/ssc_delta-0.1_lambda-1.0_python.json,"afterok:12090713,afterany:12090755",4,32,7320,1,81e1fc97fc13e3e2be3e579907f4608a1ece3515,2026-11-02T19:10:01.591492+00:00
 12090757,cv,manifests/cv/ssc_delta-0.1_lambda-1.0_rust.json,"afterok:12090713,afterany:12090756",4,32,7320,1,81e1fc97fc13e3e2be3e579907f4608a1ece3515,2026-11-02T19:10:01.644391+00:00
+12090792,preparation,manifests/pilot-full-fit.json,,4,32,14400,24,81e1fc97fc13e3e2be3e579907f4608a1ece3515,2026-11-02T19:18:52.776278+00:00
+12090944,pilot-validation,manifests/pilot-full-fit.json,afterany:12090792,4,32,300,24,81e1fc97fc13e3e2be3e579907f4608a1ece3515,2026-11-02T19:48:48.315903+00:00

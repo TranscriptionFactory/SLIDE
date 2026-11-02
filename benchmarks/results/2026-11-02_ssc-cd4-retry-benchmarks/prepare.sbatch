@@ -6,6 +6,7 @@ mkdir -p "$TMPDIR" "$MPLCONFIGDIR"
 cd "$RUN/source"
 sha256sum --check --quiet "$RUN/source-files.sha256"
 sha256sum --check --quiet "$RUN/input-files.sha256"
+if [[ ${2:-} != --validate-only ]]; then
 export CC="$ENV/bin/x86_64-conda-linux-gnu-cc"
 export CXX="$ENV/bin/x86_64-conda-linux-gnu-c++"
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$CC"
@@ -27,6 +28,8 @@ sha256sum "$RUN/bin/slide" > "$RUN/build-artifacts.sha256"
     "$RUN/bin/slide" --version
 } > "$RUN/logs/preparation-hardware.txt"
 bash benchmarks/scripts/run_backend_array.sh --manifest "$RUN/manifests/pilot-full-fit.json"
+fi
+sha256sum --check --quiet "$RUN/build-artifacts.sha256"
 
 # The runner records failed tasks but can still exit zero; inspect every cell.
 python - <<'PY'
@@ -46,10 +49,17 @@ statuses = [json.loads(line) for line in
             (run / 'manifests/pilot-full-fit.status.jsonl').read_text().splitlines()]
 assert len(tasks) == len(statuses) == 6
 assert {row['out'] for row in statuses} == {task['out'] for task in tasks}
+factor_paths = {}
 for row in statuses:
     assert row['status'] == 'success', (row['out'], row['status'])
     assert len(row['timings']) == 4, row['out']
     assert all(cell['status'] == 'success' for cell in row['timings']), row['out']
+    summary = json.loads((Path(row['out']) / 'benchmark_summary.json').read_text())
+    for cell in summary['cell_artifacts']:
+        model = Path(row['out']) / cell['sampleCV']['model']
+        assert model.is_file(), model
+        factor_paths[row['dataset'], row['backend'], cell['delta'], cell['lambda']] = model.parent / 'z_matrix.csv'
+assert len(factor_paths) == 24
 
 hashes = []
 for dataset in ('ssc', 'cd4'):
@@ -59,14 +69,12 @@ for dataset in ('ssc', 'cd4'):
     assert y.index.is_unique and not y.index.hasnans, dataset
     for delta in (0.01, 0.1):
         for lam in (0.1, 1.0):
-            cell = f'{delta}_{lam}_out'
-            root = run / 'pilot/full-fit' / dataset
-            reference_path = root / 'pure_r/seed_42/pure_r' / cell / 'z_matrix.csv'
+            reference_path = factor_paths[dataset, 'pure_r', delta, lam]
             reference = pd.read_csv(reference_path, index_col=0)
             assert reference.index.equals(y.index), reference_path
             assert reference.columns.is_unique and np.isfinite(reference.to_numpy()).all()
             for backend in ('python', 'rust'):
-                path = root / backend / 'seed_42' / backend / cell / 'z_matrix.csv'
+                path = factor_paths[dataset, backend, delta, lam]
                 factors = pd.read_csv(path, index_col=0)
                 assert factors.index.equals(reference.index), path
                 assert factors.columns.equals(reference.columns), path

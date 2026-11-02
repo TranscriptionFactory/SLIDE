@@ -1,16 +1,27 @@
 # SSc/CD4 fresh-retry benchmark campaign
 
-Status: submission stopped at preparation; resubmission requires approval.
-Preparation job `12090713` failed before compilation because rustup could not
-lock its settings file on the shared home filesystem (`No locks available`).
-The scheduler cancelled all 44 dependent production jobs, `12090714`–`12090757`.
-No benchmark cells ran. The preparation script now invokes the installed Rust
-1.99.1 toolchain directly, but this repair has not been tested on a compute node.
+Status: all 24 pilot fits succeeded; production remains withheld because one
+new CD4 setting exceeds the declared factor-alignment tolerance.
+
+- Preparation `12090713` failed before compilation on a rustup shared-home
+  settings lock. The scheduler cancelled production `12090714`–`12090757`.
+- User-approved preparation `12090792` successfully built the frozen Rust source
+  with direct toolchain binaries and completed all 24 fits. Its final check
+  failed on an incorrect assumption about Rust's nested artifact paths.
+- Validation-only job `12090944` used the paths recorded in benchmark summaries;
+  no fits were repeated. It found maximum absolute native/R factor difference
+  2.0193e-7 for CD4 delta=0.1, lambda=1.0, exceeding the declared 1e-8 tolerance.
+  Both Python and Rust have this difference (RMSE 1.55e-8; 19,855 of 96,798
+  entries exceed 1e-8). All sample IDs and factor names/order match. The other
+  seven cells pass, with maximum absolute differences below 4.7e-11.
+
+No production rerun is submitted. The tolerance remains unchanged; proceeding
+requires a decision to investigate the difference or approve a revised gate.
 
 The frozen source is
 `81e1fc97fc13e3e2be3e579907f4608a1ece3515`, which gives native full-fit
 marginal size-cap retries fresh draws and separates marginal/interaction retry
-seed ranges. R is unchanged. This campaign does not yet have results.
+seed ranges. R is unchanged. Only pilot results are available.
 
 ## Approved experiments
 
@@ -54,17 +65,21 @@ that preparation job to succeed. Production jobs additionally form a sequential
 Invalid dependencies cancel waiting jobs. Requeue and automatic resubmission
 are disabled.
 
-All 45 submitted jobs requested four CPUs, 32 GiB, the `htc` partition and `turin` constraint,
+The original 45 submissions requested four CPUs, 32 GiB, the `htc` partition and `turin` constraint,
 with one BLAS/OpenMP thread per worker. Preparation has a four-hour limit and
 a 300-second per-cell pilot timeout. Each full-fit bundle contains 12 cells,
 with a 1,190-second child timeout and a 4-hour-2-minute scheduler limit.
 Each CV job has a 7,100-second child timeout and a 2-hour-2-minute scheduler
 limit. Total maximum reservation is about 534 CPU-hours, below the previous
-560-CPU-hour cap. These are caps, not runtime forecasts; queue time is extra.
+560-CPU-hour cap. Cancelled jobs did not execute. The approved preparation
+replacement had the same four-hour cap; validation-only used a five-minute cap.
+These are caps, not runtime forecasts; queue time is extra.
 
-The three additional CD4 settings have no prior timing measurements. A failed
-pilot blocks production rather than triggering an automatic retry or a larger
-resource request. Saved-factor CV has no new pilot: its unchanged runner has
+The pilot completed each new CD4 setting within its 300-second limit; all CD4
+fits took 21–103 seconds and SSc fits took 10–86 seconds. These are single-seed
+observations, not production runtime guarantees. A failed gate blocks production
+rather than triggering an automatic retry or a larger resource request.
+Saved-factor CV has no new pilot: its unchanged runner has
 existing focused coverage; the new full-fit pilot validates its factor inputs.
 
 ## Execution and provenance
@@ -72,7 +87,10 @@ existing focused coverage; the new full-fit pilot validates its factor inputs.
 The campaign reuses `benchmarks/scripts/benchmark_backends.py` and
 `run_backend_array.sh --manifest`; the manifests extend the previous campaign's
 JSON task format. No new benchmark implementation or per-run Python driver is
-introduced. `prepare.sbatch` performs the build and pilot gate.
+introduced. `prepare.sbatch` performs the build and pilot gate. Its
+`--validate-only` argument checks completed artifacts without rebuilding or
+rerunning fits. The gate resolves factor paths through `benchmark_summary.json`,
+including Rust's nested candidate output directories.
 
 `source/` is a frozen Git snapshot plus the installed Python glmnet/DSDP native
 extensions. `source-files.sha256`, `build-artifacts.sha256` and the input/factor
