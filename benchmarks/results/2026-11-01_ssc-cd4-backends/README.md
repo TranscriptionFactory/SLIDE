@@ -1,7 +1,10 @@
 # SSc/CD4 backend campaign
 
-Status: production submitted after both matched pilots passed. This campaign
-measures current implementations, not
+Status: all 31 production jobs completed: 300 full-fit cells and 15 saved-factor
+CV runs. The [backend report](analysis/2026-11-02_backend-report/README.md) covers
+selection, runtime, memory and held-out performance with figures and CSV tables.
+272/300 sampleCV scores are defined; final CV has 450 finite branch/repeat scores.
+This campaign measures current implementations, not
 the historical October results. The user approved the matrix and resource caps
 below, conditional on the matched pilot.
 
@@ -12,11 +15,11 @@ below, conditional on the matched pilot.
 - `12087132`–`12087147`: 16 jobs covering 300 full-fit cells.
 - `12087148`–`12087162`: 15 saved-factor CV jobs.
 
-The first job started; the rest follow a sequential `afterany` chain. Slurm
+The jobs use a sequential `afterany` chain. Slurm
 requeue is disabled (`Requeue=0`) for every job. These submissions contain no
 automatic resubmissions and reserve at most 560 CPU-hours in total. Preparation
-allocations `12086757` and `12086872` are closed. Production results and their
-statistical analysis are not complete.
+allocations `12086757` and `12086872` are closed. The descriptive report is
+complete; solver/retry diagnosis and any equivalence decision remain outside it.
 
 The source, binary, saved R factor matrices and external environments named in
 `environment.sh` must remain available while the jobs run. Each job checks

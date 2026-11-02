@@ -1,0 +1,4 @@
+cell,arm,status,runs
+d=0.1 l=0.1,pure_r,ok,20
+d=0.1 l=0.1,python,ok,20
+d=0.1 l=0.1,rust,ok,20

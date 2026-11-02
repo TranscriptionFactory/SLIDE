@@ -1,0 +1,22 @@
+cell,arm,status,runs
+d=0.01 l=0.1,pure_r,model_too_large,7
+d=0.01 l=0.1,pure_r,ok,13
+d=0.01 l=0.1,python,model_too_large,3
+d=0.01 l=0.1,python,ok,17
+d=0.01 l=0.1,rust,ok,20
+d=0.01 l=1.0,pure_r,model_too_large,5
+d=0.01 l=1.0,pure_r,ok,15
+d=0.01 l=1.0,python,model_too_large,5
+d=0.01 l=1.0,python,ok,15
+d=0.01 l=1.0,rust,model_too_large,1
+d=0.01 l=1.0,rust,ok,19
+d=0.1 l=0.1,pure_r,model_too_large,1
+d=0.1 l=0.1,pure_r,ok,19
+d=0.1 l=0.1,python,no_marginals,2
+d=0.1 l=0.1,python,ok,18
+d=0.1 l=0.1,rust,no_marginals,1
+d=0.1 l=0.1,rust,ok,19
+d=0.1 l=1.0,pure_r,ok,20
+d=0.1 l=1.0,python,ok,20
+d=0.1 l=1.0,rust,model_too_large,3
+d=0.1 l=1.0,rust,ok,17

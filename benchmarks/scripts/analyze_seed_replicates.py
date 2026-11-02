@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import sys
+import textwrap
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,9 @@ from benchmark_backends import _param_subdir, load_python_result, load_rust_resu
 
 CORE_RATE = 0.8  # a factor is in an arm's core set when selected in >= 80% of its runs
 FLAG_DELTA = 0.5  # flag factors whose selection rates differ by at least this much
+CV_COLUMNS = {"pure_r": ("score", "repeat_id", "sample_id"),
+              "python": ("metric_value", "replicate", "sample_id"),
+              "rust": ("corr", "repeat", "sample_index")}
 
 
 def wilson(k, n, z=1.959963984540054):
@@ -278,7 +282,8 @@ def plot(df, factors, order, heatmap_cells, out):
     for ax in grid.axes.flat:
         ax.tick_params(axis="x", rotation=40)
     runs = ", ".join(f"{arm} n={df[df.arm == arm].run.nunique()}" for arm in order)
-    grid.figure.suptitle(f"Selected counts per replicate ({runs})", y=1.01)
+    grid.figure.suptitle(textwrap.fill(f"Selected counts per replicate ({runs})",
+                                      width=45 if len(cells) == 1 else 140), y=1.15 if len(cells) == 1 else 1.01)
     grid.savefig(out / "counts.png", dpi=150, bbox_inches="tight")
     plt.close(grid.figure)
 
@@ -289,7 +294,8 @@ def plot(df, factors, order, heatmap_cells, out):
     grid.set_axis_labels("", "Wall time per cell (s)")
     for ax in grid.axes.flat:
         ax.tick_params(axis="x", rotation=40)
-    grid.figure.suptitle("Runtime per cell (htc Turin nodes; includes node variance)", y=1.03)
+    grid.figure.suptitle(textwrap.fill("Runtime per cell (htc Turin nodes; includes node variance)",
+                                      width=35 if len(cells) == 1 else 140), y=1.25 if len(cells) == 1 else 1.03)
     grid.savefig(out / "runtime.png", dpi=150, bbox_inches="tight")
     plt.close(grid.figure)
 
@@ -303,7 +309,7 @@ def plot(df, factors, order, heatmap_cells, out):
             ax.set_title(cell)
             ax.set_axis_off()
             continue
-        sns.heatmap(f, ax=ax, vmin=0, vmax=1, cmap="viridis", annot=True, fmt=".1f", annot_kws={"size": 7},
+        sns.heatmap(f, ax=ax, vmin=0, vmax=1, cmap="viridis", annot=True, fmt=".2f", annot_kws={"size": 7},
                     cbar=ax is np.atleast_1d(axes)[-1], cbar_kws={"label": "Selection rate"})
         ax.set_title(cell)
         ax.set_ylabel("Latent factor (rate >= 0.2 in any arm)")
@@ -387,7 +393,7 @@ def plot_overlap(df, order, out):
             fig.text(.5, .01, "Jaccard = intersection / union; two empty sets = 1. All selected factors included; identities are cell-local.\n"
                      "Descriptive, dependent pairs; no uncertainty shown. Gray = no eligible pairs; absent repeat blocks = no completed runs.",
                      ha="center", fontsize=10)
-            fig.tight_layout(rect=(0, .05, 1, .95), h_pad=3)
+            fig.tight_layout(rect=(0, .14 if len(cells) <= 2 else .08, 1, .95), h_pad=3)
             suffix = "repeats" if repeats else "backends"
             fig.savefig(out / f"overlap_{kind}_{suffix}.png", dpi=150, bbox_inches="tight")
             plt.close(fig)
@@ -660,12 +666,138 @@ def plot_truth(summary, out):
         plt.close(fig)
 
 
+def validate_cv_predictions(path, artifact):
+    """Check pooled metrics and once-per-repeat sample coverage against predictions."""
+    backend = artifact["backend"]
+    prediction_path = path.parent / artifact["finalCV"]["predictions"]
+    predictions = pd.read_csv(prediction_path).rename(columns={
+        "repeat_id": "repeat", "replicate": "repeat", "truth": "y_true", "prediction": "y_pred"})
+    metric, repeat_key, identity = CV_COLUMNS[backend]
+    expected_ids = set(predictions[identity])
+    expected_groups = set()
+    for score in artifact["finalCV"]["repeat_scores"]:
+        repeat = int(score[repeat_key]) - (1 if backend == "rust" else 0)
+        expected_groups.add((repeat, score["method"]))
+        group = predictions[(predictions["repeat"] == repeat) & (predictions.method == score["method"])]
+        if group[identity].duplicated().any() or set(group[identity]) != expected_ids:
+            raise ValueError(f"{prediction_path}: incomplete or repeated sample coverage in repeat {repeat}")
+        if group.fold.nunique() != 5 or not np.isfinite(group[["y_true", "y_pred"]]).all().all():
+            raise ValueError(f"{prediction_path}: expected five folds and finite predictions")
+        rho = stats.spearmanr(group.y_true, group.y_pred).statistic
+        mse = np.mean((group.y_true - group.y_pred)**2)
+        if not np.allclose([rho, mse], [float(score[metric]), float(score["mse"])], atol=1e-8, rtol=0):
+            raise ValueError(f"{prediction_path}: pooled metrics differ from repeat score {repeat}")
+    if set(predictions.groupby(["repeat", "method"]).groups) != expected_groups:
+        raise ValueError(f"{prediction_path}: prediction and score groups differ")
+
+
+def load_heldout(df, cv_root):
+    """Read held-out metrics without substituting in-sample control scores."""
+    screening, final, timing = [], [], []
+    for row in df.itertuples():
+        path = Path(row.seed_dir) / "benchmark_summary.json"
+        summary = json.loads(path.read_text())
+        cell = next(a for a in summary["cell_artifacts"]
+                    if (a["backend"], a["delta"], a["lambda"]) == (row.backend, row.delta, row.lam))
+        sample = cell["sampleCV"]
+        screening.append(dict(arm=row.arm, cell=row.cell, seed=row.seed,
+                              status=sample["status"], rho=sample["metric"]))
+        t = next(t for t in summary["timings"]
+                 if (t["backend"], t["delta"], t["lam"]) == (row.backend, row.delta, row.lam))
+        if t["status"] != "success":
+            raise ValueError(f"{path}: selection analysis requires successful timing")
+        timing.append(dict(arm=row.arm, cell=row.cell, workflow="full-fit", seed=row.seed,
+                           seconds=t["wall_seconds"], peak_gib=t["peak_rss_bytes"] / 2**30))
+    arms = dict(zip(df.backend, df.arm))
+    for path in sorted(cv_root.glob("*/*/benchmark_summary.json")):
+        summary = json.loads(path.read_text())
+        for a, t in zip(summary["cell_artifacts"], summary["timings"], strict=True):
+            backend = a["backend"]
+            cell = f"d={a['delta']} l={a['lambda']}"
+            if t["status"] != "success":
+                raise ValueError(f"{path}: final CV did not complete successfully")
+            timing.append(dict(arm=arms[backend], cell=cell, workflow="final-CV", seed=None,
+                               seconds=t["wall_seconds"], peak_gib=t["peak_rss_bytes"] / 2**30))
+            metric, repeat, _ = CV_COLUMNS[backend]
+            for r in a["finalCV"]["repeat_scores"]:
+                final.append(dict(arm=arms[backend], cell=cell, repeat=r[repeat], method=r["method"],
+                                  status=r.get("status", "not_exported"), rho=r[metric], mse=r["mse"],
+                                  imputed=r.get("imputed_count", r.get("imputed_predictions"))))
+    screening, final = pd.DataFrame(screening), pd.DataFrame(final)
+    screening["rho"] = pd.to_numeric(screening.rho, errors="coerce")
+    for key in ("rho", "mse", "imputed"):
+        final[key] = pd.to_numeric(final[key], errors="coerce")
+    if final.duplicated(["arm", "cell", "repeat", "method"]).any():
+        raise ValueError(f"{cv_root}: duplicate final-CV repeat scores")
+    return screening, final, pd.DataFrame(timing)
+
+
+def summarize_heldout(screening, final, timing, order, out):
+    """Keep undefined metrics in denominators; repeated folds are descriptive."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    screening.to_csv(out / "samplecv_runs.csv", index=False)
+    final.to_csv(out / "finalcv_repeats.csv", index=False)
+    timing.to_csv(out / "resources.csv", index=False)
+    screening.groupby(["cell", "arm", "status"]).size().rename("runs").to_csv(out / "samplecv_status.csv")
+    for name, frame, keys in (("samplecv", screening, ["cell", "arm"]),
+                              ("finalcv", final, ["cell", "arm", "method"])):
+        summary = frame.groupby(keys).rho.agg(
+            attempted="size", valid="count", median="median",
+            q1=lambda x: x.quantile(.25), q3=lambda x: x.quantile(.75), minimum="min", maximum="max")
+        summary.to_csv(out / f"{name}_summary.csv")
+    timing.groupby(["workflow", "cell", "arm"])[["seconds", "peak_gib"]].agg(
+        ["count", "median", "min", "max"]).to_csv(out / "resource_summary.csv")
+    final.groupby(["cell", "arm", "method"]).mse.agg(
+        ["count", "median", "min", "max"]).to_csv(out / "finalcv_mse.csv")
+    sns.set_theme(style="whitegrid", font_scale=.9)
+    np.random.seed(0)  # Seaborn strip jitter is reproducible.
+    for name, frame, value, ylabel in (
+            ("samplecv", screening, "rho", "Pooled sampleCV Spearman"),
+            ("finalcv", final, "rho", "Final-CV Spearman"),
+            ("finalcv_mse", final, "mse", "Final-CV MSE (fold-standardized target)")):
+        hue = {} if name == "samplecv" else dict(hue="method", hue_order=["SLIDE", "SLIDE_y"],
+                                                palette={"SLIDE": "#4c72b0", "SLIDE_y": "#dd8452"})
+        grid = sns.catplot(data=frame, x="arm", y=value, col="cell", order=order,
+                           kind="box", height=3.4, aspect=1.05, fliersize=0, **hue)
+        grid.map_dataframe(sns.stripplot, x="arm", y=value, order=order,
+                           dodge=bool(hue), jitter=.13, size=3, alpha=.65, **hue)
+        grid.set_titles("{col_name}")
+        grid.set_axis_labels("", ylabel)
+        for ax in grid.axes.flat:
+            if value == "rho":
+                ax.set_ylim(-1, 1)
+                ax.axhline(0, color="gray", linewidth=.6)
+            else:
+                ax.set_yscale("log")
+            ax.tick_params(axis="x", rotation=30)
+        title = ("20 seeds; undefined scores omitted from dots, retained in status table" if name == "samplecv"
+                 else "15 repeats on the same subjects; SLIDE_y = training-response-permuted control")
+        grid.figure.suptitle(textwrap.fill(title, width=45 if frame.cell.nunique() == 1 else 140),
+                            y=1.2 if frame.cell.nunique() == 1 else 1.04)
+        grid.savefig(out / f"{name}.png", dpi=150, bbox_inches="tight")
+        plt.close(grid.figure)
+    grid = sns.catplot(data=timing[timing.workflow == "final-CV"], x="arm", y="seconds",
+                       col="cell", order=order, kind="bar", errorbar=None, height=3, aspect=1.05)
+    grid.set_titles("{col_name}")
+    grid.set_axis_labels("", "Seconds for all 15 CV repeats")
+    grid.figure.suptitle(textwrap.fill("One final-CV job per backend/cell; no runtime uncertainty estimate",
+                                      width=40 if timing.cell.nunique() == 1 else 140),
+                         y=1.2 if timing.cell.nunique() == 1 else 1.04)
+    grid.savefig(out / "finalcv_runtime.png", dpi=150, bbox_inches="tight")
+    plt.close(grid.figure)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("out", type=Path)
     p.add_argument("--arm", action="append", type=parse_arm, help="NAME=BACKEND:DIR[,DIR...]")
     p.add_argument("--saved-selection-results", type=Path, help="Plot retained timings and successful R-knockoff shards; no statistical tests")
     p.add_argument("--test", action="append", default=[], type=lambda s: tuple(s.split(":")), help="LEFT:RIGHT")
+    p.add_argument("--cv-root", type=Path, help="Saved-factor CV dataset directory; export held-out summaries and plots")
     p.add_argument("--truth-input-root", type=Path, help="Truth mode: inputs/<regime>/seed_<seed>; arm dirs must end <regime>/<backend>")
     p.add_argument("--min-runs", type=int, default=10, help="Fail if an arm has fewer runs in any cell")
     p.add_argument("--expected-cells", type=int, default=4)
@@ -719,6 +851,13 @@ def main():
         factor_ci.to_csv(args.out / "equivalence_factors.csv", index=False)
         aggregate_ci.to_csv(args.out / "equivalence_summary.csv", index=False)
         plot_equivalence(factor_ci, args.out)
+
+    if args.cv_root:
+        for path in sorted(args.cv_root.glob("*/*/benchmark_summary.json")):
+            for artifact in json.loads(path.read_text())["cell_artifacts"]:
+                validate_cv_predictions(path, artifact)
+        logging.info("Final-CV pooled scores and five-fold sample coverage verified")
+        summarize_heldout(*load_heldout(df, args.cv_root), order, args.out)
 
     summary = summarize(df)
     tests, factors = compare(df, args.test, args.permutations, args.bootstrap, rng)

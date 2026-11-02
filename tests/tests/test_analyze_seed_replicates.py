@@ -228,3 +228,55 @@ def test_overlap_renders_both_selection_kinds(tmp_path):
     for path in tmp_path.glob('*.png'):
         with Image.open(path) as image:
             image.verify()
+
+
+@pytest.mark.parametrize("backend,metric,repeat", [
+    ("pure_r", "score", "repeat_id"), ("python", "metric_value", "replicate"),
+    ("rust", "corr", "repeat"),
+])
+def test_heldout_keeps_missing_scores_and_backend_schemas(tmp_path, backend, metric, repeat):
+    import json
+    seed = tmp_path / "seed_1"
+    seed.mkdir()
+    timing = dict(backend=backend, delta=.1, lam=.1, status="success",
+                  wall_seconds=2, peak_rss_bytes=2**30)
+    artifact = dict(backend=backend, delta=.1, **{"lambda": .1},
+                    sampleCV=dict(status="model_too_large", metric=None))
+    (seed / "benchmark_summary.json").write_text(json.dumps(
+        dict(cell_artifacts=[artifact], timings=[timing], results={"score": .99})))
+    cv = tmp_path / "cv" / backend / "cell"
+    cv.mkdir(parents=True)
+    artifact["finalCV"] = dict(repeat_scores=[
+        dict(method="SLIDE", **{metric: ".4", repeat: "1"}, mse="1.2", imputed_predictions="0"),
+        dict(method="SLIDE_y", **{metric: "NA", repeat: "1"}, mse="NA", imputed_predictions="0")])
+    (cv / "benchmark_summary.json").write_text(json.dumps(dict(cell_artifacts=[artifact], timings=[timing])))
+    df = pd.DataFrame([dict(seed_dir=str(seed), backend=backend, arm=backend, delta=.1,
+                            lam=.1, cell="d=0.1 l=0.1", seed=1)])
+    screening, final, resources = analysis.load_heldout(df, tmp_path / "cv")
+    assert screening.rho.isna().all()
+    assert screening.status.item() == "model_too_large"
+    assert final.rho.iloc[0] == .4 and pd.isna(final.rho.iloc[1])
+    assert len(final) == 2 and (resources.peak_gib == 1).all()
+    artifact["finalCV"]["repeat_scores"] *= 2
+    (cv / "benchmark_summary.json").write_text(json.dumps(dict(cell_artifacts=[artifact], timings=[timing])))
+    with pytest.raises(ValueError, match="duplicate"):
+        analysis.load_heldout(df, tmp_path / "cv")
+
+
+def test_cv_prediction_metrics_and_coverage(tmp_path):
+    truth = np.arange(10.)
+    frame = pd.DataFrame(dict(repeat=np.zeros(10, dtype=int), fold=np.arange(10) % 5,
+                              sample_index=np.arange(10), method="SLIDE",
+                              y_true=truth, y_pred=truth + 1))
+    frame.to_csv(tmp_path / "predictions.csv", index=False)
+    artifact = dict(backend="rust", finalCV=dict(predictions="predictions.csv",
+                    repeat_scores=[dict(repeat="1", method="SLIDE", corr="1", mse="1")]))
+    path = tmp_path / "benchmark_summary.json"
+    analysis.validate_cv_predictions(path, artifact)
+    artifact["finalCV"]["repeat_scores"][0]["corr"] = ".5"
+    with pytest.raises(ValueError, match="pooled metrics"):
+        analysis.validate_cv_predictions(path, artifact)
+    frame.loc[1, "sample_index"] = 0
+    frame.to_csv(tmp_path / "predictions.csv", index=False)
+    with pytest.raises(ValueError, match="sample coverage"):
+        analysis.validate_cv_predictions(path, artifact)

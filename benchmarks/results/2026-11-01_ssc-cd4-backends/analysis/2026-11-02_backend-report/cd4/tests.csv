@@ -1,0 +1,8 @@
+cell,left,right,kind,left_median,right_median,mannwhitney_p,within_left,within_right,cross_jaccard_mean,between_lt_within_p,right_core,left_core_recall,left_extra_rate,ratio,ratio_lo,ratio_hi,mannwhitney_bh_q
+d=0.1 l=0.1,python,pure_r,marginal,1.0,1.0,1.0,1.0,1.0,1.0,1.0,Z7,1.0,0.0,,,,1.0
+d=0.1 l=0.1,python,pure_r,interaction,2.0,3.0,0.34078485158912686,,,,,,,,,,,1.0
+d=0.1 l=0.1,python,pure_r,runtime,17.168908631952945,60.69043206801871,1.4508889103849684e-11,,,,,,,,0.28289316860870123,0.2731568949384076,0.29680210460525064,
+d=0.1 l=0.1,rust,pure_r,marginal,1.0,1.0,1.0,1.0,1.0,1.0,1.0,Z7,1.0,0.0,,,,1.0
+d=0.1 l=0.1,rust,pure_r,interaction,3.0,3.0,1.0,,,,,,,,,,,1.0
+d=0.1 l=0.1,rust,pure_r,runtime,33.54198896052549,60.69043206801871,1.4508889103849684e-11,,,,,,,,0.5526734250784927,0.5116720581877557,0.5670420082673291,
+d=0.1 l=0.1,rust,pure_r,knockoff_runtime,2.5250000000000004,59.16,1.4508889103849684e-11,,,,,,,,0.04268086544962814,0.042073628850488355,0.04394861392832996,

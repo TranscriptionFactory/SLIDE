@@ -1,0 +1,19 @@
+cell,kind,left,right,left_runs,right_runs,pairs,both_empty_pairs,mean_jaccard
+d=0.1 l=0.1,marginal,pure_r,pure_r,20,20,190,0,1.0
+d=0.1 l=0.1,marginal,pure_r,python,20,20,400,0,1.0
+d=0.1 l=0.1,marginal,pure_r,rust,20,20,400,0,1.0
+d=0.1 l=0.1,marginal,python,pure_r,20,20,400,0,1.0
+d=0.1 l=0.1,marginal,python,python,20,20,190,0,1.0
+d=0.1 l=0.1,marginal,python,rust,20,20,400,0,1.0
+d=0.1 l=0.1,marginal,rust,pure_r,20,20,400,0,1.0
+d=0.1 l=0.1,marginal,rust,python,20,20,400,0,1.0
+d=0.1 l=0.1,marginal,rust,rust,20,20,190,0,1.0
+d=0.1 l=0.1,interaction,pure_r,pure_r,20,20,190,0,0.7921052631578948
+d=0.1 l=0.1,interaction,pure_r,python,20,20,400,0,0.7329166666666665
+d=0.1 l=0.1,interaction,pure_r,rust,20,20,400,0,0.7675
+d=0.1 l=0.1,interaction,python,pure_r,20,20,400,0,0.7329166666666667
+d=0.1 l=0.1,interaction,python,python,20,20,190,0,0.6736842105263159
+d=0.1 l=0.1,interaction,python,rust,20,20,400,0,0.7129166666666665
+d=0.1 l=0.1,interaction,rust,pure_r,20,20,400,0,0.7674999999999998
+d=0.1 l=0.1,interaction,rust,python,20,20,400,0,0.7129166666666668
+d=0.1 l=0.1,interaction,rust,rust,20,20,190,0,0.75
