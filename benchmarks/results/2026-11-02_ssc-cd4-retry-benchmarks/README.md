@@ -1,5 +1,10 @@
 # SSc/CD4 fresh-retry benchmark campaign
 
+Full fitting is complete: **240/240 cells succeeded**, with 236 defined sampleCV
+scores. The [full-fitting review](analysis/2026-11-02_full-fit-report/README.md)
+contains current selection, runtime and screening findings plus replacement
+figure candidates. It excludes final CV and does not claim the CV jobs finished.
+
 Status: production submitted after all 24 pilot fits and the approved 1e-6
 absolute factor-alignment gate passed. Validation-only job `12091016` completed
 successfully. The 44 production submissions comprise 20 full-fit jobs

@@ -7,7 +7,7 @@ to locate the measured source.
 
 | Run | Contents |
 | --- | --- |
-| [SSc/CD4 fresh-retry campaign](2026-11-02_ssc-cd4-retry-benchmarks/README.md) | Submitted 240 full fits and 24 CV jobs after 24 pilot fits passed the user-approved 1e-6 factor-alignment gate |
+| [SSc/CD4 fresh-retry campaign](2026-11-02_ssc-cd4-retry-benchmarks/README.md) | [Full-fitting review](2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md): 240 successful fits at 1,000 draws; current selection/runtime figures and 236 defined screening scores; final CV excluded |
 | [Production-readiness pilot](2026-10-16_production-readiness/README.md) | Repeated SSc/CD4 runtime, memory, [full selected-LF counts and pairwise overlap](2026-10-16_production-readiness/README.md#backend-selection-details), partial truth results and paired solver replay |
 | [Large-feature scaling](2026-10-16_large-feature-scaling/README.md) | Runtime and memory at 10,000–20,000 features, including R timeouts |
 | [LS skin transcriptomics](2026-10-17_torok-all-binary/README.md) | Localized scleroderma/control binary capacity, selected factors and interactions, runtime and memory |
