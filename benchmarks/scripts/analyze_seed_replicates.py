@@ -324,7 +324,7 @@ def selection_overlap(df, order):
     """All cross-run pairs; within-arm pairs exclude self-comparisons."""
     rows = []
     for cell, group in df.groupby("cell", sort=False):
-        for kind in ("marginal", "interaction"):
+        for kind in ("marginal", "interaction", "combined"):
             if kind not in group:
                 continue
             for left, right in itertools.product(order, repeat=2):
@@ -346,6 +346,9 @@ def plot_overlap(df, order, out):
     import matplotlib.pyplot as plt
     import seaborn as sns
 
+    if {"marginal", "interaction"}.issubset(df.columns):
+        df = df.assign(combined=[marginal | interaction
+                                 for marginal, interaction in zip(df.marginal, df.interaction)])
     summary = selection_overlap(df, order)
     summary.to_csv(out / "overlap.csv", index=False)
     labels = {"rust": "Rust", "python": "Python", "pure_r": "R",
@@ -390,8 +393,9 @@ def plot_overlap(df, order, out):
             for ax in list(axes.flat)[len(cells):]:
                 ax.set_visible(False)
             scope = "Individual repeats, grouped by backend" if repeats else "Mean overlap across repeats; diagonal excludes self-pairs"
-            fig.suptitle(f"{kind.capitalize()} selected-set overlap\n{scope}", fontsize=15)
-            fig.text(.5, .01, "Jaccard = intersection / union; two empty sets = 1. All selected factors included; identities are cell-local.\n"
+            title = "Marginal + interaction terms" if kind == "combined" else kind.capitalize()
+            fig.suptitle(f"{title} selected-set overlap\n{scope}", fontsize=15)
+            fig.text(.5, .01, "Jaccard = intersection / union; two empty sets = 1. All selected terms included; identities are cell-local.\n"
                      "Descriptive, dependent pairs; no uncertainty shown. Gray = no eligible pairs; absent repeat blocks = no completed runs.",
                      ha="center", fontsize=10)
             fig.tight_layout(rect=(0, .14 if len(cells) <= 2 else .08, 1, .95), h_pad=3)
@@ -417,20 +421,69 @@ def load_saved_selections(source):
     return runs, order
 
 
-def saved_selection_rates(source):
-    runs, order = load_saved_selections(source)
+def selection_rates(runs, order, kind="marginal"):
+    """Rates for every term observed in any arm, including zero rates in other arms."""
     rates = []
     for cell, group in runs.groupby("cell", sort=False):
-        factors = sorted(set().union(*group.marginal), key=lambda f: int(f[1:]))
+        factors = sorted(set().union(*group[kind]), key=lambda f: tuple(map(int, re.findall(r"\d+", f))))
         for arm in order:
-            selections = group.loc[group.arm == arm, "marginal"]
+            selections = group.loc[group.arm == arm, kind]
             n = len(selections)
             for factor in factors:
                 count = sum(factor in selected for selected in selections)
                 lo, hi = wilson(count, n) if n else (np.nan, np.nan)
                 rates.append(dict(cell=cell, factor=factor, arm=arm, selected=count if n else np.nan,
                                   completed=n, rate=count/n if n else np.nan, lo=lo, hi=hi))
-    return pd.DataFrame(rates), order
+    return pd.DataFrame(rates, columns=["cell", "factor", "arm", "selected", "completed", "rate", "lo", "hi"])
+
+
+def saved_selection_rates(source):
+    runs, order = load_saved_selections(source)
+    return selection_rates(runs, order), order
+
+
+def plot_all_selection_rates(df, order, out):
+    """Unfiltered marginal and interaction term rates; one row per observed term."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    rates = pd.concat([selection_rates(df, order, kind).assign(kind=kind)
+                       for kind in ("marginal", "interaction") if kind in df], ignore_index=True)
+    rates.to_csv(out / "selection_rates_all.csv", index=False)
+    cells = list(df.cell.unique())
+    n_terms = rates.drop_duplicates(["cell", "kind", "factor"]).groupby("cell").size()
+    height = max(5, .28 * n_terms.max() + 2.2) if len(n_terms) else 5
+    fig, axes = plt.subplots(1, len(cells), figsize=(5.4 * len(cells), height), squeeze=False)
+    labels = {"pure_r": "R", "python": "Python", "rust": "Rust"}
+    for ax, cell in zip(axes.flat, cells):
+        group = rates[rates.cell == cell]
+        if group.empty:
+            ax.text(.5, .5, "No selected terms", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(cell)
+            ax.set_axis_off()
+            continue
+        row_order = pd.MultiIndex.from_frame(group[["kind", "factor"]].drop_duplicates())
+        matrix = group.pivot(index=["kind", "factor"], columns="arm", values="rate").reindex(index=row_order, columns=order)
+        annotations = group.assign(label=group.apply(
+            lambda r: f"{int(r.selected)}/{r.completed}" if r.completed else "N/A", axis=1)
+        ).pivot(index=["kind", "factor"], columns="arm", values="label").reindex(index=row_order, columns=order)
+        ax.set_facecolor("#dedede")
+        sns.heatmap(matrix, ax=ax, vmin=0, vmax=1, cmap="viridis", annot=annotations, fmt="",
+                    annot_kws={"size": 8}, cbar=ax is axes.flat[-1],
+                    cbar_kws={"label": "Selection rate"})
+        ax.set_yticklabels([f"{'M' if kind == 'marginal' else 'I'}: {term.replace('.', ' × ')}"
+                            for kind, term in matrix.index], rotation=0)
+        ax.set_xticklabels([labels.get(arm, arm) for arm in order], rotation=25, ha="right")
+        ax.set(title=cell, xlabel="", ylabel="Selected term")
+    fig.suptitle("All observed selected terms: marginals and significant interactions", fontsize=15)
+    fig.text(.5, .01, "M = marginal; I = interaction. Labels show selected/completed runs; no frequency cutoff.\n"
+             "Term identities are cell-local. Gray = no completed runs; never-selected terms are not shown.",
+             ha="center", fontsize=10)
+    fig.tight_layout(rect=(0, .09, 1, .95))
+    fig.savefig(out / "selection_rates_all.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_saved_selections(source, out):
@@ -871,6 +924,7 @@ def main():
         args.out / "timings.csv", index=False)
     plot_overlap(df, order, args.out)
     plot(df, factors, order, args.heatmap_cell or list(df.cell.unique()), args.out)
+    plot_all_selection_rates(df, order, args.out)
     logging.info("%s", summary.to_string(index=False))
     logging.info("%s", tests.to_string(index=False))
     n_counts = tests.kind.isin(["marginal", "interaction"]).sum()

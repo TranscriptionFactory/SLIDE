@@ -335,46 +335,94 @@ Python also exports network plots and pickled state; Rust retains checkpoints.
 
 ## Benchmarks
 
+The current [SSc/CD4 full-fitting review](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md) covers **240 successful
+fits**: ten seeds per backend, four delta/lambda settings per dataset, and native
+Rust, native Python and checked-in R. Each fit uses **1,000 knockoff-selection
+draws**, four workers and one BLAS thread per worker, plus sampleCV with 500
+holdouts (K=4). Of 240 sampleCV scores, 236 are defined. **Final CV is excluded.**
+
 ### Runtime
 
-Frozen-source measurements: 500 knockoff draws, four workers, one BLAS thread;
-final predictive CV excluded. Wall time includes process startup and I/O.
+Median fresh-process wall seconds over ten runs, including fitting, exports,
+sampleCV and profiling. Rust is fastest in every SSc setting; Python is fastest
+in every CD4 setting. These are workflow comparisons, not equal-work solver timings.
 
-| Dataset (samples × features) | Rust (s) | Python (s) | R (s) |
-| --- | ---: | ---: | ---: |
-| CD4 (2,482 × 1,776) | 5.31 | 22.07 | 93.52 |
-| Synthetic (50 × 20,000) | 90.69 | 137.00 | Timeout at 7,200 |
-| LS skin transcriptomics (44 × 15,496) | 1,305.27 | 4,817.10 | Timeout at 7,200 |
+| Dataset (samples × features) | delta / lambda | Rust (s) | Python (s) | R (s) |
+| --- | --- | ---: | ---: | ---: |
+| SSc (24 × 804) | 0.01 / 0.1 | 29.83 | 89.38 | 88.31 |
+| SSc | 0.01 / 1.0 | 28.50 | 88.32 | 83.56 |
+| SSc | 0.1 / 0.1 | 9.58 | 34.22 | 36.25 |
+| SSc | 0.1 / 1.0 | 13.31 | 32.85 | 32.89 |
+| CD4 (2,482 × 1,776) | 0.01 / 0.1 | 87.57 | 44.69 | 103.81 |
+| CD4 | 0.01 / 1.0 | 88.66 | 45.92 | 102.57 |
+| CD4 | 0.1 / 0.1 | 38.24 | 25.72 | 69.95 |
+| CD4 | 0.1 / 1.0 | 59.30 | 37.47 | 97.55 |
 
-CD4 values are medians of ten runs; other rows are single runs. CD4/synthetic
-use Gaussian parity settings; LS uses native binary settings. These are
-configuration-specific observations, not universal speedups. See
-[measurement conditions, memory and full results](benchmarks/README.md#runtime-and-memory-comparisons).
+[Runtime distributions, memory and measurement limits](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#3-full-fit-runtime-and-memory)
+retain node/system variation and sampled-RSS caveats. The
+[historical synthetic and LS capacity measurements](benchmarks/README.md#historical-capacity-and-runtime-measurements)
+use different settings and timing boundaries; they are not pooled with this campaign.
 
 ### Latent-factor selection and repeat overlap
 
 Matching latent scores does **not** guarantee matching selected factors.
-The separate five-backend SSc campaign compares native Rust/Python, pure R,
-and Rust/Python with R-generated knockoffs.
+CD4 marginal selections match across all backends in every setting. SSc retains
+the Z20/Z74 discrepancy at delta=0.01, lambda=0.1; at 0.1/0.1, marginal Jaccard
+is 0.274 for R–Python and 0.326 for R–Rust, versus R–R 0.521.
 
-![Marginal factor selection frequencies](benchmarks/results/2026-10-19_backend-overlap/factor_rates.png)
+![SSc marginal factor selection frequencies](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/factor_rates.png)
 
-Counts / completed repeats; display includes factors selected in ≥20% of runs
-in any backend. Compare factor identities only within a parameter cell.
+Each value is selected/10. This frequency view retains factors selected in
+**≥20% of runs in any backend**. Factor identities are local to a parameter cell.
 
-![Overall selected-set overlap across backends](benchmarks/results/2026-10-19_backend-overlap/overlap_marginal_backends.png)
+![SSc marginal selected-set overlap across backends](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/overlap_marginal_backends.png)
 
-Mean Jaccard overlap uses **all selected marginal factors**, including rare ones.
-Off-diagonal entries compare all cross-backend repeat pairs; diagonal entries
-compare distinct repeats within a backend. Two empty sets count as 1; gray
-means no eligible pairs. Pairs reuse runs and are not independent observations.
+Mean Jaccard uses **all selected marginal factors**, including rare ones.
+Cross-backend entries average 100 run pairs; within-backend entries average
+45 distinct pairs, excluding self-comparisons. Two empty sets count as 1.
+These pairs reuse runs and are not independent observations or equivalence tests.
 
-[Repeat-by-repeat heatmaps, CSVs and reproduction command](benchmarks/results/2026-10-19_backend-overlap/README.md)
-show variation behind these averages. Native backends and the Rust hybrid have
-ten repeats per cell; the Python hybrid has 10/7/0/0 completed runs, with timeout
-bias in the seven-run cell. Colors show no uncertainty or equivalence test.
-SSc preserves historical positional sample pairing; biological sample identity
-was not verified. See [benchmark details and limits](benchmarks/README.md#latent-factor-comparisons).
+### All selected marginals and interactions
+
+![SSc selection rates for every observed marginal and significant interaction term](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/selection_rates_all.png)
+
+This view has **no frequency cutoff**: it includes every term selected at least
+once, including one-off selections. `M` labels a marginal LF and `I` labels an
+interaction term; a marginal Z7 and an interaction Z7 × Z9 are distinct rows.
+Entries are selected/completed runs, including zeros in other backends.
+Never-selected terms are not shown. The ≥20% marginal figure above is retained.
+See the [CD4 all-term heatmap](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/selection_rates_all.png)
+and [combined-set backend overlap](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#all-selected-terms-without-a-frequency-cutoff).
+
+### Run-to-run variability
+
+![SSc marginal-plus-interaction overlap between individual runs](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/overlap_combined_repeats.png)
+
+Each pixel compares the full marginal-plus-interaction term sets from two
+individual runs, with no frequency cutoff; white boundaries separate backends.
+Within-backend blocks show selection variability across ten seeds. The main
+diagonal compares each run with itself and equals 1; it is not evidence of
+repeat stability. Each term has equal weight, so larger interaction sets can
+dominate combined overlap; separate marginal and interaction views remain in
+the report. See the [per-run selected-count distributions](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/counts.png)
+and [CD4 combined repeat matrix](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/overlap_combined_repeats.png) for complementary views.
+
+### CD4 interaction differences
+
+![CD4 significant-interaction overlap across backends](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/overlap_interaction_backends.png)
+
+Perfect CD4 marginal agreement does not extend to interactions. At delta=0.1,
+lambda=1.0, R and Python select the same three interactions in all ten runs;
+Rust adds Z30–Z25 in all ten, giving R–Rust interaction Jaccard 0.750.
+
+No marginal size-cap retries were logged in these 240 fits, so this campaign
+does not demonstrate an effect from the retry fix. Selection draws and seed
+counts also differ from earlier campaigns. The full-fitting report retains
+screening-score denominators and limits; sampleCV is not nested validation.
+
+The current SSc inputs use the user-confirmed positional sample mapping.
+[Historical five-backend and R-knockoff-hybrid comparisons](benchmarks/README.md#r-knockoff-hybrid-comparisons)
+remain separate from these native-backend results.
 
 ## Development
 

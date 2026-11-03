@@ -237,11 +237,50 @@ def test_overlap_uses_all_factors_excludes_self_and_preserves_missing():
 def test_overlap_renders_both_selection_kinds(tmp_path):
     from PIL import Image
     analysis.plot_overlap(runs([{'Z1'}, set()], [{'Z2'}, set()]), ['a', 'r', 'missing'], tmp_path)
-    assert len(list(tmp_path.glob('overlap_*.png'))) == 4
+    assert len(list(tmp_path.glob('overlap_*.png'))) == 6
     assert (tmp_path / 'overlap.csv').exists()
     for path in tmp_path.glob('*.png'):
         with Image.open(path) as image:
             image.verify()
+
+
+def test_all_selection_rates_retain_rare_terms_and_zero_rates(tmp_path):
+    from PIL import Image
+    df = runs([{'Z1', 'Z99'}] + [{'Z1'}] * 9, [{'Z1'}] * 10)
+    df.at[0, 'interaction'] = {'Z1.Z99'}
+    analysis.plot_all_selection_rates(df, ['a', 'r'], tmp_path)
+    rates = pd.read_csv(tmp_path / 'selection_rates_all.csv').set_index(['kind', 'factor', 'arm'])
+    for kind, term in [('marginal', 'Z99'), ('interaction', 'Z1.Z99')]:
+        assert rates.loc[(kind, term, 'a'), 'selected'] == 1
+        assert rates.loc[(kind, term, 'a'), 'rate'] == .1
+        assert rates.loc[(kind, term, 'r'), 'rate'] == 0
+    assert (rates.completed == 10).all()
+    with Image.open(tmp_path / 'selection_rates_all.png') as image:
+        image.verify()
+
+
+def test_combined_overlap_uses_terms_and_all_run_pairs(tmp_path):
+    df = runs([{'Z1', 'Z99'}] + [{'Z1'}] * 9, [{'Z1'}] * 10)
+    df.at[0, 'interaction'] = {'Z1.Z99'}
+    analysis.plot_overlap(df, ['a', 'r'], tmp_path)
+    assert 'combined' not in df
+    summary = pd.read_csv(tmp_path / 'overlap.csv')
+    combined = summary[summary.kind == 'combined'].set_index(['left', 'right'])
+    assert combined.loc[('a', 'a'), 'pairs'] == 45
+    assert combined.loc[('a', 'r'), 'pairs'] == 100
+    assert combined.loc[('a', 'a'), 'mean_jaccard'] == pytest.approx((36 + 9 / 3) / 45)
+    assert combined.loc[('a', 'r'), 'mean_jaccard'] == pytest.approx((90 + 10 / 3) / 100)
+    empty = runs([set()] * 10, [set()] * 10).assign(combined=[set()] * 20)
+    pairs = analysis.selection_overlap(empty, ['a', 'r'])
+    assert (pairs.both_empty_pairs == pairs.pairs).all()
+    assert (pairs.mean_jaccard == 1).all()
+
+
+def test_marginal_only_overlap_stays_marginal_only(tmp_path):
+    df = runs([{'Z1'}], [{'Z1'}]).drop(columns='interaction')
+    analysis.plot_overlap(df, ['a', 'r'], tmp_path)
+    assert set(pd.read_csv(tmp_path / 'overlap.csv').kind) == {'marginal'}
+    assert len(list(tmp_path.glob('overlap_*.png'))) == 2
 
 
 @pytest.mark.parametrize("backend,metric,repeat", [

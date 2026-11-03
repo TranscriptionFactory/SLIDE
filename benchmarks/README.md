@@ -42,7 +42,24 @@ tolerances. Historical reports retain their original thresholds.
 
 ## Runtime and memory comparisons
 
-Measurements use frozen source `4b32111` with profiling enabled.
+### Current SSc/CD4 full fitting
+
+The [2026-11-02 full-fitting review](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md) covers 240/240 successful
+fits from frozen source `81e1fc9`: ten seeds × four delta/lambda settings × three
+backends for each of SSc and CD4. Settings are 1,000 selection draws, four
+workers, one BLAS thread per worker, homogeneous LOVE and continuous/Spearman
+screening. Each fit includes sampleCV with 500 holdouts (K=4); final CV is excluded.
+
+Rust has the lowest median wall time in each SSc cell (9.58–29.83 seconds),
+while Python is fastest in each CD4 cell (25.72–45.92 seconds). Python and R
+have similar SSc times. These are fresh-process, profiled workflow measurements,
+including exports and sampleCV, not equal-work solver comparisons. Five nodes
+contributed runs. [Per-cell medians, distributions and memory limits](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#3-full-fit-runtime-and-memory)
+retain the measurement details; do not pool these with October timings.
+
+### Historical capacity and runtime measurements
+
+The October measurements below use frozen source `4b32111` with profiling enabled.
 All rows use 500 knockoff draws, four workers, one BLAS
 thread and homogeneous LOVE; final predictive CV is excluded. CD4 and synthetic
 capacity runs use Gaussian parity settings. The localized scleroderma (LS) dataset uses native binary-response
@@ -86,7 +103,37 @@ speedup claims. R timeouts are bounded observations, not completed runtimes.
 
 ## Latent-factor comparisons
 
+### Current native-backend selection
+
+CD4 marginal Jaccard is 1.000 for every backend pairing in all four settings.
+Interactions differ: at delta=0.1, lambda=1.0, Rust selects the shared three
+interactions plus Z30–Z25 in all ten runs, so R–Rust overlap is 0.750 while
+R–Python is 1.000. SSc retains the Z20/Z74 discrepancy at 0.01/0.1; marginal
+overlap at 0.1/0.1 is 0.274 for R–Python and 0.326 for R–Rust versus R–R 0.521.
+
+The [current selection tables and figures](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#1-selected-marginal-factors)
+retain the ≥20% marginal-frequency display. The additional
+[unfiltered term heatmaps](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#all-selected-terms-without-a-frequency-cutoff)
+include every marginal or significant interaction term selected at least once,
+including one-off terms and zero rates in the other backends. Marginals and
+interaction terms are distinct entries, not a union of their LF partners.
+The [run-to-run SSc matrix](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/overlap_combined_repeats.png) compares full
+marginal-plus-interaction sets for individual runs, grouped by backend;
+[per-run counts](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/counts.png) show size variability.
+The repeat matrix includes self-comparisons of 1 on its main diagonal. Backend
+means instead use 45 distinct within-backend pairs or 100 cross-backend pairs.
+Those pairs share runs and are descriptive, not independent samples.
+Combined overlap gives each selected term equal weight; larger interaction
+sets can dominate it. Separate marginal and interaction panels remain available.
+
+There are 236 defined sampleCV scores out of 240 fits. The report keeps missing
+scores in denominators and does not treat these full-data-selected screening
+scores as nested validation. No logged marginal size-cap retry occurred, so this
+campaign cannot demonstrate that the retry correction improved agreement.
+
 ### Rust, Python and R pilot
+
+This subsection records the historical October pilot, not the current campaign.
 
 For CD4, all three implementations estimated K=39 with maximum absolute latent-score
 matrix difference below 9.1×10⁻¹². Rust and Python selected marginal Z7 in all ten
@@ -111,7 +158,7 @@ for selection-frequency and overall overlap heatmaps.
 
 ### R-knockoff hybrid comparisons
 
-The separate `c4726e3` campaign compares native Rust, native Python, pure R,
+The historical October `c4726e3` campaign compares native Rust, native Python, pure R,
 Rust with R-generated knockoffs and Python with R knockoffs through `rpy2`.
 Do not pool it with the pilot. At delta=0.01, lambda=0.1, native Rust selected
 Z20 in 10/10 runs versus 0/10 for Python and R, 1/10 for the Rust hybrid and
@@ -145,8 +192,9 @@ for details.
 
 ### Interpretation limits
 
-SSc input/response identifiers differ; the benchmark preserves historical positional
-pairing, without verifying biological sample identity. For [LS skin transcriptomics](results/2026-10-17_torok-all-binary/README.md),
+The October SSc comparisons preserved positional pairing without verifying
+biological sample identity. The current campaign uses the user-confirmed
+positional mapping, without reordering subjects. For [LS skin transcriptomics](results/2026-10-17_torok-all-binary/README.md),
 Rust and Python both report marginal Z294, but Rust reports six interactions and Python five.
 Matching K or a factor label alone does not establish aligned factor scores.
 
@@ -167,9 +215,10 @@ including directed reverse pairs, matching the checked-in R naming behavior.
 Oversize interaction passes use fresh deterministic seed namespaces when
 increasing `spec`; equal seed numbers still do not pair cross-language draws.
 Historical native full-fit runs excluded previously used marginals. Keep their
-results separate from this procedure. Native marginal size-limit retries still
-reuse draws, whereas R consumes fresh draws; record retry incidence when
-interpreting comparisons.
+results separate from this procedure. Since `81e1fc9`, native marginal size-limit
+retries also use fresh deterministic draw ranges, matching R's retry policy but
+not its random draws. First-pass seeds stay unchanged. Record retry incidence
+before attributing a change in agreement to this correction.
 
 `SLIDE_KNOCKOFF_TOL`, `SLIDE_KNOCKOFF_MAX_ITER`, `SLIDE_KNOCKOFF_MATCH_R_LAMBDA`
 and `SLIDE_KNOCKOFF_MATCH_R_COV` override knockoff fitting for R-parity

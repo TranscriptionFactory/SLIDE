@@ -116,6 +116,58 @@ normalizes interactions before comparing sets. This difference is not naming.
 [SSc](ssc/counts.png)/[CD4](cd4/counts.png) count plots provide the remaining
 selection views. Counts alone do not identify which factors differ.
 
+### All selected terms without a frequency cutoff
+
+These figures include every marginal LF and significant interaction term
+selected at least once, including selections seen in only 1/10 runs. Marginals
+and interactions are distinct terms: Z7 and Z7 × Z9 occupy separate rows.
+This is not a union of the LF identities participating in interactions.
+The ≥20% marginal-frequency figure remains unchanged above.
+
+![SSc all observed marginal and interaction selection rates](ssc/selection_rates_all.png)
+
+![CD4 all observed marginal and interaction selection rates](cd4/selection_rates_all.png)
+
+`M` identifies marginal terms and `I` interaction terms. Each annotation is
+selected/completed runs; zero rates in other backends are retained. Terms never
+selected by any backend are not shown. The accompanying
+`selection_rates_all.csv` retains counts, denominators, rates and pointwise
+Wilson intervals for all displayed terms; the intervals describe seed
+variability, not biological population uncertainty.
+
+Combined Jaccard treats each marginal or interaction term as one set element.
+There is no frequency filter. Larger interaction sets can dominate the combined
+measure, so the separate marginal and interaction comparisons remain necessary.
+
+| Dataset | delta / lambda | R–R combined | R–Python combined | R–Rust combined |
+|---|---|---:|---:|---:|
+| SSc | 0.01 / 0.1 | 0.767 | 0.840 | 0.652 |
+| SSc | 0.01 / 1.0 | 0.886 | 0.797 | 0.820 |
+| SSc | 0.1 / 0.1 | 0.498 | 0.267 | 0.313 |
+| SSc | 0.1 / 1.0 | 0.678 | 0.658 | 0.678 |
+| CD4 | 0.01 / 0.1 | 0.953 | 0.851 | 0.851 |
+| CD4 | 0.01 / 1.0 | 0.972 | 0.965 | 0.856 |
+| CD4 | 0.1 / 0.1 | 0.833 | 0.840 | 0.890 |
+| CD4 | 0.1 / 1.0 | 1.000 | 1.000 | 0.857 |
+
+[SSc](ssc/overlap_combined_backends.png) and
+[CD4](cd4/overlap_combined_backends.png) backend heatmaps show these means.
+At CD4 0.1/1.0, R and Rust share six of seven combined terms (Jaccard 0.857);
+adding the shared marginals does not remove the interaction disagreement.
+
+### Run-to-run selection variability
+
+![SSc combined-set overlap for individual runs](ssc/overlap_combined_repeats.png)
+
+![CD4 combined-set overlap for individual runs](cd4/overlap_combined_repeats.png)
+
+Each pixel compares two runs' complete marginal-plus-interaction sets.
+White boundaries separate backends; within-backend blocks show variation
+across ten seeds. Runs follow their retained input order. The main diagonal
+is self-comparison and equals 1; it is not evidence of repeat stability.
+Backend means exclude those self-pairs. Cross-backend pixels do not represent
+matched random draws, and pairwise values are dependent.
+
 ## 3. Full-fit runtime and memory
 
 Median fresh-process wall seconds over ten runs; `summary.csv` includes Q1/Q3.
@@ -193,20 +245,22 @@ for R–Rust. The other three CD4 settings have no matching previous production
 cells. Do not compare full-fit timings with the October figures as though they
 included the same selection draws, sampleCV work or R reference.
 
-## README replacement proposal
+## Figure guide
 
-1. Replace the root README's October SSc factor-rate and marginal-overlap
-   images with this report's SSc figures, with ten-seed/1,000-draw captions.
-2. Add the CD4 interaction-overlap figure and the compact marginal-set table;
-   avoid suggesting CD4 is identical at every selection level.
-3. Replace the current-workflow CD4 timing row with the 1,000-draw timing table
-   or figures. Keep synthetic/LS capacity measurements in a clearly historical
-   section with their original settings and links.
-4. Update the benchmark guide's current-results summary and stale retry-policy
-   wording. Retain historical hybrid-arm results as links, not as current-run
-   panels. Leave final-CV claims and figures for a separate completed-CV review.
+The root README and benchmark guide use these current full-fitting results.
+Historical capacity and hybrid results remain separate, with their original
+settings and links. Final-CV claims and figures require a separate CV review.
 
-Root README and benchmark-guide figures are not replaced in this review.
+| Figure | What it includes |
+|---|---|
+| `factor_rates.png` | Marginal LFs selected in ≥20% of runs in any backend |
+| `selection_rates_all.png` | Every observed marginal and significant interaction term; no frequency cutoff |
+| `overlap_combined_backends.png` | Mean full-term-set Jaccard; within-backend diagonal excludes self-pairs |
+| `overlap_combined_repeats.png` | Individual-run full-term-set Jaccard; within-backend blocks show repeat variability |
+| `counts.png` | Marginal/interaction counts for each run, not identities |
+
+Separate marginal and interaction overlap figures remain available alongside
+the combined views. All factor/term identities are local to a parameter cell.
 
 ## Files and reproduction
 
@@ -223,8 +277,10 @@ The `score` column in `timings.csv` is the legacy in-sample control score,
 `cell_artifacts[].sampleCV.metric/status`; memory uses the matching
 `timings[].peak_rss_bytes`. Retry counts use backend logs, not sampleCV status.
 
-The figures and primary CSVs were generated with the maintained analyzer from
-analysis parent revision `3ce8937`; the fitting source stays frozen at `81e1fc9`.
+The figures and primary CSVs use the maintained analyzer in this report's Git
+commit; the fitting source stays frozen at `81e1fc9`. The original core tables
+were generated at analysis parent revision `3ce8937`; the added all-term and
+combined views reuse the same completed fits without changing those results.
 Reproduce from the repository root without invoking any backend:
 
 ```bash
@@ -243,6 +299,7 @@ for DATA in ssc cd4; do
 No `--cv-root` is supplied. The current analyzer couples its sampleCV/resource
 plot exporter to final CV; this review uses exported full-fit metrics directly
 rather than importing incomplete CV results or labeling plots as 20-seed runs.
-Selection-frequency, SSc marginal-overlap, CD4 interaction-overlap and runtime
-figures were visually inspected for labels, clipping and agreement with tables.
+Selection-frequency, combined-set repeat/overview, marginal/interaction-overlap
+and runtime figures were visually inspected for labels, clipping and agreement
+with tables.
 No backends were rerun and no new jobs were submitted for this review.
