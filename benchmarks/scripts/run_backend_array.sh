@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-export TMPDIR="${PWD}/.tmpfiles/tmp"
+export TMPDIR="${TMPDIR:-${PWD}/.scratch/$(date +%F)_benchmark-tmp}"
 export TMP="$TMPDIR" TEMP="$TMPDIR"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 mkdir -p "$TMPDIR"
