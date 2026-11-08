@@ -1,6 +1,6 @@
 #' calculate Z matrix
 #'
-#' Calculate Z matrix by importing the PredZ function from EssReg package
+#' Calculate Z matrix with the package's \code{predZ} function
 #'
 #' @param x_path a string that points to the x matrix. 
 #' @param x_std a matrix of input data. 

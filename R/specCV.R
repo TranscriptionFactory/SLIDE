@@ -77,7 +77,7 @@ specCV <- function(k = 5, y, x, z, out_path, rep, parallel = T, y_order = NULL, 
     valid_z <- z[valid_ind, ] ## validation z's
     
     ## standardize sets
-    stands <- EssReg::standCV(train_y = train_y,
+    stands <- standCV(train_y = train_y,
                               train_x = train_x,
                               valid_y = valid_y,
                               valid_x = valid_x)

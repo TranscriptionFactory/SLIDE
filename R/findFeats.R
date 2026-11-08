@@ -23,7 +23,7 @@ findFeats <- function(x, y, z, er_res, thresh = 0.01, p_thresh = 0.1) {
   ## extract the feature names
   feat_names <- colnames(x)
   ## "parse" the ER results to get cluster memberships
-  clusters <- EssReg::readER(x = x, er_res = er_res)
+  clusters <- readER(x = x, er_res = er_res)
   ## extract the A matrix
   a <- er_res$A
 

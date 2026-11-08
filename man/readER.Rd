@@ -7,7 +7,7 @@
 readER(x, er_res)
 }
 \arguments{
-\item{er_res}{a list output by the function \link[EssReg]{plainER} or \link[EssReg]{priorER}}
+\item{er_res}{a latent-factor result containing the loading matrix \code{A}}
 
 \item{y}{a vector of responses}
 }

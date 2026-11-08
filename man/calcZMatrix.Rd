@@ -21,5 +21,5 @@ calcZMatrix(x_std, all_latent_factors, x_path = NULL, lf_path = NULL, out_path)
 The z matrix calculated by the PredZ function
 }
 \description{
-Calculate Z matrix by importing the PredZ function from EssReg package
+Calculate Z matrix with the package's \code{predZ} function
 }

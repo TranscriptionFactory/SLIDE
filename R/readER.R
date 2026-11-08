@@ -3,7 +3,7 @@
 #' Function to read all, pure, and mixed variables from ER results.
 #'
 #' @importFrom magrittr '%>%'
-#' @param er_res a list output by the function \link[EssReg]{plainER} or \link[EssReg]{priorER}
+#' @param er_res a latent-factor result containing the loading matrix \code{A}
 #' @param y a vector of responses
 #' @return a list including the clusters, pure variables, mixed variables, the significant
 #' @export

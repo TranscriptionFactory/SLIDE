@@ -51,8 +51,8 @@ predError <- function(x, y, spec = 0.3, niter = 1000, fdr = 0.1, f_size = 100, n
     rep_cv = 100,
     alpha_level = 0.05
   )
-  res_z_train <- EssReg::predZ(x = train_x_std, er_res = res_essreg$model)
-  res_z_valid <- EssReg::predZ(x = valid_x_std, er_res = res_essreg$model)
+  res_z_train <- predZ(x = train_x_std, er_res = res_essreg$model)
+  res_z_valid <- predZ(x = valid_x_std, er_res = res_essreg$model)
   colnames(res_z_train) <- colnames(res_z_valid) <- paste0("Z", 1:ncol(res_z_valid))
 
   # run SLIDE

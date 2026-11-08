@@ -11,7 +11,9 @@ RoxygenNote: 7.3.1
 Depends: 
     R (>= 4.2.0)
 Imports:
+    caret,
     cluster,
+    corpcor,
     doParallel,
     dplyr,
     foreach,
@@ -27,11 +29,15 @@ Imports:
     matrixcalc,
     methods,
     pheatmap,
+    pROC,
+    reshape2,
+    ROCR,
     stringr,
     pls,
     plyr,
     stats,
     tidyr,
+    tictoc,
     utils,
     yaml,
     Matrix,
@@ -40,5 +46,6 @@ Imports:
     ggpubr
 Suggests: 
     knitr,
+    phateR,
     rmarkdown
 VignetteBuilder: knitr

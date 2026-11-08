@@ -102,7 +102,7 @@ benchCV <- function(rep, k = 5, y, x, z, y_order = NULL, std = TRUE, eval_type, 
     valid_z     <- z[valid_ind, ] ## validation z's
 
     ## standardize the training and validation sets
-    stands <- EssReg::standCV(
+    stands <- standCV(
       train_y = train_y,
       train_x = train_x_raw,
       valid_y = valid_y,
