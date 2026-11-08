@@ -2361,6 +2361,7 @@ version = "1.0.0"
 dependencies = [
  "ndarray",
  "rand",
+ "rayon",
  "serde",
  "slide-types",
  "thiserror 2.0.18",

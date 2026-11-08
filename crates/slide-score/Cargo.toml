@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 rand.workspace = true
+rayon.workspace = true
 ndarray.workspace = true
 serde.workspace = true
 thiserror.workspace = true

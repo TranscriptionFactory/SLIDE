@@ -1,4 +1,5 @@
 use rand::{rngs::StdRng, seq::index::sample, SeedableRng};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slide_types::{Matrix, Scalar, Vector};
 
@@ -18,6 +19,7 @@ pub struct ControlPerformance {
 /// In-sample OLS controls following SLIDE R's calcControlPerformance, not CV scores.
 /// Native seeded draws are reproducible but do not reproduce R's RNG stream.
 /// Near-singular fits can differ from R's QR solver: the shared fitter uses SVD.
+/// Fits use the current Rayon pool; callers should limit BLAS to one thread per worker.
 pub fn control_performance(
     z: &Matrix,
     y: &Vector,
@@ -76,21 +78,39 @@ pub fn control_performance(
     }
     let real = score_features(&real_features, y, response_type)?;
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut full_random = Vec::with_capacity(n_random);
-    let mut partial_random = Vec::new();
+    // Draw indices serially so worker scheduling cannot change the seeded RNG stream.
+    let mut full_draws = Vec::with_capacity(n_random);
     for _ in 0..n_random {
         let marginals = sample(&mut rng, z.ncols(), marginal_lfs.len()).into_vec();
         let pairs = random_pairs(&mut rng, &marginals, z.ncols(), interaction_pairs.len());
-        let features = build_selected_feature_matrix(z, &marginals, &pairs)?;
-        full_random.push(score_features(&features, y, response_type)?);
+        full_draws.push((marginals, pairs));
     }
+    let mut partial_draws = Vec::new();
     if !interaction_pairs.is_empty() {
         for _ in 0..n_random {
             let pairs = random_pairs(&mut rng, marginal_lfs, z.ncols(), interaction_pairs.len());
-            let features = build_selected_feature_matrix(z, marginal_lfs, &pairs)?;
-            partial_random.push(score_features(&features, y, response_type)?);
+            partial_draws.push(pairs);
         }
     }
+    // Indexed collection preserves score order and reports the first error in draw order.
+    let full_random = full_draws
+        .par_iter()
+        .map(|(marginals, pairs)| {
+            let features = build_selected_feature_matrix(z, marginals, pairs)?;
+            score_features(&features, y, response_type)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let partial_random = partial_draws
+        .par_iter()
+        .map(|pairs| {
+            let features = build_selected_feature_matrix(z, marginal_lfs, pairs)?;
+            score_features(&features, y, response_type)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(ControlPerformance {
         real,
         full_random,
@@ -192,6 +212,79 @@ mod tests {
             ])),
             Vector::from_ndarray(arr1(&[1., 2., 1., 4., 3., 6.])),
         )
+    }
+
+    #[test]
+    fn parallel_controls_match_serial_draw_order() -> Result<(), Box<dyn std::error::Error>> {
+        let (z, continuous_y) = fixture();
+        let binary_y = Vector::from_ndarray(arr1(&[0., 1., 0., 1., 0., 1.]));
+        for (response_type, y) in [
+            (ResponseType::Continuous, &continuous_y),
+            (ResponseType::Binary, &binary_y),
+        ] {
+            for pairs in [vec![], vec![(0, 1)], vec![(0, 0), (0, 1)]] {
+                for seed in [0, 42] {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    let real = score_features(
+                        &build_selected_feature_matrix(&z, &[0], &pairs)?,
+                        y,
+                        response_type,
+                    )?;
+                    let mut full_random = Vec::new();
+                    let mut partial_random = Vec::new();
+                    // Serial reference interleaves each draw and fit, as the original algorithm does.
+                    for _ in 0..16 {
+                        let marginals = sample(&mut rng, z.ncols(), 1).into_vec();
+                        let drawn_pairs =
+                            random_pairs(&mut rng, &marginals, z.ncols(), pairs.len());
+                        let features = build_selected_feature_matrix(&z, &marginals, &drawn_pairs)?;
+                        full_random.push(score_features(&features, y, response_type)?);
+                    }
+                    if !pairs.is_empty() {
+                        for _ in 0..16 {
+                            let drawn_pairs = random_pairs(&mut rng, &[0], z.ncols(), pairs.len());
+                            let features = build_selected_feature_matrix(&z, &[0], &drawn_pairs)?;
+                            partial_random.push(score_features(&features, y, response_type)?);
+                        }
+                    }
+                    for workers in [1, 4] {
+                        let pool = rayon::ThreadPoolBuilder::new()
+                            .num_threads(workers)
+                            .build()?;
+                        let actual = pool.install(|| {
+                            control_performance(&z, y, &[0], &pairs, response_type, 16, seed)
+                        })?;
+                        assert_eq!(actual.real, real);
+                        assert_eq!(actual.full_random, full_random);
+                        assert_eq!(actual.partial_random, partial_random);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parallel_control_fit_errors_propagate() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut z, y) = fixture();
+        z.as_ndarray_mut().column_mut(1).fill(f64::MAX);
+        let seed = (0..100)
+            .find(|&seed| {
+                let mut rng = StdRng::seed_from_u64(seed);
+                let marginals = sample(&mut rng, 2, 1).into_vec();
+                random_pairs(&mut rng, &marginals, 2, 1) == vec![(1, 1)]
+            })
+            .ok_or("no seed selecting an overflowing random interaction")?;
+        for workers in [1, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .build()?;
+            let result = pool.install(|| {
+                control_performance(&z, &y, &[0], &[(0, 0)], ResponseType::Continuous, 1, seed)
+            });
+            assert!(matches!(result, Err(ScoreError::NonFiniteControlScore)));
+        }
+        Ok(())
     }
 
     #[test]
