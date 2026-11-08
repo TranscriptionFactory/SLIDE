@@ -26,7 +26,7 @@ mkdir -p "$TMPDIR" "$MPLCONFIGDIR"
 cd "$RUN/source"
 export CC="$ENV/bin/x86_64-conda-linux-gnu-cc" CXX="$ENV/bin/x86_64-conda-linux-gnu-c++"
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$CC" LIBCLANG_PATH="$ENV/lib" CARGO_BUILD_JOBS=2
-export PKG_CONFIG_PATH="/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/build/pkgconfig:$ENV/lib/pkgconfig"
+export PKG_CONFIG_PATH="/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/build/pkgconfig"
 export CARGO_TARGET_DIR="$REPO/target"
 toolchain="$HOME/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin"
 export RUSTC="$toolchain/rustc" RUSTDOC="$toolchain/rustdoc" PATH="$toolchain:$PATH"
@@ -41,3 +41,8 @@ bash benchmarks/scripts/run_backend_array.sh --manifest "$RUN/manifests/rust-cd4
 Status: prepared; no completion claim.
 
 Submitted Slurm job `12153565;htc`: 4 CPUs, 32 GiB, 90-minute limit.
+
+Job `12153565` failed during build before any fits: Conda Cairo pkg-config
+required unavailable expat metadata. The original campaign pkg-config path
+passes the dependency check. Replacement job `12153620;htc` uses that path, with
+unchanged fit settings and runtime libraries.
