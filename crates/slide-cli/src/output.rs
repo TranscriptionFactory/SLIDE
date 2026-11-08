@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use anyhow::{ensure, Result};
-use slide_core::{OptimizeSlideConfig, OptimizeSlideResult};
+use slide_core::{OptimizeSlideConfig, OptimizeSlideResult, CONTROL_RANDOM_DRAWS};
 use slide_data_io::{write_params_json, LoadedMatrix, OutputWriteOptions};
-use slide_score::{auc_score, control_performance, pearson_correlation, ranks, ResponseType};
+use slide_score::{auc_score, pearson_correlation, ranks};
 use slide_types::{Matrix, Vector};
 
 #[derive(Clone, Debug)]
@@ -212,6 +212,9 @@ pub(crate) fn export_results(
         path.display()
     );
     for result in results.evaluations.iter().flatten() {
+        ensure!(result.marginal.sig_lfs.is_empty() || result.control_report.is_some(),
+            "control report missing for delta={}, lambda={}; run control reporting before export",
+            result.delta, result.lambda);
         let out = path.join(format!("{}_{}_out", result.delta, result.lambda));
         ensure!(!out.exists(), "result directory already exists at {}; choose a new out_path to avoid mixing stale artifacts", out.display());
     }
@@ -351,19 +354,7 @@ pub(crate) fn export_results(
         let mut full_random = "NA".to_string();
         let mut partial_random = "NA".to_string();
         if !marginals.is_empty() {
-            let control = control_performance(
-                &result.z,
-                y,
-                marginals,
-                interactions,
-                if binary {
-                    ResponseType::Binary
-                } else {
-                    ResponseType::Continuous
-                },
-                1000,
-                config.knockoff.base_seed,
-            );
+            let control = result.control_report.as_ref().unwrap();
             if let Ok(control) = control {
                 control_score = control.real.to_string();
                 full_random = (control.full_random.iter().sum::<f64>()
@@ -392,7 +383,7 @@ pub(crate) fn export_results(
                     } else {
                         "ControlPerformancePlot.pdf"
                     }),
-                    &control,
+                    control,
                 )?;
             } else if let Err(error) = control {
                 log::warn!(
@@ -406,7 +397,7 @@ pub(crate) fn export_results(
         std::fs::write(out.join("scores.txt"), format!("Score contract: R in-sample OLS control performance (not held-out CV)\nTrue Scores: {}\nPartial Random: {}\nFull Random: {}\nNumber of latent factors: {}\nNumber of marginals: {}\nNumber of interactions: {}\nsampleCV Performance: {}\nsampleCV Provenance: {}\nsampleCV Status: {}\n", if control_score.is_empty() { "NA" } else { &control_score }, partial_random, full_random, result.z.ncols(), marginals.len(), interactions.len(), if sample_score.is_empty() { "NA" } else { &sample_score }, SAMPLE_CV_PROVENANCE, sample_status))?;
         write_params_json(
             out.join("run_params.txt"),
-            &serde_json::json!({"delta":result.delta,"lambda":result.lambda,"config":config,"control_random_draws":1000,"control_score_contract":"R in-sample OLS; not held-out CV"}),
+            &serde_json::json!({"delta":result.delta,"lambda":result.lambda,"config":config,"control_random_draws":CONTROL_RANDOM_DRAWS,"control_score_contract":"R in-sample OLS; not held-out CV"}),
             &OutputWriteOptions::default(),
         )?;
         summary.write_record([
@@ -533,7 +524,7 @@ mod tests {
             "interactions":{"sig_interacts":[],"interaction_terms":matrix,"voting":[]}
         }))?;
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.tmpfiles/2026-10-17_native-output-fixture");
+            .join("../../.scratch/2026-11-08_control-reporting/native-output-fixture");
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
@@ -552,6 +543,13 @@ mod tests {
                     ..Default::default()
                 },
             )?);
+            if selected {
+                run.control_report = Some(slide_score::control_performance(
+                    &run.z, &y, &run.marginal.sig_lfs, &run.interactions.sig_interacts,
+                    slide_score::ResponseType::Binary, CONTROL_RANDOM_DRAWS,
+                    OptimizeSlideConfig::default().knockoff.base_seed,
+                ).map_err(|error| error.to_string()));
+            }
             let results = OptimizeSlideResult {
                 best: Some(run.clone()),
                 selection_status: slide_core::SelectionStatus::SingleCandidate,
@@ -559,6 +557,13 @@ mod tests {
                 final_cv: None,
             };
             let path = root.join(format!("export-{unique}-{selected}"));
+            if selected {
+                let mut missing_report = results.clone();
+                missing_report.evaluations[0].as_mut().unwrap().control_report = None;
+                assert!(export_results(&path, &loaded, &y, &missing_report,
+                    &OptimizeSlideConfig::default()).is_err());
+                assert!(!path.exists());
+            }
             export_results(
                 &path,
                 &loaded,

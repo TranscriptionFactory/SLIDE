@@ -2238,6 +2238,7 @@ dependencies = [
  "slide-glmnet",
  "slide-knockoff",
  "slide-love",
+ "slide-score",
  "slide-types",
  "tempfile",
  "thiserror 2.0.18",

@@ -884,6 +884,12 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
     }
     eprintln!("Checkpoint written to: {}", checkpoint.display());
     if let Some(out_path) = &cfg.out_path {
+        let reporting_start = std::time::Instant::now();
+        let result = slide_core::report_control_performance_with_checkpoint(checkpoint)
+            .with_context(|| format!("control reporting failed for checkpoint {}", checkpoint.display()))?;
+        log::info!("[SLIDE timing] Reporting (including checkpoint I/O): {:.2}s",
+            reporting_start.elapsed().as_secs_f64());
+        let export_start = std::time::Instant::now();
         crate::output::export_results(out_path, &loaded, &y, &result, &opt_config).with_context(
             || {
                 format!(
@@ -893,6 +899,7 @@ pub fn run_pipeline(config: &std::path::Path, checkpoint: &std::path::Path) -> R
                 )
             },
         )?;
+        log::info!("[SLIDE timing] Export: {:.2}s", export_start.elapsed().as_secs_f64());
     }
 
     Ok(())

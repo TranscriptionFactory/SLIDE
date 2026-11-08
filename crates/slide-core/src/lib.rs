@@ -16,7 +16,7 @@ use slide_love::{
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use thiserror::Error;
@@ -25,6 +25,8 @@ const LOGISTIC_PROBABILITY_EPSILON: Scalar = 1.0e-8;
 const LOGISTIC_WEIGHT_EPSILON: Scalar = 1.0e-8;
 const LOGISTIC_CONVERGENCE_TOLERANCE: Scalar = 1.0e-8;
 const LOGISTIC_MAX_ITERATIONS: usize = 50;
+
+pub const CONTROL_RANDOM_DRAWS: usize = 1000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MarginalLfSelectionConfig {
@@ -173,6 +175,9 @@ pub struct SlideRunResult {
     /// None identifies checkpoints written before sampleCV screening.
     #[serde(default)]
     pub sample_cv: Option<slide_cv::SampleCvResult>,
+    /// Saved reporting outcome; None means reporting has not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_report: Option<Result<slide_score::ControlPerformance, String>>,
 }
 
 /// Written as a sidecar file during evaluation so the TUI can show
@@ -343,6 +348,8 @@ pub enum SlideCoreError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),
+    #[error(transparent)]
+    DataIo(#[from] slide_data_io::DataIoError),
 }
 
 impl PartialEq for SlideCoreError {
@@ -945,9 +952,52 @@ pub fn load_optimize_slide_checkpoint(
     path: impl AsRef<Path>,
 ) -> Result<OptimizeSlideCheckpoint, SlideCoreError> {
     let file = File::open(path)?;
-    let checkpoint: OptimizeSlideCheckpoint = serde_json::from_reader(file)?;
+    let checkpoint: OptimizeSlideCheckpoint = serde_json::from_reader(BufReader::new(file))?;
     reject_legacy_evaluations(&checkpoint.evaluations)?;
     Ok(checkpoint)
+}
+
+/// Compute missing control reports from the checkpoint's verified response file.
+/// Each completed report is saved so re-export does not repeat random controls.
+pub fn report_control_performance_with_checkpoint(
+    path: impl AsRef<Path>,
+) -> Result<OptimizeSlideResult, SlideCoreError> {
+    let path = path.as_ref();
+    let mut checkpoint = load_optimize_slide_checkpoint(path)?;
+    let y_ref = checkpoint.y_ref.as_ref().ok_or(SlideCoreError::CheckpointInputMismatch)?;
+    if hash_file(&y_ref.path)? != y_ref.sha256 {
+        return Err(SlideCoreError::CheckpointInputMismatch);
+    }
+    let y = slide_data_io::read_response_vector(
+        &y_ref.path, &slide_data_io::ResponseReadOptions::default(),
+    )?;
+    let mut levels = y.as_ndarray().to_vec();
+    levels.sort_by(f64::total_cmp);
+    levels.dedup();
+    let binary = levels.len() == 2;
+    // Match exported R-style controls: the sorted higher response level is positive.
+    let y = if binary {
+        Vector::from_ndarray(y.as_ndarray().mapv(|value| if value == levels[1] { 1.0 } else { 0.0 }))
+    } else {
+        y
+    };
+    for index in 0..checkpoint.evaluations.len() {
+        let Some(result) = checkpoint.evaluations[index].as_mut() else { continue };
+        if result.marginal.sig_lfs.is_empty() || result.control_report.is_some() {
+            continue;
+        }
+        let start = Instant::now();
+        let report = slide_score::control_performance(
+            &result.z, &y, &result.marginal.sig_lfs, &result.interactions.sig_interacts,
+            if binary { slide_score::ResponseType::Binary } else { slide_score::ResponseType::Continuous },
+            CONTROL_RANDOM_DRAWS, checkpoint.config.knockoff.base_seed,
+        ).map_err(|error| error.to_string());
+        log::info!("[SLIDE timing] Control reporting: {:.2}s (delta={}, lambda={}, draws={})",
+            start.elapsed().as_secs_f64(), result.delta, result.lambda, CONTROL_RANDOM_DRAWS);
+        result.control_report = Some(report);
+        save_optimize_slide_checkpoint(path, &checkpoint)?;
+    }
+    finalize_checkpoint(checkpoint)
 }
 
 fn validate_checkpoint_inputs(
@@ -1212,6 +1262,7 @@ fn run_slide_evaluation(
         interactions,
         score,
         sample_cv,
+        control_report: None,
     })
 }
 
@@ -1530,6 +1581,7 @@ mod tests {
                 metric: Some(score), status: slide_cv::SampleCvStatus::Ok,
                 predictions: Vec::new(), last_model: None,
             }),
+            control_report: None,
         }
     }
 
@@ -2198,6 +2250,56 @@ mod tests {
     }
 
     #[test]
+    fn control_reporting_persists_success_failure_and_reuses_saved_reports() {
+        let z = Matrix::from_ndarray(arr2(&[[1.0, 4.0], [2.0, 1.0], [3.0, 3.0], [4.0, 2.0]]));
+        for (responses, selected, succeeds) in [
+            ("y\n0\n0\n1\n1\n", true, true),
+            ("y\n2\n2\n3\n3\n", true, true),
+            ("y\n1\n1\n1\n1\n", true, false),
+            ("y\n0\n0\n1\n1\n", false, false),
+        ] {
+            let dir = tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+            let y_path = dir.path().join("y.csv");
+            std::fs::write(&y_path, responses).unwrap_or_else(|error| panic!("write response: {error}"));
+            let mut run = dummy_slide_run(z.clone(), 0.5);
+            if selected { run.marginal.sig_lfs = vec![0]; }
+            let checkpoint = OptimizeSlideCheckpoint {
+                x_ref: None,
+                y_ref: Some(DataReference {
+                    sha256: super::hash_file(&y_path).unwrap_or_else(|error| panic!("hash response: {error}")),
+                    path: y_path.clone(), nrows: 4, ncols: 1,
+                }),
+                delta_grid: vec![run.delta], lambda_grid: vec![run.lambda],
+                config: OptimizeSlideConfig::default(), evaluations: vec![Some(run)], final_cv: None,
+            };
+            let path = dir.path().join("checkpoint.json");
+            save_optimize_slide_checkpoint(&path, &checkpoint)
+                .unwrap_or_else(|error| panic!("save: {error}"));
+            let reported = super::report_control_performance_with_checkpoint(&path)
+                .unwrap_or_else(|error| panic!("report: {error}"));
+            let run = reported.evaluations[0].as_ref().unwrap_or_else(|| panic!("missing candidate"));
+            assert_eq!(run.control_report.is_some(), selected);
+            if selected {
+                let report = run.control_report.as_ref().unwrap_or_else(|| panic!("missing report"));
+                assert_eq!(report.is_ok(), succeeds, "{report:?}");
+                if let Ok(control) = report {
+                    assert_eq!(control.full_random.len(), super::CONTROL_RANDOM_DRAWS);
+                    assert_eq!(control.real, 1.0);
+                }
+            }
+            let mut original = std::fs::read(&path).unwrap_or_else(|error| panic!("read: {error}"));
+            original.push(b'\n');
+            std::fs::write(&path, &original).unwrap_or_else(|error| panic!("write: {error}"));
+            super::report_control_performance_with_checkpoint(&path)
+                .unwrap_or_else(|error| panic!("reuse: {error}"));
+            assert_eq!(std::fs::read(&path).unwrap_or_else(|error| panic!("read: {error}")), original);
+            std::fs::write(&y_path, "1\n0\n1\n0\n").unwrap_or_else(|error| panic!("change response: {error}"));
+            assert!(matches!(super::report_control_performance_with_checkpoint(&path),
+                Err(SlideCoreError::CheckpointInputMismatch)));
+        }
+    }
+
+    #[test]
     fn optimize_slide_checkpoint_defaults_missing_final_cv_to_none() {
         let checkpoint = OptimizeSlideCheckpoint {
             x_ref: None,
@@ -2482,6 +2584,7 @@ mod tests {
                 },
                 score: Some(0.0),
                 sample_cv: None,
+                control_report: None,
             })],
             final_cv: None,
         };

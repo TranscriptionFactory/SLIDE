@@ -658,6 +658,7 @@ impl App {
             },
             score: None,
             sample_cv: None,
+            control_report: None,
         };
         if self.ensure_x().is_ok() && self.ensure_y().is_ok() {
             if let Some(data) = self.data.as_ref() {

@@ -101,6 +101,14 @@ checkpoint path for a new run. Recorded grid evaluations are reused; a full grid
 does not mean final CV or configured export succeeded. The owned dashboard
 shows worker success/failure and its log path while it remains open.
 
+When `out_path` is configured, `slide run` performs control reporting before
+export. It saves each candidate's 1,000-draw control report in the checkpoint;
+later exports to a new output directory reuse it. Older checkpoints without
+reports compute them once. Unavailable-score errors are saved too, rather than
+retried on every export; candidates without marginals need no control report.
+Logs separate control computation, reporting including checkpoint I/O, and
+export timings. Export writes the saved reports without repeating the controls.
+
 `slide view` never launches computation. Progress sidecars can be stale and do
 not prove that an external process is alive. Loaded results and visited grid
 slots do not establish worker success. Missing or invalid progress reports do
