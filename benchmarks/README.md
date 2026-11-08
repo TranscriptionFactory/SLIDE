@@ -42,20 +42,25 @@ tolerances. Historical reports retain their original thresholds.
 
 ## Runtime and memory comparisons
 
-### Current SSc/CD4 full fitting
+### Current CD4 full fitting
 
-The [2026-11-02 full-fitting review](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md) covers 240/240 successful
-fits from frozen source `81e1fc9`: ten seeds × four delta/lambda settings × three
-backends for each of SSc and CD4. Settings are 1,000 selection draws, four
+The current overview uses the 120/120 successful CD4 fits in the
+[2026-11-02 full-fitting review](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md)
+from frozen source `81e1fc9`: ten seeds × four delta/lambda settings × three
+backends. Settings are 1,000 selection draws, four
 workers, one BLAS thread per worker, homogeneous LOVE and continuous/Spearman
 screening. Each fit includes sampleCV with 500 holdouts (K=4); final CV is excluded.
 
-Rust has the lowest median wall time in each SSc cell (9.58–29.83 seconds),
-while Python is fastest in each CD4 cell (25.72–45.92 seconds). Python and R
-have similar SSc times. These are fresh-process, profiled workflow measurements,
-including exports and sampleCV, not equal-work solver comparisons. Five nodes
-contributed runs. [Per-cell medians, distributions and memory limits](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#3-full-fit-runtime-and-memory)
+Python is fastest in each CD4 cell (25.72–45.92 seconds). These are fresh-process,
+profiled workflow measurements, including exports and sampleCV, not equal-work
+solver comparisons. Node/system variation remains.
+[Per-cell medians, distributions and memory limits](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#3-full-fit-runtime-and-memory)
 retain the measurement details; do not pool these with October timings.
+
+SSc is retained in the saved campaign for diagnostics, not as a headline
+benchmark target: it has 24 observations and 88–172 estimated factors, versus
+2,482 observations and 36–39 factors for CD4. The saved campaign report preserves
+both datasets; the current presentation uses CD4 only.
 
 ### Historical capacity and runtime measurements
 
@@ -108,30 +113,29 @@ speedup claims. R timeouts are bounded observations, not completed runtimes.
 CD4 marginal Jaccard is 1.000 for every backend pairing in all four settings.
 Interactions differ: at delta=0.1, lambda=1.0, Rust selects the shared three
 interactions plus Z30–Z25 in all ten runs, so R–Rust overlap is 0.750 while
-R–Python is 1.000. SSc retains the Z20/Z74 discrepancy at 0.01/0.1; marginal
-overlap at 0.1/0.1 is 0.274 for R–Python and 0.326 for R–Rust versus R–R 0.521.
+R–Python is 1.000.
 
-The [current selection tables and figures](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#1-selected-marginal-factors)
-retain the ≥20% marginal-frequency display. The additional
-[unfiltered term heatmaps](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#all-selected-terms-without-a-frequency-cutoff)
-include every marginal or significant interaction term selected at least once,
+The [CD4 selected-factor table](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#cd4-selected-sets)
+lists the marginal sets. The
+[unfiltered CD4 term heatmap](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/selection_rates_all.png)
+includes every marginal or significant interaction term selected at least once,
 including one-off terms and zero rates in the other backends. Marginals and
 interaction terms are distinct entries, not a union of their LF partners.
-The [run-to-run SSc matrix](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/overlap_combined_repeats.png) compares full
+The [run-to-run CD4 matrix](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/overlap_combined_repeats.png) compares full
 marginal-plus-interaction sets for individual runs, grouped by backend;
-[per-run counts](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/ssc/counts.png) show size variability.
+[per-run counts](results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/counts.png) show size variability.
 The repeat matrix includes self-comparisons of 1 on its main diagonal. Backend
 means instead use 45 distinct within-backend pairs or 100 cross-backend pairs.
 Those pairs share runs and are descriptive, not independent samples.
 Combined overlap gives each selected term equal weight; larger interaction
 sets can dominate it. Separate marginal and interaction panels remain available.
 
-There are 236 defined sampleCV scores out of 240 fits. The report keeps missing
-scores in denominators and does not treat these full-data-selected screening
-scores as nested validation. No logged marginal size-cap retry occurred, so this
+All 120 CD4 sampleCV scores are defined. The report does not treat these
+full-data-selected screening scores as nested validation. No logged marginal
+size-cap retry occurred, so this
 campaign cannot demonstrate that the retry correction improved agreement.
 
-### Rust, Python and R pilot
+### Historical Rust, Python and R pilot
 
 This subsection records the historical October pilot, not the current campaign.
 

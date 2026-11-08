@@ -5,9 +5,13 @@ revisions. See the [benchmark guide](../README.md) for tools and summary tables,
 and the [revision mapping](../README.md#source-revisions-after-history-cleanup)
 to locate the measured source.
 
+The current benchmark presentation uses the **120 CD4 fits** from the
+fresh-retry campaign. SSc results remain available as historical diagnostics,
+not headline benchmark targets; saved reports and raw results are unchanged.
+
 | Run | Contents |
 | --- | --- |
-| [SSc/CD4 fresh-retry campaign](2026-11-02_ssc-cd4-retry-benchmarks/README.md) | [Full-fitting review](2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md): 240 successful fits at 1,000 draws; current selection/runtime figures and 236 defined screening scores; final CV excluded |
+| [SSc/CD4 fresh-retry campaign](2026-11-02_ssc-cd4-retry-benchmarks/README.md) | [Full-fitting review](2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md): 120 CD4 fits at 1,000 draws with all screening scores defined; also preserves 120 SSc diagnostic fits; final CV excluded |
 | [Production-readiness pilot](2026-10-16_production-readiness/README.md) | Repeated SSc/CD4 runtime, memory, [full selected-LF counts and pairwise overlap](2026-10-16_production-readiness/README.md#backend-selection-details), partial truth results and paired solver replay |
 | [Large-feature scaling](2026-10-16_large-feature-scaling/README.md) | Runtime and memory at 10,000–20,000 features, including R timeouts |
 | [LS skin transcriptomics](2026-10-17_torok-all-binary/README.md) | Localized scleroderma/control binary capacity, selected factors and interactions, runtime and memory |
