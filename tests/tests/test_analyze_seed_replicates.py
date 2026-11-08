@@ -238,6 +238,7 @@ def test_overlap_renders_both_selection_kinds(tmp_path):
     from PIL import Image
     analysis.plot_overlap(runs([{'Z1'}, set()], [{'Z2'}, set()]), ['a', 'r', 'missing'], tmp_path)
     assert len(list(tmp_path.glob('overlap_*.png'))) == 6
+    assert len(list(tmp_path.glob('overlap_*.svg'))) == 6
     assert (tmp_path / 'overlap.csv').exists()
     for path in tmp_path.glob('*.png'):
         with Image.open(path) as image:
@@ -256,7 +257,9 @@ def test_all_selection_rates_retain_rare_terms_and_zero_rates(tmp_path):
         assert rates.loc[(kind, term, 'r'), 'rate'] == 0
     assert (rates.completed == 10).all()
     with Image.open(tmp_path / 'selection_rates_all.png') as image:
+        assert image.info['dpi'][0] == pytest.approx(300, abs=0.1)
         image.verify()
+    assert (tmp_path / 'selection_rates_all.svg').exists()
 
 
 def test_combined_overlap_uses_terms_and_all_run_pairs(tmp_path):

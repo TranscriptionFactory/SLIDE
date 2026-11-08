@@ -266,6 +266,11 @@ def equivalence_intervals(df, tests, n_boot, rng):
     return pd.DataFrame(factors), pd.DataFrame(summaries)
 
 
+def save_figure(figure, path):
+    figure.savefig(path, dpi=300, bbox_inches="tight")
+    figure.savefig(path.with_suffix(".svg"), bbox_inches="tight")
+
+
 def plot(df, factors, order, heatmap_cells, out):
     import matplotlib
     matplotlib.use("Agg")
@@ -285,7 +290,7 @@ def plot(df, factors, order, heatmap_cells, out):
     runs = ", ".join(f"{arm} n={df[df.arm == arm].run.nunique()}" for arm in order)
     grid.figure.suptitle(textwrap.fill(f"Selected counts per replicate ({runs})",
                                       width=45 if len(cells) == 1 else 140), y=1.15 if len(cells) == 1 else 1.01)
-    grid.savefig(out / "counts.png", dpi=150, bbox_inches="tight")
+    save_figure(grid, out / "counts.png")
     plt.close(grid.figure)
 
     grid = sns.catplot(data=df, x="arm", y="wall_seconds", col="cell", order=order, col_order=cells,
@@ -297,7 +302,7 @@ def plot(df, factors, order, heatmap_cells, out):
         ax.tick_params(axis="x", rotation=40)
     grid.figure.suptitle(textwrap.fill("Runtime per cell (htc Turin nodes; includes node variance)",
                                       width=35 if len(cells) == 1 else 140), y=1.25 if len(cells) == 1 else 1.03)
-    grid.savefig(out / "runtime.png", dpi=150, bbox_inches="tight")
+    save_figure(grid, out / "runtime.png")
     plt.close(grid.figure)
 
     fig, axes = plt.subplots(1, len(heatmap_cells), figsize=(3.6 * len(heatmap_cells), 6.5))
@@ -316,7 +321,7 @@ def plot(df, factors, order, heatmap_cells, out):
         ax.set_ylabel("Latent factor (rate >= 0.2 in any arm)")
         ax.tick_params(axis="x", rotation=40)
     fig.tight_layout()
-    fig.savefig(out / "factor_rates.png", dpi=150, bbox_inches="tight")
+    save_figure(fig, out / "factor_rates.png")
     plt.close(fig)
 
 
@@ -400,7 +405,7 @@ def plot_overlap(df, order, out):
                      ha="center", fontsize=10)
             fig.tight_layout(rect=(0, .14 if len(cells) <= 2 else .08, 1, .95), h_pad=3)
             suffix = "repeats" if repeats else "backends"
-            fig.savefig(out / f"overlap_{kind}_{suffix}.png", dpi=150, bbox_inches="tight")
+            save_figure(fig, out / f"overlap_{kind}_{suffix}.png")
             plt.close(fig)
 
 
@@ -482,7 +487,7 @@ def plot_all_selection_rates(df, order, out):
              "Term identities are cell-local. Gray = no completed runs; never-selected terms are not shown.",
              ha="center", fontsize=10)
     fig.tight_layout(rect=(0, .09, 1, .95))
-    fig.savefig(out / "selection_rates_all.png", dpi=150, bbox_inches="tight")
+    save_figure(fig, out / "selection_rates_all.png")
     plt.close(fig)
 
 
