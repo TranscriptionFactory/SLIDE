@@ -336,7 +336,7 @@ Python also exports network plots and pickled state; Rust retains checkpoints.
 ## Benchmarks
 
 The current benchmark overview presents the **120 successful CD4 fits** from the
-[full-fitting review](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md): ten seeds per backend, four delta/lambda settings, and native
+[CD4 full-fitting comparison](benchmarks/results/2026-11-08_cd4-rust-rerun/README.md): ten seeds per backend, four delta/lambda settings, and native
 Rust, native Python and checked-in R. Each fit uses **1,000 knockoff-selection
 draws**, four workers and one BLAS thread per worker, plus sampleCV with 500
 holdouts (K=4). All 120 CD4 sampleCV scores are defined. **Final CV is excluded.**
@@ -351,12 +351,12 @@ workflow comparisons, not equal-work solver timings.
 
 | Dataset (samples × features) | delta / lambda | Rust (s) | Python (s) | R (s) |
 | --- | --- | ---: | ---: | ---: |
-| CD4 (2,482 × 1,776) | 0.01 / 0.1 | 87.57 | 44.69 | 103.81 |
-| CD4 | 0.01 / 1.0 | 88.66 | 45.92 | 102.57 |
-| CD4 | 0.1 / 0.1 | 38.24 | 25.72 | 69.95 |
-| CD4 | 0.1 / 1.0 | 59.30 | 37.47 | 97.55 |
+| CD4 (2,482 × 1,776) | 0.01 / 0.1 | 70.85 | 44.69 | 103.81 |
+| CD4 | 0.01 / 1.0 | 71.54 | 45.92 | 102.57 |
+| CD4 | 0.1 / 0.1 | 32.62 | 25.72 | 69.95 |
+| CD4 | 0.1 / 1.0 | 51.07 | 37.47 | 97.55 |
 
-[Runtime distributions, memory and measurement limits](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md#3-full-fit-runtime-and-memory)
+[Runtime distributions, memory and measurement limits](benchmarks/results/2026-11-08_cd4-rust-rerun/README.md#runtime-and-memory)
 retain node/system variation and sampled-RSS caveats. The
 [historical synthetic and LS capacity measurements](benchmarks/README.md#historical-capacity-and-runtime-measurements)
 use different settings and timing boundaries; they are not pooled with this campaign.
@@ -383,18 +383,18 @@ These pairs reuse runs and are not independent observations or equivalence tests
 
 ### All selected marginals and interactions
 
-![CD4 selection rates for every observed marginal and significant interaction term](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/selection_rates_all.png)
+![CD4 selection rates for every observed marginal and significant interaction term](benchmarks/results/2026-11-08_cd4-rust-rerun/analysis/cd4/selection_rates_all.png)
 
 This view has **no frequency cutoff**: it includes every term selected at least
 once, including one-off selections. `M` labels a marginal LF and `I` labels an
 interaction term; a marginal Z7 and an interaction Z7 × Z9 are distinct rows.
 Entries are selected/completed runs, including zeros in other backends.
 Never-selected terms are not shown. See the
-[CD4 combined-set backend overlap](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/overlap_combined_backends.png).
+[CD4 combined-set backend overlap](benchmarks/results/2026-11-08_cd4-rust-rerun/analysis/cd4/overlap_combined_backends.png).
 
 ### Run-to-run variability
 
-![CD4 marginal-plus-interaction overlap between individual runs](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/overlap_combined_repeats.png)
+![CD4 marginal-plus-interaction overlap between individual runs](benchmarks/results/2026-11-08_cd4-rust-rerun/analysis/cd4/overlap_combined_repeats.png)
 
 Each pixel compares the full marginal-plus-interaction term sets from two
 individual runs, with no frequency cutoff; white boundaries separate backends.
@@ -402,12 +402,12 @@ Within-backend blocks show selection variability across ten seeds. The main
 diagonal compares each run with itself and equals 1; it is not evidence of
 repeat stability. Each term has equal weight, so larger interaction sets can
 dominate combined overlap; separate marginal and interaction views remain in
-the report. See the [CD4 per-run selected-count distributions](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/counts.png)
+the report. See the [CD4 per-run selected-count distributions](benchmarks/results/2026-11-08_cd4-rust-rerun/analysis/cd4/counts.png)
 for a complementary view.
 
 ### CD4 interaction differences
 
-![CD4 significant-interaction overlap across backends](benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/cd4/overlap_interaction_backends.png)
+![CD4 significant-interaction overlap across backends](benchmarks/results/2026-11-08_cd4-rust-rerun/analysis/cd4/overlap_interaction_backends.png)
 
 Perfect CD4 marginal agreement does not extend to interactions. At delta=0.1,
 lambda=1.0, R and Python select the same three interactions in all ten runs;
