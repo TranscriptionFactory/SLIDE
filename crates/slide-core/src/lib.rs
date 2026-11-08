@@ -16,7 +16,7 @@ use slide_love::{
 use slide_types::{LinearAlgebraError, Matrix, Scalar, Vector};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io;
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use thiserror::Error;
@@ -827,7 +827,8 @@ pub fn optimize_slide_with_checkpoint_progress(
         ncols: 1,
     };
 
-    let mut checkpoint = if path.exists() {
+    let checkpoint_exists = path.exists();
+    let mut checkpoint = if checkpoint_exists {
         let loaded = load_optimize_slide_checkpoint(path)?;
         if let Some(ref loaded_x) = loaded.x_ref {
             if loaded_x.sha256 != x_ref.sha256 {
@@ -858,6 +859,9 @@ pub fn optimize_slide_with_checkpoint_progress(
         }
     };
 
+    let needs_initial_save = !checkpoint_exists
+        || checkpoint.x_ref.is_none()
+        || checkpoint.y_ref.is_none();
     // Ensure refs are populated (in case loaded checkpoint had None)
     if checkpoint.x_ref.is_none() {
         checkpoint.x_ref = Some(x_ref);
@@ -874,7 +878,9 @@ pub fn optimize_slide_with_checkpoint_progress(
 
     // Save checkpoint before eval loop so the TUI can load data references
     // (X, Y paths) and show the tab layout even with 0 completed runs.
-    save_optimize_slide_checkpoint(path, &checkpoint)?;
+    if needs_initial_save {
+        save_optimize_slide_checkpoint(path, &checkpoint)?;
+    }
 
     let live_path = progress_path.map(|_| path.with_extension("live.json"));
 
@@ -926,8 +932,11 @@ pub fn save_optimize_slide_checkpoint(
         std::fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("json.tmp");
-    let file = File::create(&tmp)?;
-    serde_json::to_writer_pretty(file, checkpoint)?;
+    let mut writer = BufWriter::new(File::create(&tmp)?);
+    serde_json::to_writer_pretty(&mut writer, checkpoint)?;
+    // Flush errors must prevent replacing the last complete checkpoint.
+    writer.flush()?;
+    drop(writer);
     std::fs::rename(&tmp, path)?;
     Ok(())
 }
@@ -2574,5 +2583,29 @@ mod tests {
         // Verify checkpoint contains data references, not raw matrices
         assert!(saved.x_ref.is_some());
         assert!(saved.y_ref.is_some());
+
+        // Trailing whitespace detects a redundant serialization on completed resume.
+        let mut original = std::fs::read(&checkpoint_path)
+            .unwrap_or_else(|error| panic!("read checkpoint: {error}"));
+        original.push(b'\n');
+        std::fs::write(&checkpoint_path, &original)
+            .unwrap_or_else(|error| panic!("write checkpoint: {error}"));
+        let resumed = optimize_slide_with_checkpoint(
+            &checkpoint_path,
+            &x,
+            &y,
+            &x_file,
+            &y_file,
+            &delta_grid,
+            &lambda_grid,
+            &config,
+        )
+        .unwrap_or_else(|error| panic!("resume should succeed: {error}"));
+        assert_eq!(resumed, checkpointed);
+        assert_eq!(
+            std::fs::read(&checkpoint_path)
+                .unwrap_or_else(|error| panic!("read resumed checkpoint: {error}")),
+            original,
+        );
     }
 }
