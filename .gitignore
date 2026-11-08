@@ -117,6 +117,9 @@ comparison/
 vendor/
 
 # Local agent tooling and job logs
+.scratch/
+.trash/
+.worktrees/
 .claude/
 .agent-handoff/
 logs/
