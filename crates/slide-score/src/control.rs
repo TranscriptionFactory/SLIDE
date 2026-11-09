@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use slide_types::{Matrix, Scalar, Vector};
 
 use crate::{
-    auc_score, build_selected_feature_matrix, fit_linear_predict, ResponseType, ScoreError,
+    auc_score, build_selected_feature_matrix, fit_r_ols, ResponseType, ScoreError,
     ScoreMetric,
 };
 
@@ -18,7 +18,7 @@ pub struct ControlPerformance {
 
 /// In-sample OLS controls following SLIDE R's calcControlPerformance, not CV scores.
 /// Native seeded draws are reproducible but do not reproduce R's RNG stream.
-/// Near-singular fits can differ from R's QR solver: the shared fitter uses SVD.
+/// Fits use ordered, reorthogonalized OLS with R-oriented rank handling.
 /// Fits use the current Rayon pool; callers should limit BLAS to one thread per worker.
 pub fn control_performance(
     z: &Matrix,
@@ -143,7 +143,7 @@ fn score_features(
     if !features.as_ndarray().iter().all(|v| v.is_finite()) {
         return Err(ScoreError::NonFiniteControlScore);
     }
-    let predicted = fit_linear_predict(features, y, features)?;
+    let predicted = fit_r_ols(features, y)?.predict(features)?;
     if !predicted.as_ndarray().iter().all(|v| v.is_finite()) {
         return Err(ScoreError::NonFiniteControlScore);
     }
@@ -313,6 +313,19 @@ mod tests {
         assert!((c.real - (4.05_f64 / 4.75).sqrt()).abs() < 1e-12);
         assert!(c.partial_random.is_empty());
         assert!(c.full_random.iter().all(|v| (*v - c.real).abs() < 1e-12));
+        Ok(())
+    }
+
+    #[test]
+    fn dependent_control_columns_preserve_analytic_score() -> Result<(), ScoreError> {
+        let y = Vector::from_ndarray(arr1(&[0., 1., 1., 3.]));
+        for scale in [1.0, 2.0] {
+            let features = Matrix::from_ndarray(arr2(&[
+                [0., 0.], [1., scale], [2., 2. * scale], [3., 3. * scale],
+            ]));
+            let score = score_features(&features, &y, ResponseType::Continuous)?;
+            assert!((score - (4.05_f64 / 4.75).sqrt()).abs() < 1e-12);
+        }
         Ok(())
     }
 
