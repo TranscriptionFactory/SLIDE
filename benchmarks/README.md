@@ -45,16 +45,16 @@ tolerances. Historical reports retain their original thresholds.
 ### Current CD4 full fitting
 
 The current overview uses the 120/120 successful CD4 fits in the
-[CD4 full-fitting comparison](results/2026-11-08_cd4-rust-rerun/README.md)
+[CD4 full-fitting comparison](results/2026-11-08_cd4-rust-rerun/parallel-controls/README.md)
 with source revisions and measurement dates in its provenance: ten seeds ×
 four delta/lambda settings × three backends. Settings are 1,000 selection draws, four
 workers, one BLAS thread per worker, homogeneous LOVE and continuous/Spearman
 screening. Each fit includes sampleCV with 500 holdouts (K=4); final CV is excluded.
 
-Python is fastest in each CD4 cell (25.72–45.92 seconds). These are fresh-process,
+Rust has the lowest median in each CD4 cell (20.69–42.86 seconds). These are fresh-process,
 profiled workflow measurements, including exports and sampleCV, not equal-work
 solver comparisons. Node/system variation remains.
-[Per-cell medians, distributions and memory limits](results/2026-11-08_cd4-rust-rerun/README.md#runtime-and-memory)
+[Per-cell medians, distributions and memory limits](results/2026-11-08_cd4-rust-rerun/parallel-controls/README.md#runtime-and-memory)
 retain the measurement details; do not pool these with October timings.
 
 SSc is retained in the saved campaign for diagnostics, not as a headline
@@ -115,15 +115,15 @@ Interactions differ: at delta=0.1, lambda=1.0, Rust selects the shared three
 interactions plus Z30–Z25 in all ten runs, so R–Rust overlap is 0.750 while
 R–Python is 1.000.
 
-The [CD4 selected-factor table](results/2026-11-08_cd4-rust-rerun/README.md#selected-factors)
+The [CD4 selected-factor table](results/2026-11-08_cd4-rust-rerun/parallel-controls/README.md#selected-factors)
 lists the marginal sets. The
-[unfiltered CD4 term heatmap](results/2026-11-08_cd4-rust-rerun/analysis/cd4/selection_rates_all.png)
+[unfiltered CD4 term heatmap](results/2026-11-08_cd4-rust-rerun/parallel-controls/analysis/cd4/selection_rates_all.png)
 includes every marginal or significant interaction term selected at least once,
 including one-off terms and zero rates in the other backends. Marginals and
 interaction terms are distinct entries, not a union of their LF partners.
-The [run-to-run CD4 matrix](results/2026-11-08_cd4-rust-rerun/analysis/cd4/overlap_combined_repeats.png) compares full
+The [run-to-run CD4 matrix](results/2026-11-08_cd4-rust-rerun/parallel-controls/analysis/cd4/overlap_combined_repeats.png) compares full
 marginal-plus-interaction sets for individual runs, grouped by backend;
-[per-run counts](results/2026-11-08_cd4-rust-rerun/analysis/cd4/counts.png) show size variability.
+[per-run counts](results/2026-11-08_cd4-rust-rerun/parallel-controls/analysis/cd4/counts.png) show size variability.
 The repeat matrix includes self-comparisons of 1 on its main diagonal. Backend
 means instead use 45 distinct within-backend pairs or 100 cross-backend pairs.
 Those pairs share runs and are descriptive, not independent samples.

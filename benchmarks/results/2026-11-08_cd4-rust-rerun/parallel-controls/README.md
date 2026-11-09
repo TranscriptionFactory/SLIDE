@@ -1,0 +1,199 @@
+# CD4 parallel-control Rust rerun
+
+Fitting source: `4f64a904ce8d7dafd898a1c6c00f99df75266150` (clean tracked tree when frozen).
+This variant reruns the same 40 Rust CD4 full fits as the [serial-control run](../README.md),
+with parallel control fitting and unchanged seeded draws. Ten seeds, four settings,
+1,000 selection draws, 500 sampleCV holdouts (K=4), four Rayon workers and one
+BLAS thread per worker. Fresh checkpoints include first-time reporting and export.
+No R/Python, SSc or final-CV reruns. Original outputs remain intact.
+
+## Reproduction
+
+Reuses the maintained manifest runner and benchmark harness. Exact fit arguments
+are in `manifests/rust-cd4.json`. The local `source/` archive freezes Cargo files,
+crates, Python source and benchmark scripts. Build occurs outside fit timers,
+with an isolated Cargo target directory under `.scratch/`. The job checks the
+original input hashes and records the binary hash in `build-artifacts.sha256`.
+Frozen source, binaries, logs, checkpoints and patient-level outputs stay local.
+
+Submit from the repository root:
+
+```bash
+sbatch --parsable --job-name=cd4-rust-parallel --cluster=htc --partition=htc --constraint=turin --cpus-per-task=4 --mem=32G --time=01:30:00 --output=/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-08_cd4-rust-rerun/parallel-controls/logs/%j.out --wrap 'set -euo pipefail
+source /vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-08_cd4-rust-rerun/parallel-controls/environment.sh
+mkdir -p "$TMPDIR" "$MPLCONFIGDIR"
+cd "$RUN/source"
+export CC="$ENV/bin/x86_64-conda-linux-gnu-cc" CXX="$ENV/bin/x86_64-conda-linux-gnu-c++"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$CC" LIBCLANG_PATH="$ENV/lib" CARGO_BUILD_JOBS=2
+export PKG_CONFIG_PATH="/vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/build/pkgconfig"
+export CARGO_TARGET_DIR="$REPO/.scratch/2026-11-08_cd4-rust-rerun/parallel-controls/target"
+toolchain="$HOME/.rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu/bin"
+export RUSTC="$toolchain/rustc" RUSTDOC="$toolchain/rustdoc" PATH="$toolchain:$PATH"
+"$toolchain/cargo" build --release --locked -p slide-rs --bin slide
+cp "$CARGO_TARGET_DIR/release/slide" "$RUN/bin/slide"
+sha256sum "$RUN/bin/slide" > "$RUN/build-artifacts.sha256"
+sha256sum --check --quiet /vast/djishnu/Aaron/1_general_use/SLIDE/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks/input-files.sha256
+bash benchmarks/scripts/run_backend_array.sh --manifest "$RUN/manifests/rust-cd4.json"
+'
+```
+
+Status: **40/40 Rust fits succeeded**, verified from all ten manifest outcomes
+and all forty cell timings. Slurm job `12155073;htc` completed with exit `0:0`
+in 26m59s on `htc-n91`; the isolated release build took 3m21s.
+
+
+## Runtime and memory
+
+The current comparison contains 120 successful CD4 fits: ten seeds × four
+settings × three backends, on 2,482 samples and 1,776 features. Rust has the
+lowest median wall time in each setting. These are fresh-process workflow
+measurements including fitting, sampleCV, first-time control reporting and
+exports, with profiling enabled. Build time is outside fit timers.
+
+| delta / lambda | Rust seconds | Python seconds | R seconds | Rust peak GiB | Python peak GiB | R peak GiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.01 / 0.1 | 42.80 | 44.69 | 103.81 | 0.426 | 1.295 | 1.665 |
+| 0.01 / 1.0 | 42.86 | 45.92 | 102.57 | 0.427 | 1.292 | 1.644 |
+| 0.1 / 0.1 | 20.69 | 25.72 | 69.95 | 0.428 | 1.251 | 1.665 |
+| 0.1 / 1.0 | 32.72 | 37.47 | 97.55 | 0.428 | 1.267 | 1.678 |
+
+Entries are medians over ten fits. [Summary with runtime quartiles](analysis/cd4/summary.csv)
+and [per-fit wall time, memory and screening metrics](analysis/cd4/workflow_metrics.csv)
+retain the underlying measurements.
+
+![CD4 runtime distributions](analysis/cd4/runtime.png)
+
+The runtime panels use separate y-axis ranges to show within-cell distributions;
+use the table for cross-cell absolute comparisons. The harness samples summed
+Linux process-group RSS every 50 ms: shared pages can count twice and short
+peaks can be missed. This is not cgroup peak memory. The Rust fit peaks range
+from 0.424 to 0.429 GiB. Slurm reports batch MaxRSS 4,819,028 KiB, including the
+build; that number is not a fit-level memory measurement.
+
+The job requested four CPUs, 32 GiB and 90 minutes on a Turin node. Rust ran on
+`htc-n91`; R on `htc-n73`/`htc-n89`; Python on `htc-n73`/`htc-n80`/`htc-n89`.
+Node, date and system-load differences remain. Profiling overhead is unmeasured;
+filesystem and library caches were not flushed. Backend-specific work also
+remains (including R upsilon submodels). These are not equal-work solver
+comparisons or a controlled estimate of the parallel-control change's speedup.
+
+### Control-reporting timing
+
+Median wall seconds from the explicit Rust stage logs, ten fits per setting:
+
+| delta / lambda | Serial controls | Parallel controls | Parallel fitting¹ | Parallel export |
+| --- | ---: | ---: | ---: | ---: |
+| 0.01 / 0.1 | 56.850 | 29.145 | 12.050 | 0.910 |
+| 0.01 / 1.0 | 57.345 | 29.095 | 12.170 | 0.820 |
+| 0.1 / 0.1 | 25.165 | 13.295 | 6.030 | 0.550 |
+| 0.1 / 1.0 | 37.300 | 19.190 | 12.275 | 0.500 |
+
+¹ The log's `TOTAL` stage includes LOVE, factor mapping, knockoff selection and
+screening, but excludes control reporting and export. Independent medians do
+not add exactly; full workflow time also includes startup and checkpoint I/O.
+The serial run used `htc-n77`, and the parallel run used `htc-n91`. These are
+observed before/after timings, not a same-node controlled speedup experiment.
+Stage values come from `[SLIDE timing]` entries in each run's
+`full-fit/cd4/rust/seed_*/rust/*_out/rust.log`.
+
+## Selected factors
+
+All backends select the following marginals in all ten fits per cell:
+
+| delta / lambda | Marginal factors |
+| --- | --- |
+| 0.01 / 0.1 | Z4, Z13, Z20, Z31 |
+| 0.01 / 1.0 | Z4, Z13, Z19, Z20 |
+| 0.1 / 0.1 | Z7 |
+| 0.1 / 1.0 | Z2, Z7, Z30 |
+
+![All observed selected terms](analysis/cd4/selection_rates_all.png)
+
+The figure includes every observed marginal and significant interaction, with
+no frequency cutoff. Factor identities are local to each cell. Marginal
+Jaccard is 1.000 throughout, but interaction agreement is incomplete: at
+0.1/1.0, Rust selects Z30–Z25 in addition to the three shared interactions in
+all ten fits, giving R–Rust interaction Jaccard 0.750.
+
+[Backend combined overlap](analysis/cd4/overlap_combined_backends.png),
+[individual-run combined overlap](analysis/cd4/overlap_combined_repeats.png),
+[interaction overlap](analysis/cd4/overlap_interaction_backends.png) and
+[selected-count distributions](analysis/cd4/counts.png) retain variability.
+Backend means use 45 distinct within-backend pairs or 100 cross-backend pairs;
+these pairs reuse runs and are dependent. Two empty sets count as 1. Repeat
+matrices include self-comparisons on the diagonal. Larger interaction sets can
+dominate combined overlap. Neither overlap nor matching factor matrices proves
+backend equivalence or FDR control.
+
+## Scientific-output comparison and screening
+
+For each of the 40 matching Rust seed/cell pairs, the parallel-control and serial-control
+runs have identical selected marginal and interaction sets, identical K,
+identical factor names/order and exported Z values (maximum absolute difference
+0), and identical exported sampleCV metrics (maximum absolute difference 0).
+All 40 `ControlPerformance.csv` exports also match byte-for-byte, including
+all 2,000 randomized scores and the real-model score per fit. The comparison used the maintained analyzer's `load` and `load_z` functions
+and `benchmark_summary.json` sampleCV artifacts; it did not compare serialized
+checkpoint bytes or recompute scores from patient-level predictions.
+
+All 120 current fits have defined sampleCV scores. Median pooled held-out
+Spearman, with 10/10 valid fits per entry:
+
+| delta / lambda | Rust | Python | R |
+| --- | ---: | ---: | ---: |
+| 0.01 / 0.1 | 0.552836 | 0.552927 | 0.553986 |
+| 0.01 / 1.0 | 0.568073 | 0.568289 | 0.568127 |
+| 0.1 / 0.1 | 0.506534 | 0.507070 | 0.506679 |
+| 0.1 / 1.0 | 0.539103 | 0.539228 | 0.539215 |
+
+sampleCV uses 500 holdouts with K=4 on terms selected from the full dataset;
+these are screening diagnostics, not nested external validation. No final-CV
+outputs enter this comparison. All 120 factor matrices pass absolute tolerance
+1e-6 against R, with matching K and column names/order. The largest difference
+is 2.02e-7 in cell 0.1/1.0; tolerance acceptance is not exact equality.
+
+## Measurement provenance and analysis reproduction
+
+R/Python measurements and all original Rust raw outputs remain intact under
+`../../2026-11-02_ssc-cd4-retry-benchmarks/full-fit/cd4/`. The
+[historical full-fitting report](../../2026-11-02_ssc-cd4-retry-benchmarks/analysis/2026-11-02_full-fit-report/README.md)
+remains unchanged. The current tables replace only Rust measurements.
+
+The serial-control run remains intact in `../full-fit/cd4/rust/`; its
+[report](../README.md) records the source and measurement timestamps. This
+variant was submitted on November 8 local time; Rust metadata dates fall on
+November 9 UTC. Per-bundle metadata timestamps (UTC) and fitting revisions:
+
+| Backend | First timestamp | Last timestamp | Fitting revision |
+| --- | --- | --- | --- |
+| Rust | 2026-11-09 03:28:34 | 2026-11-09 03:49:48 | `4f64a904ce8d7dafd898a1c6c00f99df75266150` |
+| Python | 2026-11-02 20:40:48 | 2026-11-03 00:08:12 | `81e1fc97fc13e3e2be3e579907f4608a1ece3515` |
+| R | 2026-11-02 19:55:48 | 2026-11-02 23:59:11 | `81e1fc97fc13e3e2be3e579907f4608a1ece3515` |
+
+These timestamps identify bundles, not the start/end of every cell. Seeds are
+10,000,000 through 910,000,000 in steps of 100,000,000. The input checksum check
+passed before fitting; local `build-artifacts.sha256` identifies the built
+binary. The frozen source tree was clean when archived.
+
+Analysis used the maintained checkout at
+`4f64a904ce8d7dafd898a1c6c00f99df75266150` on 2026-11-08 (local date), before report edits,
+not the frozen fitting snapshot. Run from the repository root:
+
+```bash
+source benchmarks/results/2026-11-08_cd4-rust-rerun/parallel-controls/environment.sh
+OLD="$REPO/benchmarks/results/2026-11-02_ssc-cd4-retry-benchmarks"
+python "$REPO/benchmarks/scripts/analyze_seed_replicates.py" \
+  "$RUN/analysis/cd4" \
+  --arm "pure_r=pure_r:$OLD/full-fit/cd4/pure_r" \
+  --arm "python=python:$OLD/full-fit/cd4/python" \
+  --arm "rust=rust:$RUN/full-fit/cd4/rust" \
+  --test python:pure_r --test rust:pure_r \
+  --min-runs 10 --expected-cells 4 --z-reference pure_r --z-tol 1e-6
+```
+
+`workflow_metrics.csv` extracts `wall_seconds` and `peak_rss_bytes / 2**30`
+from each bundle's `benchmark_summary.json` timings and joins `sampleCV.metric`
+from `cell_artifacts` by backend/delta/lambda. No patient-level data appear in
+this table. Analyzer tables retain selected sets, overlap and uncertainty;
+figures have 300-dpi PNG and SVG versions. All ten rendered PNGs were visually
+inspected for clipping, labels, legibility and agreement with the tables.
